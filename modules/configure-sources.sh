@@ -38,6 +38,12 @@ MIRROR="https://mirrors.tuna.tsinghua.edu.cn"
 # 仅赋值 VERSION，假定环境已满足要求
 VERSION="$(lsb_release -cs 2>/dev/null || echo bookworm)"
 
+# 只处理 debian.sources 之前，先重命名旧版 sources.list，避免冲突
+if [ -f /etc/apt/sources.list ]; then
+  mv /etc/apt/sources.list /etc/apt/sources.list.bak
+  log_action "已将旧版 /etc/apt/sources.list 重命名为 /etc/apt/sources.list.bak，避免与新软件源冲突"
+fi
+
 # 只处理 debian.sources
 ACTIVE_SOURCE="/etc/apt/sources.list.d/debian.sources"
 backup "$ACTIVE_SOURCE"
