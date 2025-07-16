@@ -31,14 +31,6 @@ backup() {
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${SCRIPT_DIR}/lib/core/constants.sh"
 source "${SCRIPT_DIR}/lib/core/logging.sh"
-source "${SCRIPT_DIR}/lib/system/dependency.sh"
-
-# 检查依赖
-REQUIRED_CMDS=(cp mv grep sed awk apt)
-if ! check_dependencies "${REQUIRED_CMDS[@]}"; then
-  log_fail "依赖缺失，请先安装必备命令：${REQUIRED_CMDS[*]}"
-  exit "${ERROR_DEPENDENCY}"
-fi
 
 # 镜像源基础URL
 MIRROR="https://mirrors.tuna.tsinghua.edu.cn"

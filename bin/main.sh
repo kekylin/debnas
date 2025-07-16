@@ -57,6 +57,7 @@ init_module_config() {
     ["系统初始化"]="s11 s12"
     ["Web管理"]="w11 w12 w13 w14 w15"
     ["邮件服务"]="m11 m12 m13"
+    [a11]="configure-security|基础安全配置"
     ["安全加固"]="a11 a12 a13 a14"
     ["容器平台"]="d11 d12 d13 d14"
     ["系统工具"]="t11 t12 t13 t14 t15 t16"
@@ -72,20 +73,6 @@ init_module_config() {
     "系统工具"
     "快速部署"
   )
-}
-
-# 检查基础依赖
-check_basic_dependencies() {
-  local required_cmds=(bash grep awk sed curl)
-  
-  if ! check_dependencies "${required_cmds[@]}"; then
-    log_warning "检测到依赖缺失，尝试自动安装..."
-    install_missing_dependencies "${required_cmds[@]}"
-    if ! check_dependencies "${required_cmds[@]}"; then
-      log_fail "依赖安装失败，请手动安装后重试"
-      exit "${ERROR_DEPENDENCY}"
-    fi
-  fi
 }
 
 # 设置临时目录和信号处理
@@ -312,7 +299,6 @@ perform_system_checks() {
 main() {
   clear
   init_module_config
-  check_basic_dependencies
   setup_environment
   perform_system_checks
   main_menu_loop
