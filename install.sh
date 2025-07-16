@@ -32,7 +32,7 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
   shift
-}
+done
 
 if [[ -z "$PLATFORM" || -z "$BRANCH" ]]; then
   echo "[FAIL] 必须指定 -s 平台@分支 参数"
