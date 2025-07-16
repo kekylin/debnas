@@ -1,0 +1,26 @@
+services:
+  scrutiny:
+    container_name: scrutiny
+    image: ghcr.io/analogj/scrutiny:master-omnibus
+    restart: unless-stopped
+    stdin_open: true
+    tty: true
+    environment:
+      - COLLECTOR_CRON_SCHEDULE=0 * * * *
+      - TZ=Asia/Shanghai
+    cap_add:
+      - SYS_RAWIO
+      - SYS_ADMIN
+    ports:
+      - "9626:8080" # webapp
+      - "8086:8086" # influxDB admin
+    volumes:
+      - /run/udev:/run/udev:ro
+      - /opt/docker/scrutiny/config:/opt/scrutiny/config
+      - /opt/docker/scrutiny/influxdb:/opt/scrutiny/influxdb
+    devices:
+      - "/dev/sda"
+    network_mode: bridge
+networks:
+  bridge:
+    external: true

@@ -1,0 +1,21 @@
+services:
+  dweebui:
+    container_name: dweebui
+    image: lllllllillllllillll/dweebui
+    environment:
+      PORT: 8000
+      SECRET: Debian-HomeNAS
+    restart: unless-stopped
+    ports:
+      - 8000:8000
+    volumes:
+      - /opt/docker/dweebui:/app/config
+      # Docker socket
+      - /var/run/docker.sock:/var/run/docker.sock
+
+    networks:
+      - dweebui_net
+
+networks:
+  dweebui_net:
+    driver: bridge

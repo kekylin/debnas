@@ -1,0 +1,20 @@
+# 忽略敏感配置文件
+config/.env
+
+# 忽略临时文件和备份
+*.bak
+*.swp
+*.tmp
+*.log
+tmp/
+
+# 忽略系统和编辑器文件
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# 忽略开发环境和文档目录
+.cursor/
+docs/
+old-projects/
