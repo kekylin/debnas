@@ -51,14 +51,16 @@ Debian-HomeNAS/
 
 ## 快速开始
 
-**推荐远程一键执行：**
+- 推荐一键安装命令（以 Github 主分支为例）：
 
 ```bash
-# Github 主分支（适用于境外网络环境）
-bash <(wget -qO- https://raw.githubusercontent.com/kekylin/Debian-HomeNAS/main/bin/main.sh) -s github@main
+bash <(wget -qO- https://raw.githubusercontent.com/kekylin/Debian-HomeNAS/main/install.sh) -s github@main
+```
 
-# Gitee 主分支（适用于中国大陆网络环境）
-bash <(wget -qO- https://gitee.com/kekylin/Debian-HomeNAS/raw/main/bin/main.sh) -s gitee@main
+- Gitee 主分支（适用于中国大陆网络环境）：
+
+```bash
+bash <(wget -qO- https://gitee.com/kekylin/Debian-HomeNAS/raw/main/install.sh) -s gitee@main
 ```
 
 - `-s` 参数格式：**平台@分支名**，如 `-s github@main`、`-s gitee@dev`

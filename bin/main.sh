@@ -19,75 +19,6 @@ source "${SCRIPT_DIR}/lib/ui/styles.sh"
 # 全局变量定义
 declare -A MODULE_DESC MENU_MAP
 declare -a MENU_ORDER
-# 使用 mktemp 创建唯一临时目录，自动清理
-# 远程仓库根URL
-declare -A REPO_BASE_URL=(
-  [github]="https://raw.githubusercontent.com/kekylin/Debian-HomeNAS/"
-  [gitee]="https://gitee.com/kekylin/Debian-HomeNAS/raw/"
-)
-
-# 默认
-REMOTE_PLATFORM="github"
-REPO_BRANCH="main"
-
-# 参数解析
-SOURCE_MODE="local"
-while getopts "s:" opt; do
-  case "${opt}" in
-    s) SOURCE_MODE="${OPTARG}" ;;
-  esac
-done
-shift $((OPTIND-1))
-
-# 判断模式
-if [[ "$SOURCE_MODE" == "local" ]]; then
-  MODE="local"
-elif [[ -z "$SOURCE_MODE" ]]; then
-  MODE="local"
-else
-  if [[ ! "$SOURCE_MODE" =~ ^(github|gitee)@.+$ ]]; then
-    echo "错误：必须通过 -s 指定平台和分支名，如 -s github@main 或 -s gitee@dev" >&2
-    exit 1
-  fi
-  MODE="remote"
-  REMOTE_PLATFORM="${BASH_REMATCH[1]}"
-  REPO_BRANCH="${BASH_REMATCH[2]#*@}"
-fi
-
-# 构建完整远程URL
-build_remote_url() {
-  local platform="$1"   # github/gitee
-  local branch="$2"     # main/test/feature-x
-  local rel_path="$3"   # modules/xxx.sh 或 lib/core/logging.sh
-  echo "${REPO_BASE_URL[$platform]}${branch}/${rel_path}"
-}
-
-# 下载远程文件到本地临时目录，参数为相对仓库根路径
-fetch_remote_module() {
-  local rel_path="$1"
-  local url
-  url=$(build_remote_url "$REMOTE_PLATFORM" "$REPO_BRANCH" "$rel_path")
-  local dest="$TMP_DIR/$(basename "$rel_path")"
-  local retry=0
-  local max_retry=2
-  while (( retry <= max_retry )); do
-    if curl -fsSL --connect-timeout 10 --max-time 30 "$url" -o "$dest"; then
-      chmod +x "$dest"
-      echo "$dest"
-      return 0
-    else
-      ((retry++))
-      sleep 1
-    fi
-  done
-  return 1
-}
-
-# 统一临时目录
-TMP_DIR="/tmp/debian-homenas.$(date +%s%N)$$"
-trap 'rm -rf "$TMP_DIR"' EXIT
-mkdir -p "$TMP_DIR"
-chmod 700 "$TMP_DIR"
 
 # 初始化模块配置
 init_module_config() {
@@ -159,9 +90,11 @@ check_basic_dependencies() {
 
 # 设置临时目录和信号处理
 setup_environment() {
-mkdir -p "${TMP_DIR}"
-trap 'log_warning "用户中断脚本，正在退出..."; rm -rf "${TMP_DIR}"; exit 1' INT
-trap 'rm -rf "${TMP_DIR}"' EXIT
+  TMP_DIR="/tmp/debian-homenas.$(date +%s%N)$$"
+  mkdir -p "${TMP_DIR}"
+  chmod 700 "${TMP_DIR}"
+  trap 'log_warning "用户中断脚本，正在退出..."; rm -rf "${TMP_DIR}"; exit 1' INT
+  trap 'rm -rf "${TMP_DIR}"' EXIT
 }
 
 # 显示项目横幅
@@ -236,7 +169,7 @@ validate_menu_choice() {
   [[ "$choice" -ge 0 && "$choice" -le "$max" ]]
 }
 
-# execute_selected_modules 里远程路径为 modules/xxx.sh
+# execute_selected_modules 只保留本地文件查找和执行逻辑
 execute_selected_modules() {
   local -a selected_keys=("$@")
   local group="${selected_keys[-1]}"
@@ -251,25 +184,13 @@ execute_selected_modules() {
     local script_name="${desc%%|*}"
     local zh_desc="${desc#*|}"
     local rel_path="modules/${script_name}.sh"
-    local exec_path=""
-
-    if [[ "$MODE" == "local" ]]; then
-      local mod_path="${SCRIPT_DIR}/$rel_path"
-      if [[ ! -f "$mod_path" ]]; then
-        log_fail "本地模块 \"$zh_desc\" 不存在"
-        continue
-      fi
-      exec_path="$mod_path"
-    else
-      exec_path=$(fetch_remote_module "$rel_path")
-      if [[ -z "$exec_path" || ! -f "$exec_path" ]]; then
-        log_fail "远程模块 \"$zh_desc\" 下载失败"
-        continue
-      fi
+    local mod_path="${SCRIPT_DIR}/$rel_path"
+    if [[ ! -f "$mod_path" ]]; then
+      log_fail "本地模块 \"$zh_desc\" 不存在"
+      continue
     fi
-
     log_action "正在执行模块：\"$zh_desc\""
-    if ! bash "$exec_path"; then
+    if ! bash "$mod_path"; then
       log_fail "模块 \"$zh_desc\" 执行失败，已中断本轮操作"
       break
     fi
