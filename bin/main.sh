@@ -87,7 +87,7 @@ for arg in "$@"; do
   shift || true
   # 兼容无参数时不报错
   [[ $# -eq 0 ]] && break
-}
+done
 
 # 设置临时目录和信号处理
 setup_environment() {
