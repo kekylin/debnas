@@ -75,13 +75,33 @@ init_module_config() {
   )
 }
 
+# 解析 --tmpdir 参数
+TMP_DIR=""
+for arg in "$@"; do
+  case $arg in
+    --tmpdir)
+      shift
+      TMP_DIR="$1"
+      ;;
+  esac
+  shift || true
+  # 兼容无参数时不报错
+  [[ $# -eq 0 ]] && break
+}
+
 # 设置临时目录和信号处理
 setup_environment() {
-  TMP_DIR="/tmp/debian-homenas.$(date +%s%N)$$"
-  mkdir -p "${TMP_DIR}"
-  chmod 700 "${TMP_DIR}"
-  trap 'log_warning "用户中断脚本，正在退出..."; rm -rf "${TMP_DIR}"; exit 1' INT
-  trap 'rm -rf "${TMP_DIR}"' EXIT
+  if [[ -n "$TMP_DIR" ]]; then
+    # 如果由外部传入，则直接用，不再新建
+    trap 'log_warning "用户中断脚本，正在退出..."; rm -rf "$TMP_DIR"; exit 1' INT
+    trap 'rm -rf "$TMP_DIR"' EXIT
+  else
+    TMP_DIR="/tmp/debian-homenas.$(date +%s%N)$$"
+    mkdir -p "${TMP_DIR}"
+    chmod 700 "${TMP_DIR}"
+    trap 'log_warning "用户中断脚本，正在退出..."; rm -rf "${TMP_DIR}"; exit 1' INT
+    trap 'rm -rf "${TMP_DIR}"' EXIT
+  fi
 }
 
 # 显示项目横幅

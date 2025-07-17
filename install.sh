@@ -50,15 +50,9 @@ else
   exit 2
 fi
 
-# 临时根目录
-TMPROOT="/tmp/debian-homenas"
-
-# 创建临时根目录并设置权限
-mkdir -p "$TMPROOT"
+# 创建唯一临时根目录
+TMPROOT=$(mktemp -d /tmp/debian-homenas.XXXXXX)
 chmod 700 "$TMPROOT"
-
-# 退出时自动清理临时目录
-trap 'rm -rf "$TMPROOT"' EXIT
 
 # 下载并解压仓库
 TARFILE="$TMPROOT/repo.tar.gz"
@@ -71,4 +65,4 @@ tar -xzf "$TARFILE" -C "$TMPROOT" || { echo "[FAIL] 解压失败"; exit 1; }
 cd "$TMPROOT/$TAR_SUBDIR"
 echo "[SUCCESS] 所有依赖文件已解压到 $TMPROOT/$TAR_SUBDIR！"
 
-exec bash bin/main.sh -s "$PLATFORM@$BRANCH" 
+exec bash bin/main.sh -s "$PLATFORM@$BRANCH" --tmpdir "$TMPROOT" 
