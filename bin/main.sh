@@ -96,11 +96,11 @@ setup_environment() {
     trap 'log_warning "用户中断脚本，正在退出..."; rm -rf "$TMP_DIR"; exit 1' INT
     trap 'rm -rf "$TMP_DIR"' EXIT
   else
-    TMP_DIR="/tmp/debian-homenas.$(date +%s%N)$$"
-    mkdir -p "${TMP_DIR}"
-    chmod 700 "${TMP_DIR}"
-    trap 'log_warning "用户中断脚本，正在退出..."; rm -rf "${TMP_DIR}"; exit 1' INT
-    trap 'rm -rf "${TMP_DIR}"' EXIT
+  TMP_DIR="/tmp/debian-homenas.$(date +%s%N)$$"
+  mkdir -p "${TMP_DIR}"
+  chmod 700 "${TMP_DIR}"
+  trap 'log_warning "用户中断脚本，正在退出..."; rm -rf "${TMP_DIR}"; exit 1' INT
+  trap 'rm -rf "${TMP_DIR}"' EXIT
   fi
 }
 

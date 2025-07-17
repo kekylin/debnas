@@ -69,11 +69,11 @@ log_message() {
   local message="$2"
   local timestamp
   local color=""
-
+  
   should_log "$level" || return 0
   timestamp=$(get_timestamp)
   color=$(get_log_color "$level")
-
+  
   if [[ -n "$timestamp" ]]; then
     printf "%b[%s]%b %s %s\n" \
       "$color" "$level" "$COLOR_RESET" \
