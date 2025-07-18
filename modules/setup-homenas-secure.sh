@@ -18,6 +18,7 @@ MODULES=(
   "configure-sources|配置软件源"
   "install-basic-tools|安装必备软件"
   "install-cockpit|安装 Cockpit 面板"
+  "set-cockpit-network|设置 Cockpit 网络访问"
   "setup-mail-account|设置发送邮件账户"
   "enable-login-mail|启用登录邮件通知"
   "configure-security|配置基础安全防护"
