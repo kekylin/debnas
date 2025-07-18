@@ -43,16 +43,16 @@ configure_timeout_and_logging() {
   # 强化 /var/log/history 目录权限逻辑
   if [ ! -d /var/log/history ]; then
     mkdir -p /var/log/history
-    chmod 751 /var/log/history
+    chmod 1733 /var/log/history
     chown root:root /var/log/history
-    log_success "已创建 /var/log/history 目录并设置权限为751"
+    log_success "已创建 /var/log/history 目录并设置权限为1733（sticky bit，所有用户可写，防止互删）"
   else
     # 检查现有权限
     current_mode=$(stat -c "%a" /var/log/history)
-    if [ "$current_mode" -lt 751 ]; then
-      chmod 751 /var/log/history
+    if [ "$current_mode" -ne 1733 ]; then
+      chmod 1733 /var/log/history
       chown root:root /var/log/history
-      log_success "/var/log/history 目录权限已由 $current_mode 调整为751"
+      log_success "/var/log/history 目录权限已由 $current_mode 调整为1733（sticky bit，所有用户可写，防止互删）"
     else
       log_info "/var/log/history 目录权限为 $current_mode，已满足要求，无需调整"
     fi
