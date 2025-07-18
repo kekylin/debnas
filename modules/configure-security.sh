@@ -43,9 +43,9 @@ configure_timeout_and_logging() {
   # 主动创建历史目录根目录，避免普通用户报错
   if [ ! -d /var/log/history ]; then
     mkdir -p /var/log/history
-    chmod 700 /var/log/history
+    chmod 751 /var/log/history
     chown root:root /var/log/history
-    log_success "已创建 /var/log/history 目录并设置权限为700"
+    log_success "已创建 /var/log/history 目录并设置权限为751"
   fi
 
   # 检查是否已经配置了对应的参数
@@ -57,8 +57,8 @@ configure_timeout_and_logging() {
 
 # 超时自动退出（15分钟）
 TMOUT=900
-# 在历史命令中启用时间戳
-export HISTTIMEFORMAT="%F %T "
+# 在历史命令中启用人类可读时间戳
+export HISTTIMEFORMAT="%Y-%m-%d %H:%M:%S "
 # 记录所有用户的登录和操作日志
 export HISTSIZE=4096
 USER=$(whoami)
