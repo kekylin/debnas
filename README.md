@@ -53,12 +53,13 @@ su -
 
 Github地址
   ```shell
-bash <(wget -qO- https://raw.githubusercontent.com/kekylin/Debian-HomeNAS/main/install.sh)
+bash <(wget -qO- https://raw.githubusercontent.com/kekylin/Debian-HomeNAS/main/install.sh) -s github@main
   ```
 Gitee地址（国内用户推荐）
   ```shell
-bash <(wget -qO- https://gitee.com/kekylin/Debian-HomeNAS/raw/main/install.sh)
+bash <(wget -qO- https://gitee.com/kekylin/Debian-HomeNAS/raw/main/install.sh) -s gitee@main
   ```
+- `-s` 参数格式：平台@分支名，如 `-s github@main`、`-s gitee@dev`
 
 ### 4、登陆使用
 > **脚本执行完毕后，SSH 控制台将输出 Cockpit 与 Docker 管理平台地址，请按提示登录访问。**

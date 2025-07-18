@@ -3,20 +3,39 @@ set -e
 
 # =====================
 # Debian-HomeNAS 安装自举脚本（整仓库 zip 包下载并解压，所有文件仅存于 /tmp/debian-homenas，无持久化）
-# 自动识别平台和分支，无需参数
+# 支持参数：-s 平台@分支（如 github@main、gitee@dev）
 # =====================
 
-# 自动识别平台和分支
-wget_url=$(ps -o args= $PPID | grep -oE 'https://[^ ]+')
-if [[ "$wget_url" =~ gitee.com/[^/]+/Debian-HomeNAS/raw/([^/]+)/install.sh ]]; then
-  PLATFORM="gitee"
-  BRANCH="${BASH_REMATCH[1]}"
-elif [[ "$wget_url" =~ githubusercontent.com/[^/]+/Debian-HomeNAS/([^/]+)/install.sh ]]; then
-  PLATFORM="github"
-  BRANCH="${BASH_REMATCH[1]}"
-else
-  echo "[FAIL] 未能自动识别平台和分支，请用推荐方式运行脚本"
+usage() {
+  echo "用法: bash <(wget -qO- https://raw.githubusercontent.com/kekylin/Debian-HomeNAS/main/install.sh) -s 平台@分支"
+  echo "示例: -s github@main 或 -s gitee@dev"
   exit 1
+}
+
+# 解析参数
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -s)
+      shift
+      if [[ "$1" =~ ^(github|gitee)@([a-zA-Z0-9_-]+)$ ]]; then
+        PLATFORM="${BASH_REMATCH[1]}"
+        BRANCH="${BASH_REMATCH[2]}"
+      else
+        echo "[FAIL] -s 参数格式错误，应为 平台@分支，如 github@main"
+        usage
+      fi
+      ;;
+    *)
+      echo "[FAIL] 未知参数: $1"
+      usage
+      ;;
+  esac
+  shift
+ done
+
+if [[ -z "${PLATFORM:-}" || -z "${BRANCH:-}" ]]; then
+  echo "[FAIL] 必须指定 -s 平台@分支 参数"
+  usage
 fi
 
 # 设置下载链接和解压后子目录名
