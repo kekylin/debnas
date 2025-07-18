@@ -1,25 +1,20 @@
 #!/bin/bash
 # 功能：系统更新检查与邮件通知（支持定时任务管理）
-# 参数：无
-# 返回值：0成功，非0失败
-# 作者：kekylin
-# 创建时间：2025-07-11
-# 修改时间：2025-07-12
 
 set -euo pipefail
 IFS=$'\n\t'
 
-# 加载公共模块
+# 加载公共模块，确保依赖函数和常量可用
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${SCRIPT_DIR}/lib/core/constants.sh"
 source "${SCRIPT_DIR}/lib/core/logging.sh"
 source "${SCRIPT_DIR}/lib/system/dependency.sh"
 source "${SCRIPT_DIR}/lib/system/utils.sh"
 
-# 检查依赖
+# 检查依赖，确保必备命令已安装
 REQUIRED_CMDS=(apt grep awk mail systemctl)
 if ! check_dependencies "${REQUIRED_CMDS[@]}"; then
-  log_error "依赖缺失，请先安装必备命令：${REQUIRED_CMDS[*]}"
+  log_error "依赖缺失，请先安装必备命令：${REQUIRED_CMDS[*]}。"
   exit "${ERROR_DEPENDENCY}"
 fi
 
@@ -30,7 +25,7 @@ CRON_TASK_FILE="/etc/cron.d/system-update-checker"
 # 验证并获取邮箱配置
 get_email_config() {
   if [[ ! -f "$EMAIL_CONFIG_FILE" ]] || [[ -z "$(cat "$EMAIL_CONFIG_FILE")" ]]; then
-    log_error "未找到有效的邮箱配置，文件 ${EMAIL_CONFIG_FILE} 不存在或为空"
+    log_error "未找到有效的邮箱配置，文件 ${EMAIL_CONFIG_FILE} 不存在或为空。"
     exit "${ERROR_CONFIG}"
   fi
   echo "$(cat "$EMAIL_CONFIG_FILE")"
@@ -41,71 +36,64 @@ setup_script_file() {
   local current_script=$(readlink -f "$0")
   USER_HOME=$(eval echo ~$USER)
   local script_path="$USER_HOME/.system-update-checker.sh"
-  
   if [[ "$current_script" != "$script_path" ]]; then
     cp "$current_script" "$script_path" 2>/dev/null
     if [[ $? -ne 0 ]]; then
-      log_error "无法复制脚本到 ${script_path}，请检查权限"
+      log_error "无法复制脚本到 ${script_path}，请检查权限。"
       return 1
     fi
     chmod +x "$script_path" 2>/dev/null
   fi
-  
   if [[ ! -f "$script_path" ]]; then
-    log_error "脚本文件 ${script_path} 不存在，请确保脚本已正确复制"
+    log_error "脚本文件 ${script_path} 不存在，请确保脚本已正确复制。"
     return 1
   fi
   echo "$script_path"
   return 0
 }
 
-# 验证 cron 表达式
+# 验证 cron 表达式，防止无效定时任务
 validate_cron_expression() {
   local cron="$1"
   local fields=($cron)
-  
   if [[ ${#fields[@]} -ne 5 ]]; then
-    log_error "Cron 表达式必须包含 5 个字段（分钟 小时 日 月 星期）"
+    log_error "Cron 表达式必须包含 5 个字段（分钟 小时 日 月 星期）。"
     return 1
   fi
-  
   local ranges=("0-59" "0-23" "1-31" "1-12" "0-7")
   local i
-  
   for i in {0..4}; do
     local value="${fields[$i]}" range="${ranges[$i]}"
     local min=${range%-*} max=${range#*-}
-    
-    # 检查基本格式：数字、*、范围、步长、列表
     if [[ "$value" =~ ^[0-9*]+(-[0-9]+)?(/[0-9]+)?$ || "$value" =~ ^[0-9]+(,[0-9]+)*$ || "$value" == "*" ]]; then
       if [[ "$value" != "*" ]]; then
         if [[ "$value" =~ ^([0-9]+)-([0-9]+)$ ]]; then
           local start=${BASH_REMATCH[1]} end=${BASH_REMATCH[2]}
           if [[ "$start" -lt "$min" ]] || [[ "$end" -gt "$max" ]] || [[ "$start" -gt "$end" ]]; then
-            log_error "字段 ${value} 超出范围 ${range}"
+            log_error "字段 ${value} 超出范围 ${range}。"
             return 1
           fi
         elif [[ "$value" =~ ^([0-9]+)/([0-9]+)$ ]]; then
           local start=${BASH_REMATCH[1]} step=${BASH_REMATCH[2]}
           if [[ "$start" -lt "$min" ]] || [[ "$start" -gt "$max" ]] || [[ "$step" -eq 0 ]]; then
-            log_error "步长字段 ${value} 无效"
+            log_error "步长字段 ${value} 无效。"
             return 1
           fi
         elif [[ "$value" =~ ^([0-9]+)(,([0-9]+))*$ ]]; then
           IFS=',' read -r -a numbers <<< "$value"
           for num in "${numbers[@]}"; do
             if [[ "$num" -lt "$min" ]] || [[ "$num" -gt "$max" ]]; then
-              log_error "列表值 ${num} 超出范围 ${range}"
+              log_error "列表值 ${num} 超出范围 ${range}。"
               return 1
             fi
           done
         elif ! [[ "$value" =~ ^[0-9]+$ ]] || [[ "$value" -lt "$min" ]] || [[ "$value" -gt "$max" ]]; then
-          log_error "字段 ${value} 超出范围 ${range}"
+          log_error "字段 ${value} 超出范围 ${range}。"
           return 1
         fi
       fi
     else
-      log_error "字段 ${value} 包含无效字符或格式"
+      log_error "字段 ${value} 包含无效字符或格式。"
       return 1
     fi
   done
@@ -151,7 +139,6 @@ build_report_content() {
   local security_update_list="$1" security_update_count="$2" regular_update_list="$3" regular_update_count="$4"
   local total=$((security_update_count + regular_update_count))
   local major_update_info=$(detect_major_version_update)
-  
   printf "更新摘要：\n"
   printf "总可用更新: %s 个 | 安全更新: %s 个 | 常规更新: %s 个\n\n" "${total}" "${security_update_count}" "${regular_update_count}"
   printf "更新详情：\n"
@@ -160,7 +147,7 @@ build_report_content() {
   [[ -n "$major_update_info" || $security_update_count -gt 0 ]] && printf "\n"
   format_update_list "$regular_update_list" "$regular_update_count" "常规更新"
   printf "\n检测时间: %s\n" "$(date +'%Y-%m-%d %H:%M:%S')"
-  printf "\n如需了解更多 [Debian-HomeNAS] 使用方法，请访问 https://github.com/kekylin/Debian-HomeNAS\n\n此邮件为系统自动发送，请勿直接回复。\n"
+  printf "\n如需了解更多 Debian-HomeNAS 使用方法，请访问 https://github.com/kekylin/Debian-HomeNAS\n\n此邮件为系统自动发送，请勿直接回复。\n"
 }
 
 # 执行更新检测并生成报告
@@ -282,15 +269,15 @@ main_menu() {
     exit "${ERROR_UNSUPPORTED_OS}"
   fi
   while true; do
-    echo -e "------------------------------\n1. 立即执行检测\n2. 设置定时检测\n3. 查看定时任务\n4. 移除定时任务\n0. 退出\n------------------------------"
-    read -p "请选择操作: " choice
+    echo -e "------------------------------\n1. 立即执行检测\n2. 设置定时检测\n3. 查看定时任务\n4. 移除定时任务\n0. 返回\n------------------------------"
+    read -p "请选择编号: " choice
     case $choice in
       1) execute_update_check ;;
       2) schedule_menu ;;
       3) list_cron_tasks ;;
       4) remove_cron_task ;;
-      0) exit 0 ;;
-      *) log_error "无效的操作选项，请重新选择" ;;
+      0) return 0 ;;
+      *) log_error "无效的操作选项，请重新选择。" ;;
     esac
   done
 }
@@ -299,13 +286,13 @@ main_menu() {
 schedule_menu() {
   while true; do
     echo -e "---------------------\n1. 每日检测（00:00）\n2. 每周检测（周一00:00）\n3. 自定义定时检测\n0. 返回\n---------------------"
-    read -p "请选择操作: " subchoice
+    read -p "请选择编号: " subchoice
     case $subchoice in
       1) set_cron_task "daily"; return ;;
       2) set_cron_task "weekly"; return ;;
       3) set_custom_cron_task; return ;;
       0) return ;;
-      *) log_error "无效的操作选项，请重新选择" ;;
+      *) log_error "无效的操作选项，请重新选择。" ;;
     esac
   done
 }

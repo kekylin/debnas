@@ -1,26 +1,20 @@
 #!/bin/bash
-# 功能：配置软件源（支持自动备份原sources.list并切换为国内源）
-# 参数：无（可根据需要扩展）
-# 返回值：0成功，非0失败
-# 作者：kekylin
-# 创建时间：2025-07-11
-# 修改时间：2025-07-12
+# 功能：配置软件源（支持自动备份原 sources.list 并切换为国内源）
 
 set -euo pipefail
 IFS=$'\n\t'
 
-# 加载公共模块
+# 加载公共模块，确保依赖函数和常量可用
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${SCRIPT_DIR}/lib/core/constants.sh"
 source "${SCRIPT_DIR}/lib/core/logging.sh"
 
-# 备份指定文件
+# 备份指定文件，保留最近 3 个备份，避免数据丢失
 backup() {
   local file="$1"
   if [ -f "$file" ]; then
     local backup_file="${file}.$(date +%F_%T).bak"
     cp "$file" "$backup_file"
-    # 只保留最新3个备份
     local backups=($(ls -t ${file}.*.bak 2>/dev/null))
     local count=${#backups[@]}
     if [ $count -gt 3 ]; then
@@ -32,24 +26,24 @@ backup() {
   fi
 }
 
-# 镜像源基础URL
+# 镜像源基础 URL，便于后续维护和切换
 MIRROR="https://mirrors.tuna.tsinghua.edu.cn"
 
-# 仅赋值 VERSION，假定环境已满足要求
+# 获取当前系统版本，默认为 bookworm
 VERSION="$(lsb_release -cs 2>/dev/null || echo bookworm)"
 
-# 只处理 debian.sources 之前，先重命名旧版 sources.list，避免冲突
+# 处理 debian.sources 前，先重命名旧版 sources.list，避免冲突
 if [ -f /etc/apt/sources.list ]; then
   mv /etc/apt/sources.list /etc/apt/sources.list.bak
-  log_action "已将旧版 /etc/apt/sources.list 重命名为 /etc/apt/sources.list.bak，避免与新软件源冲突"
+  log_action "已将旧版 /etc/apt/sources.list 重命名为 /etc/apt/sources.list.bak，避免与新软件源冲突。"
 fi
 
-# 只处理 debian.sources
+# 只处理 debian.sources，备份并写入新内容
 ACTIVE_SOURCE="/etc/apt/sources.list.d/debian.sources"
 backup "$ACTIVE_SOURCE"
-log_success "已完成软件源文件的备份"
+log_success "已完成软件源文件的备份。"
 
-log_action "配置 DEB822 格式软件源内容..."
+log_action "正在配置 DEB822 格式软件源内容..."
 cat > "$ACTIVE_SOURCE" <<EOF
 Types: deb
 URIs: https://mirrors.tuna.tsinghua.edu.cn/debian
@@ -66,5 +60,3 @@ EOF
 
 log_action "开始刷新软件包列表..."
 apt update
-
-log_success "软件源配置已全部完成。"

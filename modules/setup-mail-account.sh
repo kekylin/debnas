@@ -1,41 +1,36 @@
 #!/bin/bash
 # 功能：设置发送邮件账户
-# 参数：无（可根据需要扩展）
-# 返回值：0成功，非0失败
-# 作者：kekylin
-# 创建时间：2025-07-11
-# 修改时间：2025-07-12
 
 set -euo pipefail
 IFS=$'\n\t'
 
-# 加载公共模块
+# 加载公共模块，确保依赖函数和常量可用
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${SCRIPT_DIR}/lib/core/constants.sh"
 source "${SCRIPT_DIR}/lib/core/logging.sh"
 source "${SCRIPT_DIR}/lib/system/dependency.sh"
 
-# 检查依赖
+# 检查 exim4、update-exim4.conf、systemctl 依赖，确保后续操作可用
 REQUIRED_CMDS=(exim4 update-exim4.conf systemctl)
 if ! check_dependencies "${REQUIRED_CMDS[@]}"; then
-  log_error "依赖缺失，请先安装 exim4"
+  log_error "缺少 exim4，请先手动安装。"
   exit "${ERROR_DEPENDENCY}"
 fi
 
-# 关联数组：存储域名与 SMTP 服务器的映射关系
+# 域名与 SMTP 服务器映射
 declare -A SMTP_MAP=(
   ["qq.com"]="smtp.qq.com:587"
 )
 
-# 用户输入提示函数
+# 用户输入提示
 prompt_message() {
-  echo -e "[INPUT] $1"
+  echo -e "$1"
 }
 
-# 安全文件写入函数
+# 安全文件写入
 safe_write() {
   local file="$1" content="$2"
-  echo "$content" > "$file" || { log_error "写入文件 $file 失败"; return 1; }
+  echo "$content" > "$file" || { log_error "写入文件 $file 失败。"; return 1; }
   return 0
 }
 
@@ -46,7 +41,7 @@ validate_sender_email() {
     printf "%s" "${SMTP_MAP[qq.com]}"
     return 0
   else
-    log_error "无效的 SMTP 发件邮箱地址，仅支持 qq.com 域名"
+    log_error "无效的 SMTP 发件邮箱地址，仅支持 qq.com 域名。"
     return 1
   fi
 }
@@ -71,7 +66,7 @@ dc_localdelivery='mail_spool'
 EOF
 )" || exit "${ERROR_GENERAL}"
   if ! update-exim4.conf >/dev/null 2>&1; then
-    log_error "更新 Exim4 配置失败，可能会影响后续操作"
+    log_error "更新 Exim4 配置失败，可能会影响后续操作。"
   fi
 }
 
@@ -88,16 +83,16 @@ configure_smtp_auth() {
 
 # 重启 Exim4 邮件服务
 restart_exim_service() {
-  log_action "正在重启 Exim4 邮件服务"
+  log_action "正在重启 Exim4 邮件服务..."
   if command -v systemctl >/dev/null 2>&1; then
-    systemctl restart exim4 && systemctl is-active --quiet exim4 || { log_error "Exim4 服务重启失败"; exit "${ERROR_GENERAL}"; }
+    systemctl restart exim4 && systemctl is-active --quiet exim4 || { log_error "Exim4 服务重启失败。"; exit "${ERROR_GENERAL}"; }
   elif command -v service >/dev/null 2>&1; then
-    service exim4 restart || { log_error "Exim4 服务重启失败"; exit "${ERROR_GENERAL}"; }
+    service exim4 restart || { log_error "Exim4 服务重启失败。"; exit "${ERROR_GENERAL}"; }
   else
-    log_error "未找到可用的服务管理工具"
+    log_error "未找到可用的服务管理工具。"
     exit "${ERROR_GENERAL}"
   fi
-  log_success "Exim4 服务运行状态已更新"
+  log_success "Exim4 服务运行状态已更新。"
 }
 
 # 发送测试邮件
@@ -126,7 +121,7 @@ EOF
   log_action "正在发送测试邮件..."
   echo -e "$email_content" | exim -bm "$notify_email" && \
     log_success "测试邮件已成功发送至 ${notify_email}" || \
-    { log_fail "测试邮件发送失败，请查看 /var/log/exim4/mainlog"; exit "${ERROR_GENERAL}"; }
+    { log_fail "测试邮件发送失败，请查看 /var/log/exim4/mainlog。"; exit "${ERROR_GENERAL}"; }
 }
 
 # 主控制流程
@@ -147,7 +142,7 @@ email_domain="${email##*@}"
 prompt_message "请输入 SMTP 服务授权密码："
 password=""
 while read -rs password && [[ -z "$password" ]]; do
-  log_fail "SMTP 授权密码为必填项"
+  log_fail "SMTP 授权密码为必填项。"
   prompt_message "请输入 SMTP 服务授权密码："
 done
 echo
@@ -155,7 +150,7 @@ echo
 prompt_message "请输入系统通知接收邮箱地址："
 notify_email=""
 while read -r notify_email && [[ ! "$notify_email" =~ ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; do
-  log_fail "通知邮箱地址格式无效或为空"
+  log_fail "通知邮箱地址格式无效或为空。"
   prompt_message "请输入有效的通知接收邮箱地址："
 done
 
@@ -169,5 +164,3 @@ log_info "• SMTP 发件服务器: ${smarthost}"
 log_info "• 发件邮箱地址: ${email}"
 log_info "• 通知接收邮箱: ${notify_email}"
 log_info "• 配置验证时间: $(date +'%Y-%m-%d %H:%M')"
-
-log_success "邮件服务配置已全部完成。"

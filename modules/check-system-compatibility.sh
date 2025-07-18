@@ -1,15 +1,10 @@
 #!/bin/bash
 # 功能：系统兼容性检查工具（无交互菜单，直接输出结果）
-# 参数：无
-# 返回值：0成功，非0失败
-# 作者：kekylin
-# 创建时间：2025-07-12
-# 修改时间：2025-07-12
 
 set -euo pipefail
 IFS=$'\n\t'
 
-# 加载公共模块
+# 加载公共模块，确保依赖函数和常量可用
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${SCRIPT_DIR}/lib/core/constants.sh"
 source "${SCRIPT_DIR}/lib/core/logging.sh"
@@ -18,14 +13,14 @@ source "${SCRIPT_DIR}/lib/system/utils.sh"
 source "${SCRIPT_DIR}/lib/ui/menu.sh"
 source "${SCRIPT_DIR}/lib/ui/styles.sh"
 
-# 检查依赖
+# 检查依赖，确保必备命令已安装
 REQUIRED_CMDS=(awk grep df uname)
 if ! check_dependencies "${REQUIRED_CMDS[@]}"; then
-  log_error "依赖缺失，请先安装必备命令：${REQUIRED_CMDS[*]}"
+  log_error "依赖缺失，请先安装必备命令：${REQUIRED_CMDS[*]}。"
   exit "${ERROR_DEPENDENCY}"
 fi
 
-# 简洁系统信息
+# 输出系统摘要信息
 get_system_summary() {
   echo "系统: $(get_system_name) $(get_system_version) ($(get_system_architecture))"
   echo "主机名: $(get_hostname)"
@@ -35,7 +30,7 @@ get_system_summary() {
   echo "用户: $(whoami) (UID: $EUID)"
 }
 
-# 简洁关键指标
+# 输出关键运行指标
 get_system_key_metrics() {
   local memory_mb=$(( $(grep MemTotal /proc/meminfo | awk '{print $2}') / 1024 ))
   local disk_gb=$(df / | awk 'NR==2 {print int($4/1024/1024)}')
@@ -44,7 +39,7 @@ get_system_key_metrics() {
   echo "运行时长: $(uptime -p | sed 's/up //')"
 }
 
-# 简洁硬件信息
+# 输出硬件信息
 get_detailed_hardware_info() {
   local cpu="$(grep 'model name' /proc/cpuinfo | head -1 | cut -d: -f2 | sed 's/^[ \t]*//')"
   local cores="$(grep -c 'processor' /proc/cpuinfo)"
@@ -52,11 +47,10 @@ get_detailed_hardware_info() {
   local total_mem=$(( $(grep MemTotal /proc/meminfo | awk '{print $2}') / 1024 ))
   echo "CPU: $cpu ($cores 核心, $arch)"
   echo "总内存: ${total_mem}MB"
-  # 只显示主分区磁盘
   df -h | awk 'NR==1 || /^\/dev\// {printf("磁盘: %s %s/%s 可用:%s 挂载:%s\n", $1, $3, $2, $4, $6)}'
 }
 
-# 简洁网络测试
+# 网络连通性测试
 simple_network_test() {
   local urls=("https://mirrors.tuna.tsinghua.edu.cn" "https://www.debian.org")
   for url in "${urls[@]}"; do
@@ -76,7 +70,7 @@ simple_network_test() {
   done
 }
 
-# 适用于本项目的最小化环境兼容性检查
+# 基础环境兼容性检查
 minimal_compat_check() {
   local issues_resource=()
   local issues_network=()
@@ -90,22 +84,17 @@ minimal_compat_check() {
   get_detailed_hardware_info
   echo "[网络状态]"
   simple_network_test
-
-  # 检查内存
   local mem_mb=$(( $(grep MemTotal /proc/meminfo | awk '{print $2}') / 1024 ))
   if [[ $mem_mb -lt 512 ]]; then
     issues_resource+=("内存低于512MB")
   fi
-  # 检查磁盘
   local disk_gb=$(df / | awk 'NR==2 {print int($4/1024/1024)}')
   if [[ $disk_gb -lt 5 ]]; then
     issues_resource+=("根分区可用空间低于5GB")
   fi
-  # 检查网络
   if ! curl -s --max-time 5 --connect-timeout 5 "https://www.debian.org" >/dev/null 2>&1; then
     issues_network+=("无法访问debian.org，网络异常")
   fi
-  # 检查root
   if ! is_root_user; then
     issues_permission+=("非root用户运行")
   fi
@@ -120,7 +109,7 @@ minimal_compat_check() {
   fi
 }
 
-# 适用于本项目的全面环境兼容性检查
+# 全面环境兼容性检查
 full_compat_check() {
   local issues_resource=()
   local issues_network=()
@@ -138,8 +127,6 @@ full_compat_check() {
   get_detailed_hardware_info
   echo "[网络状态]"
   simple_network_test
-
-  # 资源
   local mem_mb=$(( $(grep MemTotal /proc/meminfo | awk '{print $2}') / 1024 ))
   if [[ $mem_mb -lt 1024 ]]; then
     issues_resource+=("内存低于1GB")
@@ -148,15 +135,12 @@ full_compat_check() {
   if [[ $disk_gb -lt 10 ]]; then
     issues_resource+=("根分区可用空间低于10GB")
   fi
-  # 网络
   if ! curl -s --max-time 5 --connect-timeout 5 "https://www.debian.org" >/dev/null 2>&1; then
     issues_network+=("无法访问debian.org，网络异常")
   fi
-  # 权限
   if ! is_root_user; then
     issues_permission+=("非root用户运行")
   fi
-  # 时间同步
   echo "[时间同步]"
   if command -v timedatectl >/dev/null 2>&1; then
     if timedatectl show | grep -q 'NTPSynchronized=yes'; then
@@ -168,7 +152,6 @@ full_compat_check() {
   else
     echo "- NTP同步：未检测/未安装"
   fi
-  # 虚拟化
   echo "[虚拟化]"
   if command -v egrep >/dev/null 2>&1; then
     if [[ $(egrep -c '(vmx|svm)' /proc/cpuinfo) -eq 0 ]]; then
@@ -180,7 +163,6 @@ full_compat_check() {
   else
     echo "- CPU虚拟化：未检测/未安装"
   fi
-  # 服务状态
   echo "[服务状态]"
   if command -v systemctl >/dev/null 2>&1; then
     for svc in ssh cron; do
@@ -194,7 +176,6 @@ full_compat_check() {
   else
     echo "- 服务状态：未检测/未安装"
   fi
-  # 安全模块
   echo "[安全模块]"
   if command -v aa-status >/dev/null 2>&1; then
     aa_status=$(aa-status --enabled 2>/dev/null | grep 'enabled' || true)
@@ -206,7 +187,6 @@ full_compat_check() {
   else
     echo "- AppArmor: 未检测/未安装"
   fi
-  # 磁盘健康
   echo "[磁盘健康]"
   if command -v smartctl >/dev/null 2>&1; then
     if smartctl -H /dev/sda | grep -q 'PASSED'; then
@@ -234,13 +214,13 @@ show_check_mode_menu() {
   echo "请选择检查模式："
   echo "1) 基础检查"
   echo "2) 增强检查"
-  echo "0) 退出"
+  echo "0) 返回"
 }
 
 main() {
   while true; do
     show_check_mode_menu
-    read -rp "请输入选项编号: " choice
+    read -rp "请选择编号: " choice
     case $choice in
       1)
         minimal_compat_check
@@ -251,7 +231,7 @@ main() {
         break
         ;;
       0)
-        exit 0
+        return 0
         ;;
       *)
         echo "无效选项，请重新输入。"

@@ -1,10 +1,7 @@
 #!/usr/bin/env bash
-set -e
+# 功能：Debian-HomeNAS 安装自举脚本（整仓库 zip 包下载并解压，所有文件仅存于 /tmp/debian-homenas，无持久化）
 
-# =====================
-# Debian-HomeNAS 安装自举脚本（整仓库 zip 包下载并解压，所有文件仅存于 /tmp/debian-homenas，无持久化）
-# 支持参数：-s 平台@分支（如 github@main、gitee@dev）
-# =====================
+set -e
 
 usage() {
   echo "用法: bash <(wget -qO- https://raw.githubusercontent.com/kekylin/Debian-HomeNAS/main/install.sh) -s 平台@分支"

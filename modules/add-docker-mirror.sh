@@ -1,28 +1,23 @@
 #!/bin/bash
 # 功能：为 Docker 配置国内镜像加速地址（多源，自动合并，自动重启）
-# 参数：无
-# 返回值：0成功，非0失败
-# 作者：kekylin
-# 创建时间：2025-07-11
-# 修改时间：2025-07-14
 
 set -euo pipefail
 IFS=$'\n\t'
 
-# 加载公共模块
+# 加载公共模块，确保依赖函数和常量可用
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${SCRIPT_DIR}/lib/core/constants.sh"
 source "${SCRIPT_DIR}/lib/core/logging.sh"
 source "${SCRIPT_DIR}/lib/system/dependency.sh"
 
-# 检查依赖
+# 检查依赖，确保 Docker 已安装
 REQUIRED_CMDS=(docker)
 if ! check_dependencies "${REQUIRED_CMDS[@]}"; then
-  log_error "依赖缺失，请先安装 Docker"
+  log_error "依赖缺失，请先安装 Docker。"
   exit "${ERROR_DEPENDENCY}"
 fi
 
-# 镜像加速地址（与旧项目一致）
+# 镜像加速地址列表，便于后续维护和扩展
 MIRRORS=(
   "https://docker.ketches.cn"
   "https://hub.iyuu.cn"
@@ -31,7 +26,7 @@ MIRRORS=(
 )
 DAEMON_JSON="/etc/docker/daemon.json"
 
-# 将数组转换为 JSON 数组
+# 将 Bash 数组转换为 JSON 数组字符串
 array_to_json_array() {
   local arr=("$@")
   local json_array="[\n"
@@ -45,7 +40,7 @@ array_to_json_array() {
   echo -e "$json_array"
 }
 
-# 更新 registry-mirrors
+# 合并并去重 registry-mirrors，优先保留已有配置
 update_registry_mirrors() {
   local new_mirrors=("$@")
   local existing_mirrors=()
@@ -56,7 +51,6 @@ update_registry_mirrors() {
   else
     log_warn "配置文件 $DAEMON_JSON 不存在，将创建新文件。"
   fi
-  # 合并并去重（顺序：已有优先，补充新源）
   local all_mirrors=("${existing_mirrors[@]}")
   for mirror in "${new_mirrors[@]}"; do
     local found=0
@@ -65,7 +59,6 @@ update_registry_mirrors() {
     done
     [[ $found -eq 0 ]] && all_mirrors+=("$mirror")
   done
-  # 去重
   local unique_mirrors=()
   for m in "${all_mirrors[@]}"; do
     local seen=0
@@ -76,20 +69,20 @@ update_registry_mirrors() {
   done
   local updated_mirrors_json
   updated_mirrors_json=$(array_to_json_array "${unique_mirrors[@]}")
-  log_info "更新 daemon.json 配置文件..."
+  log_info "正在更新 Docker 镜像加速配置..."
   echo -e "{\n  \"registry-mirrors\": $updated_mirrors_json\n}" > "$DAEMON_JSON"
 }
 
-# 重启 Docker 服务
+# 重启 Docker 服务，确保新配置生效
 reload_and_restart_docker() {
-  log_info "重启 Docker 服务..."
+  log_info "正在重启 Docker 服务..."
   systemctl daemon-reload
   if ! systemctl restart docker; then
-    log_error "重启 Docker 服务失败。"
+    log_error "重启 Docker 服务失败，请检查 systemctl 状态或日志。"
     exit 1
   fi
 }
 
-# 主流程
+# 主流程，自动合并镜像源并重启服务
 update_registry_mirrors "${MIRRORS[@]}"
 reload_and_restart_docker 
