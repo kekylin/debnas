@@ -42,7 +42,7 @@ NOTIFY_SCRIPT="/etc/pam.d/login-notify.sh"
 cat > "$NOTIFY_SCRIPT" << EOF
 #!/bin/bash
 export LANG="en_US.UTF-8"
-[ " {PAM_TYPE:-}" = "open_session" ] || exit 0
+[ "\${PAM_TYPE:-}" = "open_session" ] || exit 0
 {
     echo "To: $notify_email"
     echo "Subject: 登录提醒：\$PAM_USER 通过 \$PAM_SERVICE 登录 \$(hostname -s)"
@@ -60,7 +60,8 @@ export LANG="en_US.UTF-8"
     echo "服务器:       \$(uname -s -n -r)"
 } | /usr/sbin/exim4 -t
 EOF
-chmod +x "$NOTIFY_SCRIPT"
+chmod 755 "$NOTIFY_SCRIPT"
+chown root:root "$NOTIFY_SCRIPT"
 
 # 配置 pam.d/common-session，集成登录通知脚本
 PAM_FILE="/etc/pam.d/common-session"
