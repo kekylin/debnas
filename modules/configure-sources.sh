@@ -9,6 +9,11 @@
 set -euo pipefail
 IFS=$'\n\t'
 
+# 加载公共模块
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "${SCRIPT_DIR}/lib/core/constants.sh"
+source "${SCRIPT_DIR}/lib/core/logging.sh"
+
 # 备份指定文件
 backup() {
   local file="$1"
@@ -26,11 +31,6 @@ backup() {
     fi
   fi
 }
-
-# 加载公共模块
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-source "${SCRIPT_DIR}/lib/core/constants.sh"
-source "${SCRIPT_DIR}/lib/core/logging.sh"
 
 # 镜像源基础URL
 MIRROR="https://mirrors.tuna.tsinghua.edu.cn"
