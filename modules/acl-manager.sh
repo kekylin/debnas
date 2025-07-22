@@ -35,7 +35,8 @@ fi
 # 记录ACL操作日志，便于审计和问题追踪
 log_acl_action() {
   local action="$1"
-  local timestamp=$(date "+%Y-%m-%d %H:%M:%S")
+  local timestamp
+  timestamp=$(date "+%Y-%m-%d %H:%M:%S")
   echo "[$timestamp] $action" >> "$LOG_FILE" 2>/dev/null || log_warning "无法写入日志文件 $LOG_FILE"
 }
 
@@ -77,22 +78,26 @@ set_user_acl() {
   if ! validate_permissions "$permissions"; then return; fi
   print_prompt "是否递归设置？(y/n): "
   read -r recursive
-  print_warn "将为用户 $username 设置 $permissions 权限于 $path，确认操作？(y/n): "
+  print_warning "将为用户 $username 设置 $permissions 权限于 $path，确认操作？(y/n): "
   read -r confirm
   if [[ "$confirm" != "y" ]]; then
     log_info "操作已取消。"
     return
   fi
   if [[ "$recursive" == "y" ]]; then
-    setfacl -R -m u:"$username":"$permissions" "$path" 2>&1 | tee "$ACL_OUTPUT"
+    if setfacl -R -m u:"$username":"$permissions" "$path" 2>&1 | tee "$ACL_OUTPUT"; then
+      log_success "已为用户 $username 设置权限 $permissions。"
+      log_acl_action "设置用户ACL: u:$username:$permissions $path (递归: $recursive)"
+    else
+      log_error "无法设置权限。请检查输入或查看 $ACL_OUTPUT。"
+    fi
   else
-    setfacl -m u:"$username":"$permissions" "$path" 2>&1 | tee "$ACL_OUTPUT"
-  fi
-  if [ $? -eq 0 ]; then
-    log_success "已为用户 $username 设置权限 $permissions。"
-    log_acl_action "设置用户ACL: u:$username:$permissions $path (递归: $recursive)"
-  else
-    log_error "无法设置权限。请检查输入或查看 $ACL_OUTPUT。"
+    if setfacl -m u:"$username":"$permissions" "$path" 2>&1 | tee "$ACL_OUTPUT"; then
+      log_success "已为用户 $username 设置权限 $permissions。"
+      log_acl_action "设置用户ACL: u:$username:$permissions $path (递归: $recursive)"
+    else
+      log_error "无法设置权限。请检查输入或查看 $ACL_OUTPUT。"
+    fi
   fi
 }
 
@@ -111,22 +116,26 @@ set_group_acl() {
   if ! validate_permissions "$permissions"; then return; fi
   print_prompt "是否递归设置？(y/n): "
   read -r recursive
-  print_warn "将为组 $groupname 设置 $permissions 权限于 $path，确认操作？(y/n): "
+  print_warning "将为组 $groupname 设置 $permissions 权限于 $path，确认操作？(y/n): "
   read -r confirm
   if [[ "$confirm" != "y" ]]; then
     log_info "操作已取消。"
     return
   fi
   if [[ "$recursive" == "y" ]]; then
-    setfacl -R -m g:"$groupname":"$permissions" "$path" 2>&1 | tee "$ACL_OUTPUT"
+    if setfacl -R -m g:"$groupname":"$permissions" "$path" 2>&1 | tee "$ACL_OUTPUT"; then
+      log_success "已为组 $groupname 设置权限 $permissions。"
+      log_acl_action "设置组ACL: g:$groupname:$permissions $path (递归: $recursive)"
+    else
+      log_error "无法设置权限。请检查输入或查看 $ACL_OUTPUT。"
+    fi
   else
-    setfacl -m g:"$groupname":"$permissions" "$path" 2>&1 | tee "$ACL_OUTPUT"
-  fi
-  if [ $? -eq 0 ]; then
-    log_success "已为组 $groupname 设置权限 $permissions。"
-    log_acl_action "设置组ACL: g:$groupname:$permissions $path (递归: $recursive)"
-  else
-    log_error "无法设置权限。请检查输入或查看 $ACL_OUTPUT。"
+    if setfacl -m g:"$groupname":"$permissions" "$path" 2>&1 | tee "$ACL_OUTPUT"; then
+      log_success "已为组 $groupname 设置权限 $permissions。"
+      log_acl_action "设置组ACL: g:$groupname:$permissions $path (递归: $recursive)"
+    else
+      log_error "无法设置权限。请检查输入或查看 $ACL_OUTPUT。"
+    fi
   fi
 }
 
@@ -143,14 +152,13 @@ set_default_acl() {
   print_prompt "请输入权限（如rwx）: "
   read -r permissions
   if ! validate_permissions "$permissions"; then return; fi
-  print_warn "将为目录 $path 设置默认ACL $entry:$permissions，确认操作？(y/n): "
+  print_warning "将为目录 $path 设置默认ACL $entry:$permissions，确认操作？(y/n): "
   read -r confirm
   if [[ "$confirm" != "y" ]]; then
     log_info "操作已取消。"
     return
   fi
-  setfacl -d -m "$entry":"$permissions" "$path" 2>&1 | tee "$ACL_OUTPUT"
-  if [ $? -eq 0 ]; then
+  if setfacl -d -m "$entry":"$permissions" "$path" 2>&1 | tee "$ACL_OUTPUT"; then
     log_success "已为目录 $path 设置默认ACL权限。"
     log_acl_action "设置默认ACL: $entry:$permissions $path"
   else
@@ -166,14 +174,13 @@ remove_default_acl() {
     log_error "目录 $path 不存在，请检查路径。"
     return
   fi
-  print_warn "将取消目录 $path 的默认ACL，确认操作？(y/n): "
+  print_warning "将取消目录 $path 的默认ACL，确认操作？(y/n): "
   read -r confirm
   if [[ "$confirm" != "y" ]]; then
     log_info "操作已取消。"
     return
   fi
-  setfacl -k "$path" 2>&1 | tee "$ACL_OUTPUT"
-  if [ $? -eq 0 ]; then
+  if setfacl -k "$path" 2>&1 | tee "$ACL_OUTPUT"; then
     log_success "已取消目录 $path 的默认ACL权限。"
     log_acl_action "取消默认ACL: $path"
   else
@@ -193,22 +200,26 @@ remove_acl() {
   read -r entry
   print_prompt "是否递归删除？(y/n): "
   read -r recursive
-  print_warn "将删除 $entry 的ACL于 $path，确认操作？(y/n): "
+  print_warning "将删除 $entry 的ACL于 $path，确认操作？(y/n): "
   read -r confirm
   if [[ "$confirm" != "y" ]]; then
     log_info "操作已取消。"
     return
   fi
   if [[ "$recursive" == "y" ]]; then
-    setfacl -R -x "$entry" "$path" 2>&1 | tee "$ACL_OUTPUT"
+    if setfacl -R -x "$entry" "$path" 2>&1 | tee "$ACL_OUTPUT"; then
+      log_success "已删除ACL条目 $entry。"
+      log_acl_action "删除ACL: $entry $path (递归: $recursive)"
+    else
+      log_error "无法删除ACL条目。请检查输入或查看 $ACL_OUTPUT。"
+    fi
   else
-    setfacl -x "$entry" "$path" 2>&1 | tee "$ACL_OUTPUT"
-  fi
-  if [ $? -eq 0 ]; then
-    log_success "已删除ACL条目 $entry。"
-    log_acl_action "删除ACL: $entry $path (递归: $recursive)"
-  else
-    log_error "无法删除ACL条目。请检查输入或查看 $ACL_OUTPUT。"
+    if setfacl -x "$entry" "$path" 2>&1 | tee "$ACL_OUTPUT"; then
+      log_success "已删除ACL条目 $entry。"
+      log_acl_action "删除ACL: $entry $path (递归: $recursive)"
+    else
+      log_error "无法删除ACL条目。请检查输入或查看 $ACL_OUTPUT。"
+    fi
   fi
 }
 
@@ -223,7 +234,7 @@ batch_set_acl() {
   if ! validate_permissions "$permissions"; then return; fi
   print_prompt "是否递归设置？(y/n): "
   read -r recursive
-  print_warn "将为匹配 $pattern 的文件设置 $entry:$permissions，确认操作？(y/n): "
+  print_warning "将为匹配 $pattern 的文件设置 $entry:$permissions，确认操作？(y/n): "
   read -r confirm
   if [[ "$confirm" != "y" ]]; then
     log_info "操作已取消。"
@@ -236,15 +247,19 @@ batch_set_acl() {
       continue
     fi
     if [[ "$recursive" == "y" ]]; then
-      setfacl -R -m "$entry":"$permissions" "$path" 2>&1 | tee -a "$ACL_OUTPUT"
+      if setfacl -R -m "$entry":"$permissions" "$path" 2>&1 | tee -a "$ACL_OUTPUT"; then
+        log_success "已为 $path 设置 $entry:$permissions"
+        log_acl_action "批量设置ACL: $entry:$permissions $path (递归: $recursive)"
+      else
+        log_error "无法为 $path 设置权限，请查看 $ACL_OUTPUT。"
+      fi
     else
-      setfacl -m "$entry":"$permissions" "$path" 2>&1 | tee -a "$ACL_OUTPUT"
-    fi
-    if [ $? -eq 0 ]; then
-      log_success "已为 $path 设置 $entry:$permissions"
-      log_acl_action "批量设置ACL: $entry:$permissions $path (递归: $recursive)"
-    else
-      log_error "无法为 $path 设置权限，请查看 $ACL_OUTPUT。"
+      if setfacl -m "$entry":"$permissions" "$path" 2>&1 | tee -a "$ACL_OUTPUT"; then
+        log_success "已为 $path 设置 $entry:$permissions"
+        log_acl_action "批量设置ACL: $entry:$permissions $path (递归: $recursive)"
+      else
+        log_error "无法为 $path 设置权限，请查看 $ACL_OUTPUT。"
+      fi
     fi
   done
   shopt -u nullglob
