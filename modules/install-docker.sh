@@ -28,12 +28,12 @@ log_info "正在执行 Docker 安装前系统检查..."
 
 # 检查内存（Docker 建议至少 1GB）
 if ! check_memory_requirements 1024; then
-  log_warn "内存不足，Docker 可能无法正常运行。"
+  log_warning "内存不足，Docker 可能无法正常运行。"
 fi
 
 # 检查磁盘空间（Docker 建议至少 10GB）
 if ! check_disk_space "/" 10; then
-  log_warn "磁盘空间不足，可能影响 Docker 使用。"
+  log_warning "磁盘空间不足，可能影响 Docker 使用。"
 fi
 
 # 定义基础镜像源 URL，便于后续统一管理
@@ -41,12 +41,12 @@ BASE_MIRROR="https://mirrors.tuna.tsinghua.edu.cn"
 
 # 检查网络连接，避免安装中断
 if ! check_network_connectivity "$BASE_MIRROR"; then
-  log_warn "网络连接异常，可能影响 Docker 安装。"
+  log_warning "网络连接异常，可能影响 Docker 安装。"
 fi
 
 # 检查容器环境，提示用户注意
 if is_container; then
-  log_warn "检测到容器环境，Docker 安装可能受限。"
+  log_warning "检测到容器环境，Docker 安装可能受限。"
 fi
 
 # 获取系统名称和版本

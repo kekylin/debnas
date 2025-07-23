@@ -28,7 +28,7 @@ if [[ -f "$interfaces_file" ]]; then
   sed -i '/^[^#]/ s/^/#/' "$interfaces_file"
   log_success "已注释 $interfaces_file 中的配置。"
 else
-  log_warn "文件 '$interfaces_file' 不存在，跳过操作。"
+  log_warning "文件 '$interfaces_file' 不存在，跳过操作。"
 fi
 
 # 修改 NetworkManager 配置文件，确保 managed=true
@@ -42,7 +42,7 @@ if [[ -f "$nm_conf_file" ]]; then
     log_info "已更新 managed 配置。"
   fi
 else
-  log_warn "文件 '$nm_conf_file' 不存在，跳过操作。"
+  log_warning "文件 '$nm_conf_file' 不存在，跳过操作。"
 fi
 
 # 重启 NetworkManager 服务，确保配置生效
@@ -57,5 +57,5 @@ fi
 if systemctl try-restart cockpit; then
   log_success "Cockpit 网络配置完成。"
 else
-  log_warn "cockpit 服务重启失败，但网络配置已生效。"
+  log_warning "cockpit 服务重启失败，但网络配置已生效。"
 fi 

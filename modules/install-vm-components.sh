@@ -41,12 +41,12 @@ fi
 if sysctl -p; then
   log_success "IP 包转发功能已启用。"
 else
-  log_warn "IP 包转发配置应用失败，请手动检查。"
+  log_warning "IP 包转发配置应用失败，请手动检查。"
 fi
 
 # 重启 cockpit 服务，确保新组件生效
 if systemctl try-restart cockpit; then
   log_success "已安装虚拟机组件并重启 cockpit 服务。"
 else
-  log_warn "cockpit 服务重启失败，但虚拟机组件已安装。"
+  log_warning "cockpit 服务重启失败，但虚拟机组件已安装。"
 fi

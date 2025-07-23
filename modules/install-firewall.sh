@@ -46,7 +46,7 @@ log_info "安装完成，停止 firewalld 服务..."
 if systemctl list-unit-files | grep -qw firewalld.service; then
   systemctl stop firewalld
 else
-  log_warn "firewalld 服务未加载，跳过停止操作。"
+  log_warning "firewalld 服务未加载，跳过停止操作。"
 fi
 
 # 配置 firewalld 防火墙规则，确保基础服务可用

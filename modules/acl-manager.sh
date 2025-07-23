@@ -243,7 +243,7 @@ batch_set_acl() {
   shopt -s nullglob
   for path in $pattern; do
     if [ ! -e "$path" ]; then
-      log_warn "$path 不存在，已跳过。"
+      log_warning "$path 不存在，已跳过。"
       continue
     fi
     if [[ "$recursive" == "y" ]]; then

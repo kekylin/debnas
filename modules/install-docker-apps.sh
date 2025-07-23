@@ -97,7 +97,7 @@ main() {
       5) deploy_container scrutiny ;;
       6) deploy_container dweebui ;;
       7) deploy_container portainer_compose ;;
-      *) log_warn "无效选项：$choice。" ;;
+      *) log_warning "无效选项：$choice。" ;;
     esac
     sleep 1
   done

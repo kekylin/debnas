@@ -47,7 +47,7 @@ configure_email() {
   if [[ -r "$notify_file" ]]; then
     dest_email=$(sed 's/^[[:space:]]*//; s/[[:space:]]*$//' "$notify_file")
   else
-    log_warn "未找到 $notify_file，使用默认接收邮箱 $default_recipient。"
+    log_warning "未找到 $notify_file，使用默认接收邮箱 $default_recipient。"
     dest_email="$default_recipient"
   fi
 

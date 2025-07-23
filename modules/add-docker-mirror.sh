@@ -49,7 +49,7 @@ update_registry_mirrors() {
       existing_mirrors+=("${line//\"/}")
     done < <(grep -oP '"https?://[^\"]+"' "$DAEMON_JSON")
   else
-    log_warn "配置文件 $DAEMON_JSON 不存在，将创建新文件。"
+    log_warning "配置文件 $DAEMON_JSON 不存在，将创建新文件。"
   fi
   local all_mirrors=("${existing_mirrors[@]}")
   for mirror in "${new_mirrors[@]}"; do

@@ -45,5 +45,5 @@ log_success "已设置 Cockpit 外网访问地址：https://$domain"
 if systemctl try-restart cockpit; then
   log_success "Cockpit 服务已重启，外网访问配置生效。"
 else
-  log_warn "Cockpit 服务重启失败，请手动重启。"
+  log_warning "Cockpit 服务重启失败，请手动重启。"
 fi

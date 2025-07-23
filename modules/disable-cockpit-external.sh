@@ -34,5 +34,5 @@ fi
 if systemctl try-restart cockpit; then
   log_success "Cockpit 服务已重启，外网访问已禁用。"
 else
-  log_warn "Cockpit 服务重启失败，请手动重启。"
+  log_warning "Cockpit 服务重启失败，请手动重启。"
 fi
