@@ -4,61 +4,73 @@
 set -euo pipefail
 IFS=$'\n\t'
 
-# 加载公共模块，确保依赖函数和常量可用
+# 加载公共模块
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${PROJECT_ROOT}/lib/core/constants.sh"
 source "${PROJECT_ROOT}/lib/core/logging.sh"
 source "${PROJECT_ROOT}/lib/system/dependency.sh"
 
-# 检查 docker、curl 依赖，确保后续操作可用
+# 容器配置文件
+CONTAINER_CONFIG="${PROJECT_ROOT}/config/containers.conf"
+
+# 检查依赖
 REQUIRED_CMDS=(docker curl)
 if ! check_dependencies "${REQUIRED_CMDS[@]}"; then
   log_error "缺少 Docker 或 curl，请先手动安装。"
   exit "${ERROR_DEPENDENCY}"
 fi
 
-# 获取 compose 目录，确保容器编排文件存在
+# 检查 compose 目录
 COMPOSE_DIR="${PROJECT_ROOT}/docker-compose"
 if [[ ! -d "$COMPOSE_DIR" ]]; then
   log_error "compose 目录不存在：$COMPOSE_DIR。"
   exit 1
 fi
 
-# 容器配置（名称、描述、compose 文件名）
-declare -A container_desc=(
-  [ddns-go]="DDNS-GO"
-  [dockge]="Dockge"
-  [nginx-ui]="Nginx UI"
-  [portainer_zh-cn]="Portainer 中文版"
-  [scrutiny]="Scrutiny"
-  [dweebui]="DweebUI"
-  [portainer_compose]="Portainer"
-)
-declare -A container_compose=(
-  [ddns-go]="ddns-go.yaml"
-  [dockge]="dockge.yaml"
-  [nginx-ui]="nginx-ui.yaml"
-  [portainer_zh-cn]="portainer_zh-cn.yaml"
-  [scrutiny]="scrutiny.yaml"
-  [dweebui]="dweebui.yaml"
-  [portainer_compose]="portainer.yaml"
-)
+# 读取容器配置
+declare -A container_desc
+declare -A container_compose
+declare -a container_order
+load_container_config() {
+  if [[ ! -f "$CONTAINER_CONFIG" ]]; then
+    log_error "容器配置文件不存在：$CONTAINER_CONFIG"
+    exit 1
+  fi
+  container_order=()
+  # 使用 while read ... || [ -n "$key" ] 方式，确保最后一行无换行符也能被处理
+  while IFS='|' read -r key yaml || [ -n "$key" ]; do
+    [[ -z "$key" || "$key" =~ ^# ]] && continue
+    container_desc["$key"]="${key^}"
+    container_compose["$key"]="$yaml"
+    container_order+=("$key")
+  done < "$CONTAINER_CONFIG"
+}
 
-# 显示容器应用菜单，便于用户选择
+# 显示容器应用菜单（按容器名称字母顺序）
 show_container_menu() {
   echo "---------------- 容器应用安装 ----------------"
+  # 生成按字母序排序的新数组
+  local -a sorted_keys=("${container_order[@]}")
+  IFS=$'\n' sorted_keys=($(sort <<<"${sorted_keys[*]}"))
+  unset IFS
   local idx=1
-  for key in ddns-go dockge nginx-ui portainer_zh-cn scrutiny dweebui portainer_compose; do
+  declare -A index_to_key
+  for key in "${sorted_keys[@]}"; do
     echo "$idx、${container_desc[$key]}"
+    index_to_key[$idx]="$key"
     idx=$((idx+1))
   done
-  echo "99、全部安装"
+  echo "99、安装全部"
   echo "0、返回"
   echo "支持多选，空格分隔，如：1 2 3"
   echo -n "请选择编号: "
+  # 返回 index_to_key 供后续选择映射
+  export MENU_INDEX_TO_KEY=$(declare -p index_to_key)
+  export MENU_SORTED_KEYS=$(IFS=,; echo "${sorted_keys[*]}")
+  return 0
 }
 
-# 部署指定容器，自动检测是否已存在
+# 部署指定容器
 deploy_container() {
   local key="$1"
   local yaml_file="$COMPOSE_DIR/${container_compose[$key]}"
@@ -78,27 +90,32 @@ deploy_container() {
   fi
 }
 
-# 主流程，处理用户选择并批量部署
+# 主流程
 main() {
+  load_container_config
   show_container_menu
   read -r -a choices
-  if [[ " ${choices[*]} " =~ " 0 " ]]; then
-    return 0
-  fi
+  [[ " ${choices[*]} " =~ " 0 " ]] && return 0
+
+  local containers=()
+  # 解析 index_to_key 和 sorted_keys
+  eval "${MENU_INDEX_TO_KEY}"
+  IFS=',' read -r -a sorted_keys <<< "${MENU_SORTED_KEYS}"
+
   if [[ " ${choices[*]} " =~ " 99 " ]]; then
-    choices=(1 2 3 4 5 6 7)
+    containers=("${sorted_keys[@]}")
+  else
+    for choice in "${choices[@]}"; do
+      if [[ -n "${index_to_key[$choice]:-}" ]]; then
+        containers+=("${index_to_key[$choice]}")
+      else
+        log_warning "无效选项：$choice。"
+      fi
+    done
   fi
-  for choice in "${choices[@]}"; do
-    case $choice in
-      1) deploy_container ddns-go ;;
-      2) deploy_container dockge ;;
-      3) deploy_container nginx-ui ;;
-      4) deploy_container portainer_zh-cn ;;
-      5) deploy_container scrutiny ;;
-      6) deploy_container dweebui ;;
-      7) deploy_container portainer_compose ;;
-      *) log_warning "无效选项：$choice。" ;;
-    esac
+
+  for key in "${containers[@]}"; do
+    deploy_container "$key"
     sleep 1
   done
 }
