@@ -1,15 +1,5 @@
 #!/bin/bash
-# 功能：统一日志输出模块，支持标准日志级别、时间戳、模块名等
-# 作者：kekylin
-# 创建时间：2025-07-11
-# 修改时间：2025-07-12
-#
-# 用法：source logging.sh 后调用 log_debug/log_info/log_warn/log_error/log_fatal
-#
-# 环境变量：
-#   LOG_LEVEL - 日志级别过滤 (DEBUG|INFO|WARN|ERROR|FATAL)
-#   NO_COLOR=1 - 禁用彩色输出
-#   LOG_TIMESTAMP=0 - 禁用时间戳
+# 功能：统一日志输出模块，支持标准日志级别密度控制，终端仅展示业务状态
 
 set -euo pipefail
 IFS=$'\n\t'
@@ -33,19 +23,6 @@ LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # 加载核心颜色定义
 source "$LIB_DIR/core/colors.sh"
 
-# 语义化颜色映射（用于日志系统）
-get_log_color() {
-  local level="$1"
-  case "$level" in
-    DEBUG) echo "$COLOR_CYAN" ;;
-    INFO)  echo "$COLOR_BLUE" ;;
-    WARN)  echo "$COLOR_YELLOW" ;;
-    ERROR) echo "$COLOR_RED" ;;
-    FATAL) echo "$COLOR_MAGENTA" ;;
-    *)     echo "$COLOR_BLUE" ;;
-  esac
-}
-
 # 获取当前时间戳
 get_timestamp() {
   if [[ "${LOG_TIMESTAMP:-1}" -eq 1 ]]; then
@@ -63,61 +40,29 @@ should_log() {
   [[ $message_level_num -ge $current_level_num ]]
 }
 
-# 日志输出主函数
-log_message() {
-  local level="$1"
+# 统一业务状态输出
+log_status() {
+  local status="$1"
   local message="$2"
-  local timestamp
-  local color=""
-  
-  should_log "$level" || return 0
-  timestamp=$(get_timestamp)
-  color=$(get_log_color "$level")
-  
-  if [[ -n "$timestamp" ]]; then
-    printf "%b[%s]%b %s %s\n" \
-      "$color" "$level" "$COLOR_RESET" \
-      "$timestamp" "$message"
+  local color="$3"
+  local ts
+  ts=$(get_timestamp)
+  if [[ -n "$ts" ]]; then
+    printf "%b%s%b %s %s\n" "$color" "$status" "$COLOR_RESET" "$ts" "$message"
   else
-    printf "%b[%s]%b %s\n" \
-      "$color" "$level" "$COLOR_RESET" \
-      "$message"
+    printf "%b%s%b %s\n" "$color" "$status" "$COLOR_RESET" "$message"
   fi
 }
 
-# 标准日志级别函数
-log_debug() { log_message "DEBUG" "$1"; }
-log_info()  { log_message "INFO"  "$1"; }
-log_warn()  { log_message "WARN"  "$1"; }
-log_error() { log_message "ERROR" "$1"; }
-log_fatal() { log_message "FATAL" "$1"; }
-
-# 语义别名，按行业标准统一颜色
-log_success() {
-  local msg="$1"
-  local ts=$(get_timestamp)
-  printf "%b[SUCCESS]%b %s %s\n" "$COLOR_GREEN" "$COLOR_RESET" "$ts" "$msg"
-}
-log_fail() {
-  local msg="$1"
-  local ts=$(get_timestamp)
-  printf "%b[FAIL]%b %s %s\n" "$COLOR_RED" "$COLOR_RESET" "$ts" "$msg"
-}
-log_warning() {
-  local msg="$1"
-  local ts=$(get_timestamp)
-  printf "%b[WARNING]%b %s %s\n" "$COLOR_YELLOW" "$COLOR_RESET" "$ts" "$msg"
-}
-log_info() {
-  local msg="$1"
-  local ts=$(get_timestamp)
-  printf "%b[INFO]%b %s %s\n" "$COLOR_BLUE" "$COLOR_RESET" "$ts" "$msg"
-}
-log_action() {
-  local msg="$1"
-  local ts=$(get_timestamp)
-  printf "%b[ACTION]%b %s %s\n" "$COLOR_CYAN" "$COLOR_RESET" "$ts" "$msg"
-}
+# 业务状态日志函数（只输出业务状态，不输出日志级别）
+log_success() { should_log "INFO"  && log_status "[SUCCESS]" "$1" "$COLOR_GREEN"; }
+log_fail()    { should_log "ERROR" && log_status "[FAIL]"    "$1" "$COLOR_RED"; }
+log_warning() { should_log "WARN"  && log_status "[WARNING]" "$1" "$COLOR_YELLOW"; }
+log_info()    { should_log "INFO"  && log_status "[INFO]"    "$1" "$COLOR_BLUE"; }
+log_action()  { should_log "INFO"  && log_status "[ACTION]"  "$1" "$COLOR_CYAN"; }
+log_debug()   { should_log "DEBUG" && log_status "[DEBUG]"   "$1" "$COLOR_CYAN"; }
+log_error()   { should_log "ERROR" && log_status "[FAIL]"    "$1" "$COLOR_RED"; }
+log_fatal()   { should_log "FATAL" && log_status "[FAIL]"    "$1" "$COLOR_MAGENTA"; }
 
 # 设置日志级别
 set_log_level() {
@@ -126,7 +71,7 @@ set_log_level() {
     CURRENT_LOG_LEVEL="$level"
     log_info "日志级别设置为: $level"
   else
-    log_error "无效的日志级别: $level (支持: ${!LOG_LEVELS[*]})"
+    log_fail "无效的日志级别: $level (支持: ${!LOG_LEVELS[*]})"
     return 1
   fi
 }

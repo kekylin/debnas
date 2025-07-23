@@ -1,11 +1,5 @@
 #!/bin/bash
 # 功能：UI样式库，提供UI相关的样式函数和语义化颜色映射
-# 作者：kekylin
-# 创建时间：2025-07-13
-# 修改时间：2025-07-13
-#
-# 用法：source styles.sh 后使用UI样式函数
-# 注意：依赖 lib/core/colors.sh
 
 set -euo pipefail
 IFS=$'\n\t'

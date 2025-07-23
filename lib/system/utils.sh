@@ -1,10 +1,5 @@
 #!/bin/bash
 # 功能：系统工具库，包含系统验证、检测等公共函数
-# 作者：kekylin
-# 创建时间：2025-07-12
-# 修改时间：2025-07-12
-#
-# 用法：source system_utils.sh 后调用相关函数
 
 set -euo pipefail
 IFS=$'\n\t'

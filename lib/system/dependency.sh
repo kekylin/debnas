@@ -1,10 +1,5 @@
 #!/bin/bash
 # 功能：依赖检测与自动/手动安装模块
-# 作者：kekylin
-# 创建时间：2025-07-11
-# 修改时间：2025-07-12
-#
-# 用法：source dependency.sh 后调用 check_dependencies install_missing_dependencies list_missing_dependencies
 
 set -euo pipefail
 IFS=$'\n\t'

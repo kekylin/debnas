@@ -1,10 +1,5 @@
 #!/bin/bash
 # 功能：通用用户界面工具库
-# 作者：kekylin
-# 创建时间：2025-07-13
-# 修改时间：2025-07-13
-#
-# 用法：source ui_utils.sh 后调用相关函数
 
 set -euo pipefail
 IFS=$'\n\t'

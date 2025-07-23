@@ -1,10 +1,5 @@
 #!/bin/bash
 # 功能：统一错误码定义模块
-# 作者：kekylin
-# 创建时间：2025-07-11
-# 修改时间：2025-07-12
-#
-# 用法：source error_codes.sh 后使用错误码变量
 
 set -euo pipefail
 IFS=$'\n\t'
