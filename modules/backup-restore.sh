@@ -334,6 +334,38 @@ format_file_size() {
   fi
 }
 
+# 工具函数，计算总文件数
+get_total_files() {
+  local total=0
+  for dir in "$@"; do
+    if [[ -d "$dir" ]]; then
+      total=$((total + $(find "$dir" -type f 2>/dev/null | wc -l)))
+    fi
+  done
+  echo "$total"
+}
+
+# 工具函数，显示进度条
+show_progress() {
+  local current="$1"
+  local total="$2"
+  local width=50
+  local progress=$((current * width / total))
+  local percent=$((current * 100 / total))
+  printf "\r进度: ["
+  for ((i = 0; i < width; i++)); do
+    if [[ $i -lt $progress ]]; then
+      printf "#"
+    else
+      printf " "
+    fi
+  done
+  printf "] %d%%" "$percent"
+  if [[ $current -eq $total ]]; then
+    printf "\n"
+  fi
+}
+
 # 执行备份，自动处理服务状态和统计
 perform_backup() {
   log_action "开始执行 Docker 备份..."
@@ -352,6 +384,17 @@ perform_backup() {
   mkdir -p "$backup_path"
   local total_files=0
   local total_size=0
+  local processed_files=0
+
+  # 预先计算总文件数
+  log_info "正在统计文件数量..."
+  local total_source_files=0
+  for source_dir in "${SOURCE_DIRS[@]}"; do
+    if [[ -d "$source_dir" ]]; then
+      total_source_files=$((total_source_files + $(get_total_files "$source_dir")))
+    fi
+  done
+  log_info "共发现 $total_source_files 个文件需要备份"
 
   for source_dir in "${SOURCE_DIRS[@]}"; do
     if [[ -d "$source_dir" ]]; then
@@ -369,7 +412,15 @@ perform_backup() {
           exclude_args+=(--exclude="$exclude_dir")
         fi
       done
-      if rsync -av --delete "${exclude_args[@]}" "$source_dir/" "$backup_path/$dir_name/"; then
+
+      # 使用 rsync 的进度输出来更新总进度
+      if rsync -a --info=progress2 --no-i-r --delete "${exclude_args[@]}" "$source_dir/" "$backup_path/$dir_name/" 2>&1 | 
+        while IFS= read -r line; do
+          if [[ $line =~ ^[0-9,]+ ]]; then
+            processed_files=$(( (processed_files + 100) > total_source_files ? total_source_files : (processed_files + 100) ))
+            show_progress "$processed_files" "$total_source_files"
+          fi
+        done; then
         local dir_stats
         dir_stats=$(get_dir_stats "$backup_path/$dir_name")
         local dir_size
@@ -481,6 +532,24 @@ perform_restore() {
     return 1
   fi
 
+  # 预先计算总文件数
+  log_info "正在统计文件数量..."
+  local total_backup_files=0
+  for source_dir in "${SOURCE_DIRS[@]}"; do
+    local dir_name
+    case "$source_dir" in
+      "/var/lib/docker") dir_name="docker" ;;
+      "/etc/docker") dir_name="etc" ;;
+      "/opt/docker") dir_name="opt" ;;
+      *) dir_name=$(basename "$source_dir") ;;
+    esac
+    local backup_dir="$selected_backup/$dir_name"
+    if [[ -d "$backup_dir" ]]; then
+      total_backup_files=$((total_backup_files + $(get_total_files "$backup_dir")))
+    fi
+  done
+  log_info "共发现 $total_backup_files 个文件需要恢复"
+
   local start_time
   start_time=$(date +%s)
   local docker_was_active
@@ -490,6 +559,8 @@ perform_restore() {
   fi
   local total_files=0
   local total_size=0
+  local processed_files=0
+
   for source_dir in "${SOURCE_DIRS[@]}"; do
     local dir_name
     # 根据源目录路径确定备份目录名
@@ -502,11 +573,19 @@ perform_restore() {
     local backup_dir="$selected_backup/$dir_name"
     if [[ -d "$backup_dir" ]]; then
       log_action "恢复目录: $source_dir"
-      local rsync_args=(-av)
+      local rsync_args=(-a --info=progress2 --no-i-r)
       if [[ "$restore_mode" == "完全恢复" ]]; then
         rsync_args+=(--delete)
       fi
-      if rsync "${rsync_args[@]}" "$backup_dir/" "$source_dir/"; then
+
+      # 使用 rsync 的进度输出来更新总进度
+      if rsync "${rsync_args[@]}" "$backup_dir/" "$source_dir/" 2>&1 |
+        while IFS= read -r line; do
+          if [[ $line =~ ^[0-9,]+ ]]; then
+            processed_files=$(( (processed_files + 100) > total_backup_files ? total_backup_files : (processed_files + 100) ))
+            show_progress "$processed_files" "$total_backup_files"
+          fi
+        done; then
         local dir_stats
         dir_stats=$(get_dir_stats "$source_dir")
         local dir_size
@@ -523,6 +602,7 @@ perform_restore() {
       log_warning "备份中不存在目录: $dir_name"
     fi
   done
+
   local end_time
   end_time=$(date +%s)
   local num_excludes=0
