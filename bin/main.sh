@@ -121,6 +121,7 @@ show_main_menu() {
     print_menu_item "$((i+1))" "${MENU_ORDER[$i]}"
   done
   print_menu_item "0" "退出"
+  print_separator "="
 }
 
 # 将空格分隔的字符串分割为数组
