@@ -366,6 +366,30 @@ show_progress() {
   fi
 }
 
+# 工具函数，处理 rsync 进度输出
+process_rsync_progress() {
+  local total_files="$1"
+  local processed_files=0
+  local last_update=0
+  local current_time
+
+  # 使用 stdbuf 禁用输出缓冲
+  stdbuf -oL tr '\r' '\n' | while IFS= read -r line; do
+    # 提取已传输的字节数
+    if [[ $line =~ ^[[:space:]]*([0-9,]+)[[:space:]] ]]; then
+      current_time=$(date +%s)
+      # 每秒最多更新一次进度条
+      if ((current_time - last_update >= 1)); then
+        processed_files=$(( (processed_files + 1000) > total_files ? total_files : (processed_files + 1000) ))
+        show_progress "$processed_files" "$total_files"
+        last_update=$current_time
+      fi
+    fi
+  done
+  # 确保显示 100% 进度
+  show_progress "$total_files" "$total_files"
+}
+
 # 执行备份，自动处理服务状态和统计
 perform_backup() {
   log_action "开始执行 Docker 备份..."
@@ -414,13 +438,9 @@ perform_backup() {
       done
 
       # 使用 rsync 的进度输出来更新总进度
-      if rsync -a --info=progress2 --no-i-r --delete "${exclude_args[@]}" "$source_dir/" "$backup_path/$dir_name/" 2>&1 | 
-        while IFS= read -r line; do
-          if [[ $line =~ ^[0-9,]+ ]]; then
-            processed_files=$(( (processed_files + 100) > total_source_files ? total_source_files : (processed_files + 100) ))
-            show_progress "$processed_files" "$total_source_files"
-          fi
-        done; then
+      if rsync -ah --info=progress2 --no-i-r --stats --delete "${exclude_args[@]}" \
+         "$source_dir/" "$backup_path/$dir_name/" 2>&1 | \
+         process_rsync_progress "$total_source_files"; then
         local dir_stats
         dir_stats=$(get_dir_stats "$backup_path/$dir_name")
         local dir_size
@@ -429,8 +449,10 @@ perform_backup() {
         dir_files=$(echo "$dir_stats" | cut -d' ' -f2)
         total_size=$((total_size + dir_size))
         total_files=$((total_files + dir_files))
+        echo # 添加换行，确保下一行日志正确显示
         log_success "目录 $source_dir 备份完成 (${dir_files} 文件, $(format_file_size "$dir_size"))。"
       else
+        echo # 添加换行，确保下一行日志正确显示
         log_fail "目录 $source_dir 备份失败。"
       fi
     else
@@ -573,19 +595,14 @@ perform_restore() {
     local backup_dir="$selected_backup/$dir_name"
     if [[ -d "$backup_dir" ]]; then
       log_action "恢复目录: $source_dir"
-      local rsync_args=(-a --info=progress2 --no-i-r)
+      local rsync_args=(-ah --info=progress2 --no-i-r --stats)
       if [[ "$restore_mode" == "完全恢复" ]]; then
         rsync_args+=(--delete)
       fi
 
       # 使用 rsync 的进度输出来更新总进度
-      if rsync "${rsync_args[@]}" "$backup_dir/" "$source_dir/" 2>&1 |
-        while IFS= read -r line; do
-          if [[ $line =~ ^[0-9,]+ ]]; then
-            processed_files=$(( (processed_files + 100) > total_backup_files ? total_backup_files : (processed_files + 100) ))
-            show_progress "$processed_files" "$total_backup_files"
-          fi
-        done; then
+      if rsync "${rsync_args[@]}" "$backup_dir/" "$source_dir/" 2>&1 | \
+         process_rsync_progress "$total_backup_files"; then
         local dir_stats
         dir_stats=$(get_dir_stats "$source_dir")
         local dir_size
@@ -594,8 +611,10 @@ perform_restore() {
         dir_files=$(echo "$dir_stats" | cut -d' ' -f2)
         total_size=$((total_size + dir_size))
         total_files=$((total_files + dir_files))
+        echo # 添加换行，确保下一行日志正确显示
         log_success "目录 $source_dir 恢复完成 (${dir_files} 文件, $(format_file_size "$dir_size"))。"
       else
+        echo # 添加换行，确保下一行日志正确显示
         log_fail "目录 $source_dir 恢复失败。"
       fi
     else
