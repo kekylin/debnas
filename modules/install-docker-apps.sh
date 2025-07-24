@@ -105,7 +105,7 @@ main() {
   if [[ " ${choices[*]} " =~ " 99 " ]]; then
     containers=("${sorted_keys[@]}")
   else
-    for choice in "${choices[@]}"; do
+  for choice in "${choices[@]}"; do
       if [[ -n "${index_to_key[$choice]:-}" ]]; then
         containers+=("${index_to_key[$choice]}")
       else
