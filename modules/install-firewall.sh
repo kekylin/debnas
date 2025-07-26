@@ -43,10 +43,11 @@ fi
 
 # 安装完成后，停止 firewalld 服务（不禁用开机自启，便于后续统一管理）
 log_info "安装完成，停止 firewalld 服务..."
-if systemctl list-unit-files | grep -qw firewalld.service; then
+if systemctl is-active --quiet firewalld; then
   systemctl stop firewalld
+  log_success "firewalld 服务已停止。"
 else
-  log_warning "firewalld 服务未加载，跳过停止操作。"
+  log_warning "firewalld 服务未运行，无需停止。"
 fi
 
 # 配置 firewalld 防火墙规则，确保基础服务可用
