@@ -152,6 +152,7 @@ show_sub_menu() {
     ((idx++))
   done
   print_menu_item "0" "返回" "true"
+  print_separator "-"
   print_multiselect_prompt
 }
 

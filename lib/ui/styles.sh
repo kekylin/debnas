@@ -46,7 +46,7 @@ print_banner_text() {
 # 参数：$1 - 文本内容
 # 返回值：无
 print_title() {
-  print_colored "COLOR_CYAN" "$1"
+  print_colored "COLOR_GREEN" "$1"
 }
 
 # 成功信息样式函数
@@ -119,7 +119,7 @@ print_menu_item() {
 print_main_menu_item() {
   local number="$1"
   local text="$2"
-  printf "%s%s.%s%s\n" "$COLOR_CYAN" "$number" "$text" "$COLOR_RESET"
+  printf "%s%s.%s%s\n" "$COLOR_WHITE" "$number" "$text" "$COLOR_RESET"
 }
 
 # 子菜单标题样式函数
