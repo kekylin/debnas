@@ -10,6 +10,7 @@ source "${SCRIPT_DIR}/lib/core/constants.sh"
 source "${SCRIPT_DIR}/lib/core/logging.sh"
 source "${SCRIPT_DIR}/lib/system/dependency.sh"
 source "${SCRIPT_DIR}/lib/system/utils.sh"
+source "${SCRIPT_DIR}/lib/ui/styles.sh"
 
 # 检查依赖，确保必备命令已安装
 REQUIRED_CMDS=(apt grep awk mail systemctl)
@@ -269,14 +270,33 @@ main_menu() {
     exit "${ERROR_UNSUPPORTED_OS}"
   fi
   while true; do
-    echo -e "------------------------------\n1. 立即执行检测\n2. 设置定时检测\n3. 查看定时任务\n4. 移除定时任务\n0. 返回\n------------------------------"
-    read -p "请选择编号: " choice
+    print_separator "-"
+    print_menu_item "1" "立即执行检测"
+    print_menu_item "2" "设置定时检测"
+    print_menu_item "3" "查看定时任务"
+    print_menu_item "4" "移除定时任务"
+    print_menu_item "0" "返回" "true"
+    print_separator "-"
+    print_prompt "请选择编号: "
+    read -r choice
+    
+    # 验证输入
+    if [[ ! "$choice" =~ ^[0-9]+$ ]]; then
+      log_error "请输入数字编号"
+      continue
+    fi
+    
+    if [[ "$choice" -lt 0 ]] || [[ "$choice" -gt 4 ]]; then
+      log_error "无效选择，请输入 0-4"
+      continue
+    fi
+    
     case $choice in
       1) execute_update_check ;;
       2) schedule_menu ;;
       3) list_cron_tasks ;;
       4) remove_cron_task ;;
-      0) return 0 ;;
+      0) log_action "返回"; return 0 ;;
       *) log_error "无效的操作选项，请重新选择。" ;;
     esac
   done
@@ -285,13 +305,31 @@ main_menu() {
 # 显示定时检测子菜单并处理用户选择
 schedule_menu() {
   while true; do
-    echo -e "---------------------\n1. 每日检测（00:00）\n2. 每周检测（周一00:00）\n3. 自定义定时检测\n0. 返回\n---------------------"
-    read -p "请选择编号: " subchoice
+    print_separator "-"
+    print_menu_item "1" "每日检测（00:00）"
+    print_menu_item "2" "每周检测（周一00:00）"
+    print_menu_item "3" "自定义定时检测"
+    print_menu_item "0" "返回" "true"
+    print_separator "-"
+    print_prompt "请选择编号: "
+    read -r subchoice
+    
+    # 验证输入
+    if [[ ! "$subchoice" =~ ^[0-9]+$ ]]; then
+      log_error "请输入数字编号"
+      continue
+    fi
+    
+    if [[ "$subchoice" -lt 0 ]] || [[ "$subchoice" -gt 3 ]]; then
+      log_error "无效选择，请输入 0-3"
+      continue
+    fi
+    
     case $subchoice in
       1) set_cron_task "daily"; return ;;
       2) set_cron_task "weekly"; return ;;
       3) set_custom_cron_task; return ;;
-      0) return ;;
+      0) log_action "返回"; return ;;
       *) log_error "无效的操作选项，请重新选择。" ;;
     esac
   done
