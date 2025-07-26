@@ -108,7 +108,7 @@ print_banner() {
   print_banner_text "项目：https://github.com/kekylin/Debian-HomeNAS"
   print_separator "-"
   print_title "温馨提示"
-  print_title "·快速部署适合自动配置基础环境，也可按需选择单项功能"
+  print_title "·一键部署适合自动配置环境，也可按需选择单项功能"
   print_title "·安装防火墙后需重启系统以确保服务正常"
   print_separator "="
 }
