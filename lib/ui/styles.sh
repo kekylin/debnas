@@ -97,13 +97,45 @@ print_separator() {
 }
 
 # 菜单项样式函数
-# 参数：$1 - 编号，$2 - 文本内容
+# 参数：$1 - 编号，$2 - 文本内容，$3 - 是否为退出选项（可选）
 # 返回值：无
 print_menu_item() {
   local number="$1"
   local text="$2"
-  # 使用统一颜色，提高视觉一致性
-  printf "%s%s、%s%s\n" "$COLOR_WHITE" "$number" "$text" "$COLOR_RESET"
+  local is_exit="${3:-false}"
+  
+  if [[ "$is_exit" == "true" ]]; then
+    # 退出选项使用不同颜色
+    printf "%s%s.%s%s\n" "$COLOR_YELLOW" "$number" "$text" "$COLOR_RESET"
+  else
+    # 普通菜单项使用统一格式（点号分隔）
+    printf "%s%s.%s%s\n" "$COLOR_WHITE" "$number" "$text" "$COLOR_RESET"
+  fi
+}
+
+# 主菜单项样式函数（用于主菜单，提供更强的视觉层次）
+# 参数：$1 - 编号，$2 - 文本内容
+# 返回值：无
+print_main_menu_item() {
+  local number="$1"
+  local text="$2"
+  printf "%s%s.%s%s\n" "$COLOR_CYAN" "$number" "$text" "$COLOR_RESET"
+}
+
+# 子菜单标题样式函数
+# 参数：$1 - 标题文本
+# 返回值：无
+print_submenu_title() {
+  local title="$1"
+  local side_length=20  # 缩减到每边20个字符的分隔线
+  
+  # 构建分隔线
+  local line=""
+  for ((i=0; i<side_length; i++)); do
+    line+="-"
+  done
+  
+  printf "%s%s %s %s%s\n" "$COLOR_MAGENTA" "$line" "$title" "$line" "$COLOR_RESET"
 }
 
 # 提示信息样式函数
@@ -111,4 +143,11 @@ print_menu_item() {
 # 返回值：无
 print_prompt() {
   print_colored "COLOR_BLUE" "$1"
+}
+
+# 多选提示信息样式函数
+# 参数：无
+# 返回值：无
+print_multiselect_prompt() {
+  print_colored "COLOR_GREEN" "支持多选，空格分隔多个编号，如：1 2 3"
 } 

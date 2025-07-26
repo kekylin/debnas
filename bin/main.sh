@@ -21,54 +21,53 @@ declare -a MENU_ORDER
 # 初始化模块配置，定义各功能模块与菜单结构的映射关系
 init_module_config() {
   MODULE_DESC=(
-    [s11]="configure-sources|软件源配置"
-    [s12]="install-basic-tools|基础工具安装"
+    [s11]="configure-sources|配置软件源"
+    [s12]="install-basic-tools|安装基础工具"
     [w11]="install-cockpit|安装 Cockpit"
-    [w12]="install-vm-components|虚拟机支持"
+    [w12]="install-vm-components|安装虚拟机"
     [w13]="enable-cockpit-external|启用外网访问"
     [w14]="disable-cockpit-external|禁用外网访问"
-    [w15]="set-cockpit-network|管理网络配置"
-    [m11]="setup-mail-account|邮件账户配置"
+    [w15]="set-cockpit-network|面板管理网络"
+    [m11]="setup-mail-account|配置邮件账户"
     [m12]="enable-login-mail|启用登录通知"
     [m13]="disable-login-mail|禁用登录通知"
     [a11]="configure-security|基础安全配置"
-    [a12]="install-firewall|防火墙安装"
-    [a13]="install-fail2ban|fail2ban 安装"
+    [a12]="install-firewall|安装 Firewalld"
+    [a13]="install-fail2ban|安装 Fail2ban"
     [a14]="block-threat-ips|IP 封禁工具"
-    [d11]="install-docker|Docker 安装"
-    [d12]="add-docker-mirror|镜像加速配置"
-    [d13]="install-docker-apps|容器应用安装"
-    [d14]="backup-restore|Docker 备份恢复"
-    [t11]="check-system-compatibility|兼容性检查"
-    [t12]="check-system-updates|系统更新检查"
-    [t13]="install-service-query|服务状态查询"
-    [t14]="auto-update-hosts|hosts 文件更新"
-    [t15]="install-tunnel|内网穿透安装"
-    [t16]="acl-manager|ACL权限管理"
-    [q11]="setup-homenas-basic|基础环境配置"
-    [q12]="setup-homenas-secure|安全环境配置"
+    [d11]="install-docker|安装 Docker"
+    [d12]="add-docker-mirror|镜像加速"
+    [d13]="install-docker-apps|安装应用"
+    [d14]="backup-restore|备份恢复"
+    [t11]="check-system-compatibility|检查兼容性"
+    [t12]="check-system-updates|检查系统更新"
+    [t13]="install-service-query|查询服务状态"
+    [t14]="auto-update-hosts|更新 Hosts 文件"
+    [t15]="install-tunnel|安装 Tailscale"
+    [t16]="acl-manager|管理ACL权限"
+    [q11]="setup-homenas-basic|一键部署基础环境"
+    [q12]="setup-homenas-secure|一键部署安全环境"
   )
 
   # 菜单结构定义
   MENU_MAP=(
-    ["系统初始化"]="s11 s12"
-    ["Web管理"]="w11 w12 w13 w14 w15"
-    ["邮件服务"]="m11 m12 m13"
-    [a11]="configure-security|基础安全配置"
-    ["安全加固"]="a11 a12 a13 a14"
-    ["容器平台"]="d11 d12 d13 d14"
+    ["基础配置"]="s11 s12"
+    ["管理面板"]="w11 w12 w13 w14 w15"
+    ["通知服务"]="m11 m12 m13"
+    ["安全防护"]="a11 a12 a13 a14"
+    ["容器管理"]="d11 d12 d13 d14"
     ["系统工具"]="t11 t12 t13 t14 t15 t16"
-    ["快速部署"]="q11 q12"
+    ["一键部署"]="q11 q12"
   )
 
   MENU_ORDER=(
-    "系统初始化"
-    "Web管理"
-    "邮件服务"
-    "安全加固"
-    "容器平台"
+    "基础配置"
+    "管理面板"
+    "通知服务"
+    "安全防护"
+    "容器管理"
     "系统工具"
-    "快速部署"
+    "一键部署"
   )
 }
 
@@ -118,9 +117,9 @@ print_banner() {
 show_main_menu() {
   print_banner
   for i in "${!MENU_ORDER[@]}"; do
-    print_menu_item "$((i+1))" "${MENU_ORDER[$i]}"
+    print_main_menu_item "$((i+1))" "${MENU_ORDER[$i]}"
   done
-  print_menu_item "0" "退出"
+  print_menu_item "0" "退出" "true"
   print_separator "="
 }
 
@@ -130,7 +129,9 @@ split_string_to_array() {
   local -n array_ref="$2"
   
   array_ref=()
-  [[ -n "$string" ]] && IFS=' ' read -ra array_ref <<< "$string"
+  if [[ -n "$string" ]]; then
+    IFS=' ' read -ra array_ref <<< "$string"
+  fi
 }
 
 # 显示子菜单，供用户选择具体操作
@@ -138,7 +139,7 @@ show_sub_menu() {
   local group="$1"
   local -a items
   split_string_to_array "${MENU_MAP[$group]}" items
-  print_title "---------------- $group ----------------"
+  print_submenu_title "$group"
   local idx=1
   for key in "${items[@]}"; do
     if [[ -z "${MODULE_DESC[$key]+_}" ]]; then
@@ -150,8 +151,8 @@ show_sub_menu() {
     print_menu_item "$idx" "$zh_desc"
     ((idx++))
   done
-  print_menu_item "0" "返回"
-  print_prompt "支持多选，空格分隔，如：1 2 3"
+  print_menu_item "0" "返回" "true"
+  print_multiselect_prompt
 }
 
 # 验证用户输入是否为数字
@@ -202,7 +203,8 @@ handle_sub_menu() {
   split_string_to_array "${MENU_MAP[$group]}" items
   while true; do
     show_sub_menu "$group"
-    read -rp "请选择编号: " sub_choices
+    print_prompt "请选择编号: "
+    read -r sub_choices
     [[ -z "$sub_choices" ]] && {
       log_fail "输入为空，请重新输入有效编号。"
       continue
@@ -235,7 +237,8 @@ handle_sub_menu() {
 main_menu_loop() {
   while true; do
     show_main_menu
-    read -rp "请选择编号: " main_choice
+    print_prompt "请选择编号: "
+    read -r main_choice
     if ! validate_numeric_input "$main_choice"; then
       log_fail "请输入数字编号。"
       continue

@@ -28,7 +28,7 @@ show_menu() {
     print_menu_item "${idx}" "${option}"
     ((idx++))
   done
-  print_menu_item "0" "返回"
+  print_menu_item "0" "返回" "true"
 }
 
 # 显示带分隔线的菜单
@@ -39,7 +39,7 @@ show_menu_with_border() {
   shift
   local -a options=("$@")
   
-  print_title "---------------- $title ----------------"
+  print_submenu_title "$title"
   show_menu "" "${options[@]}"
 }
 
@@ -50,7 +50,8 @@ get_user_choice() {
   local max_options="$1"
   local choice
   
-  read -rp "请选择编号: " choice
+  print_prompt "请选择编号: "
+  read -r choice
   
   # 验证输入
   if [[ ! "$choice" =~ ^[0-9]+$ ]]; then
@@ -74,7 +75,9 @@ get_user_multiple_choice() {
   local max_options="$1"
   local choices
   
-  read -rp "请选择编号: " choices
+  print_multiselect_prompt
+  print_prompt "请选择编号: "
+  read -r choices
   
   # 验证输入
   if [[ -z "$choices" ]]; then
