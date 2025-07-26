@@ -135,7 +135,7 @@ print_submenu_title() {
     line+="-"
   done
   
-  printf "%s%s %s %s%s\n" "$COLOR_MAGENTA" "$line" "$title" "$line" "$COLOR_RESET"
+  printf "%s%s %s %s%s\n" "$COLOR_CYAN" "$line" "$title" "$line" "$COLOR_RESET"
 }
 
 # 提示信息样式函数
