@@ -267,14 +267,16 @@ batch_set_acl() {
 
 # 菜单
 show_acl_menu() {
-  show_menu_with_border "请选择ACL操作" \
-    "查看ACL权限" \
-    "设置用户ACL" \
-    "设置组ACL" \
-    "设置默认ACL" \
-    "取消默认ACL" \
-    "删除ACL" \
-    "批量设置ACL"
+  print_separator "-"
+  print_menu_item "1" "查看ACL权限"
+  print_menu_item "2" "设置用户ACL"
+  print_menu_item "3" "设置组ACL"
+  print_menu_item "4" "设置默认ACL"
+  print_menu_item "5" "取消默认ACL"
+  print_menu_item "6" "删除ACL"
+  print_menu_item "7" "批量设置ACL"
+  print_menu_item "0" "返回" "true"
+  print_separator "-"
 }
 
 # 主循环
@@ -290,7 +292,8 @@ main() {
   )
   while true; do
     show_acl_menu
-    choice=$(get_user_choice ${#menu_options[@]})
+    print_prompt "请选择编号: "
+    read -r choice
     case $choice in
       1) view_acl ;;
       2) set_user_acl ;;
@@ -300,6 +303,7 @@ main() {
       6) remove_acl ;;
       7) batch_set_acl ;;
       0) log_action "返回"; return 0 ;;
+      *) log_fail "无效选择，请输入0-7。" ;;
     esac
     echo ""
     sleep 1
