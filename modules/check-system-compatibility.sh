@@ -211,16 +211,30 @@ full_compat_check() {
 
 # 菜单
 show_check_mode_menu() {
-  echo "请选择检查模式："
-  echo "1) 基础检查"
-  echo "2) 增强检查"
-  echo "0) 返回"
+  print_separator "-"
+  print_menu_item "1" "基础检查"
+  print_menu_item "2" "增强检查"
+  print_menu_item "0" "返回" "true"
+  print_separator "-"
 }
 
 main() {
   while true; do
     show_check_mode_menu
-    read -rp "请选择编号: " choice
+    print_prompt "请选择编号: "
+    read -r choice
+    
+    # 验证输入
+    if [[ ! "$choice" =~ ^[0-9]+$ ]]; then
+      log_error "请输入数字编号"
+      continue
+    fi
+    
+    if [[ "$choice" -lt 0 ]] || [[ "$choice" -gt 2 ]]; then
+      log_error "无效选择，请输入 0-2"
+      continue
+    fi
+    
     case $choice in
       1)
         minimal_compat_check
@@ -231,10 +245,11 @@ main() {
         break
         ;;
       0)
+        log_action "返回"
         return 0
         ;;
       *)
-        echo "无效选项，请重新输入。"
+        log_error "无效选项，请重新输入。"
         ;;
     esac
   done
