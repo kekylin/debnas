@@ -116,7 +116,7 @@ load_backup_config() {
     if [[ -z "$BACKUP_DEST" ]]; then
       log_error "配置文件缺少 BACKUP_DEST。"
       exit "${ERROR_CONFIG}"
-    fi
+  fi
   fi
 
   # 验证配置
@@ -644,14 +644,32 @@ perform_restore() {
 # 显示主菜单
 main_menu() {
   while true; do
-    show_menu_with_border "Docker 备份恢复" "执行备份" "执行恢复" "查看备份列表"
-    choice=$(get_user_choice 3)
+    print_separator "-"
+    print_menu_item "1" "执行备份"
+    print_menu_item "2" "执行恢复"
+    print_menu_item "3" "备份列表"
+    print_menu_item "0" "返回" "true"
+    print_separator "-"
+    print_prompt "请选择编号: "
+    read -r choice
+    
+    # 验证输入
+    if [[ ! "$choice" =~ ^[0-9]+$ ]]; then
+      log_error "请输入数字编号"
+      continue
+    fi
+    
+    if [[ "$choice" -lt 0 ]] || [[ "$choice" -gt 3 ]]; then
+      log_error "无效选择，请输入 0-3"
+      continue
+    fi
+    
     case $choice in
-      1)
+    1)
         load_backup_config
-        perform_backup
-        ;;
-      2)
+      perform_backup
+      ;;
+    2)
         perform_restore  # 移除 load_backup_config
         ;;
       3)
@@ -660,18 +678,18 @@ main_menu() {
         read -r -e -p "" backup_dest
         if [[ -n "$backup_dest" && "$backup_dest" =~ ^/ ]]; then
           BACKUP_DEST=$(realpath -s "$backup_dest" 2>/dev/null || echo "$backup_dest")
-          echo "备份列表:"
-          for backup_dir in "$BACKUP_DEST"/docker_backup_v*; do
-            if [[ -d "$backup_dir" ]]; then
+        echo "备份列表:"
+        for backup_dir in "$BACKUP_DEST"/docker_backup_v*; do
+          if [[ -d "$backup_dir" ]]; then
               local version
               version=$(basename "$backup_dir" | sed 's/docker_backup_v//')
               local backup_date
               backup_date=$(stat -c %y "$backup_dir" | cut -d' ' -f1)
               local backup_size
               backup_size=$(du -sh "$backup_dir" 2>/dev/null | cut -f1)
-              echo "  版本 $version (创建于 $backup_date, 大小: $backup_size)"
-            fi
-          done
+            echo "  版本 $version (创建于 $backup_date, 大小: $backup_size)"
+          fi
+        done
         else
           log_error "备份路径必须是绝对路径（以 / 开头）。"
         fi
@@ -693,5 +711,5 @@ case "${1:-}" in
     ;;
   *)
     main_menu
-    ;;
-esac
+      ;;
+  esac
