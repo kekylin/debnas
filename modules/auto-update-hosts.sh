@@ -115,20 +115,27 @@ list_cron_jobs() {
 # 菜单函数，供用户选择操作
 menu() {
   local menu_options=(
-    "单次更新 hosts 文件"
-    "定时更新 hosts 文件"
-    "删除定时更新任务"
+    "单次更新"
+    "定时更新"
+    "删除定时任务"
     "查询定时任务"
   )
-  show_menu_with_border "请选择编号:" "${menu_options[@]}"
-  choice=$(get_user_choice ${#menu_options[@]})
+  print_separator "-"
+  print_menu_item "1" "单次更新"
+  print_menu_item "2" "定时更新"
+  print_menu_item "3" "删除定时任务"
+  print_menu_item "4" "查询定时任务"
+  print_menu_item "0" "返回" "true"
+  print_separator "-"
+  print_prompt "请选择编号: "
+  read -r choice
   case $choice in
     1)
-      log_action "单次更新 hosts 文件"
+      log_action "单次更新"
       update_hosts
       ;;
     2)
-      log_action "定时更新 hosts 文件"
+      log_action "定时更新"
       create_cron_job
       ;;
     3)
