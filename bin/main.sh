@@ -44,7 +44,8 @@ init_module_config() {
     [t13]="install-service-query|查询服务状态"
     [t14]="auto-update-hosts|更新 Hosts 文件"
     [t15]="install-tunnel|安装 Tailscale"
-    [t16]="acl-manager|管理ACL权限"
+    [t16]="acl-manager|ACL 权限管理"
+    [t17]="bbr-algo-manager|BBR 算法管理"
     [q11]="setup-homenas-basic|一键部署基础环境"
     [q12]="setup-homenas-secure|一键部署安全环境"
   )
@@ -56,7 +57,7 @@ init_module_config() {
     ["通知服务"]="m11 m12 m13"
     ["安全防护"]="a11 a12 a13 a14"
     ["容器管理"]="d11 d12 d13 d14"
-    ["系统工具"]="t11 t12 t13 t14 t15 t16"
+    ["系统工具"]="t11 t12 t13 t14 t15 t16 t17"
     ["一键部署"]="q11 q12"
   )
 
