@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# 功能：Debian-HomeNAS 安装自举脚本（整仓库 zip 包下载并解压，所有文件仅存于 /tmp/debian-homenas，无持久化）
+# 功能：DebNAS 安装自举脚本（整仓库 zip 包下载并解压，所有文件仅存于 /tmp/debnas，无持久化）
 
 set -e
 
 usage() {
-  echo "用法: bash <(wget -qO- https://raw.githubusercontent.com/kekylin/Debian-HomeNAS/main/install.sh) -s 平台@分支"
+  echo "用法: bash <(wget -qO- https://raw.githubusercontent.com/kekylin/debnas/main/install.sh) -s 平台@分支"
   echo "示例: -s github@main 或 -s gitee@dev"
   exit 1
 }
@@ -37,18 +37,18 @@ fi
 
 # 设置下载链接和解压后子目录名
 if [[ "$PLATFORM" == "gitee" ]]; then
-  TAR_URL="https://gitee.com/kekylin/Debian-HomeNAS/repository/archive/$BRANCH.tar.gz"
-  TAR_SUBDIR="Debian-HomeNAS-$BRANCH"
+  TAR_URL="https://gitee.com/kekylin/debnas/repository/archive/$BRANCH.tar.gz"
+TAR_SUBDIR="debnas-$BRANCH"
 elif [[ "$PLATFORM" == "github" ]]; then
-  TAR_URL="https://github.com/kekylin/Debian-HomeNAS/archive/refs/heads/$BRANCH.tar.gz"
-  TAR_SUBDIR="Debian-HomeNAS-$BRANCH"
+  TAR_URL="https://github.com/kekylin/debnas/archive/refs/heads/$BRANCH.tar.gz"
+TAR_SUBDIR="debnas-$BRANCH"
 else
   echo "[FAIL] 不支持的平台: $PLATFORM"
   exit 2
 fi
 
 # 创建唯一临时根目录
-TMPROOT=$(mktemp -d /tmp/debian-homenas.XXXXXX)
+TMPROOT=$(mktemp -d /tmp/debnas.XXXXXX)
 chmod 700 "$TMPROOT"
 
 # 下载并解压仓库

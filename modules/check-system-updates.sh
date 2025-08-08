@@ -148,7 +148,7 @@ build_report_content() {
   [[ -n "$major_update_info" || $security_update_count -gt 0 ]] && printf "\n"
   format_update_list "$regular_update_list" "$regular_update_count" "常规更新"
   printf "\n检测时间: %s\n" "$(date +'%Y-%m-%d %H:%M:%S')"
-  printf "\n如需了解更多 Debian-HomeNAS 使用方法，请访问 https://github.com/kekylin/Debian-HomeNAS\n\n此邮件为系统自动发送，请勿直接回复。\n"
+  printf "\n如需了解更多 DebNAS 使用方法，请访问 https://github.com/kekylin/debnas\n\n此邮件为系统自动发送，请勿直接回复。\n"
 }
 
 # 执行更新检测并生成报告

@@ -92,7 +92,7 @@ setup_environment() {
     trap 'log_warning "用户中断操作，正在清理临时文件并退出。"; rm -rf "$TMP_DIR"; exit 1' INT
     trap 'rm -rf "$TMP_DIR"' EXIT
   else
-    TMP_DIR="/tmp/debian-homenas.$(date +%s%N)$$"
+    TMP_DIR="/tmp/debnas.$(date +%s%N)$$"
     mkdir -p "${TMP_DIR}"
     chmod 700 "${TMP_DIR}"
     trap 'log_warning "用户中断操作，正在清理临时文件并退出。"; rm -rf "${TMP_DIR}"; exit 1' INT
@@ -103,10 +103,10 @@ setup_environment() {
 # 显示项目横幅，提供项目信息和重要提示
 print_banner() {
   print_separator "="
-  print_banner_text "                 Debian-HomeNAS"
+  print_banner_text "                     DebNAS"
   print_banner_text "                                  QQ群：339169752"
   print_banner_text "作者：kekylin"
-  print_banner_text "项目：https://github.com/kekylin/Debian-HomeNAS"
+  print_banner_text "项目：https://github.com/kekylin/debnas"
   print_separator "-"
   print_title "温馨提示"
   print_title "·一键部署适合自动配置环境，也可按需选择单项功能"

@@ -13,9 +13,9 @@ source "${SCRIPT_DIR}/lib/ui/menu.sh"
 source "${SCRIPT_DIR}/lib/ui/styles.sh"
 
 # 临时文件管理，避免并发冲突和数据泄露
-mkdir -p /tmp/debian-homenas
-chmod 700 /tmp/debian-homenas
-ACL_OUTPUT=$(mktemp /tmp/debian-homenas/acl-output.XXXXXX)
+mkdir -p /tmp/debnas
+chmod 700 /tmp/debnas
+ACL_OUTPUT=$(mktemp /tmp/debnas/acl-output.XXXXXX)
 trap 'rm -f "$ACL_OUTPUT"' EXIT
 
 # 日志文件路径

@@ -53,11 +53,11 @@ su -
 
 Github地址
   ```shell
-bash <(wget -qO- https://raw.githubusercontent.com/kekylin/Debian-HomeNAS/dev/install.sh) -s github@dev
+bash <(wget -qO- https://raw.githubusercontent.com/kekylin/debnas/dev/install.sh) -s github@dev
   ```
 Gitee地址（国内用户推荐）
   ```shell
-bash <(wget -qO- https://gitee.com/kekylin/Debian-HomeNAS/raw/dev/install.sh) -s gitee@dev
+bash <(wget -qO- https://gitee.com/kekylin/debnas/raw/dev/install.sh) -s gitee@dev
   ```
 - `-s` 参数格式：平台@分支名，如 `-s github@main`、`-s gitee@dev`
 
@@ -90,20 +90,20 @@ https://localhost:9443
 
 <br>最后，希望您在阅读本项目时能够理解并遵守以上免责声明。感谢您的支持和理解！
 <h3>项目简介</h3>
-<a href="https://github.com/kekylin/Debian-HomeNAS/blob/main/Docs/%E6%88%90%E6%9E%9C%E5%B1%95%E7%A4%BA.md">搭建成果展示</a><br>
-<a href="https://github.com/kekylin/Debian-HomeNAS/blob/main/Docs/%E8%84%9A%E6%9C%AC%E4%BB%8B%E7%BB%8D.md">脚本介绍（使用前阅读）</a><br>
+<a href="https://github.com/kekylin/debnas/blob/main/Docs/%E6%88%90%E6%9E%9C%E5%B1%95%E7%A4%BA.md">搭建成果展示</a><br>
+<a href="https://github.com/kekylin/debnas/blob/main/Docs/%E8%84%9A%E6%9C%AC%E4%BB%8B%E7%BB%8D.md">脚本介绍（使用前阅读）</a><br>
 
 <h3>系统相关教程</h3>
 <a href="https://docs.qq.com/doc/p/ac7a498302fca24ec7f0d002820ee32eceb03c13">基于Debian搭建HomeNAS图文教程 （本项目核心教程）</a><br>
 <a href="https://docs.qq.com/doc/p/7859e20c9c3fa6816cb9f4d4e5e02a67495fc4a6">基于Ubuntu搭建HomeNAS图文教程 （本项目核心教程）</a><br>
-<a href="https://github.com/kekylin/Debian-HomeNAS/blob/main/Docs/Debian%E7%B3%BB%E7%BB%9F%E6%9C%80%E5%B0%8F%E5%8C%96%E5%AE%89%E8%A3%85%E6%95%99%E7%A8%8B.md">Debian系统最小化安装教程</a><br>
-<a href="https://github.com/kekylin/Debian-HomeNAS/blob/main/Docs/Debian%E7%B3%BB%E7%BB%9F%E9%80%9A%E8%BF%87Cockpit%E9%9D%A2%E6%9D%BF%E7%9B%B4%E9%80%9A%E7%A1%AC%E7%9B%98%E5%AE%89%E8%A3%85%E9%BB%91%E7%BE%A4%E6%99%96.md">Debian系统通过Cockpit面板直通硬盘安装黑群晖</a><br>
-<a href="https://github.com/kekylin/Debian-HomeNAS/blob/main/Docs/%E5%86%85%E7%BD%91%E7%A9%BF%E9%80%8F%E6%9C%8D%E5%8A%A1Tailscale%E5%AE%89%E8%A3%85%E4%BD%BF%E7%94%A8%E6%95%99%E7%A8%8B.md">内网穿透服务Tailscale安装使用教程</a><br>
-<a href="https://github.com/kekylin/Debian-HomeNAS/blob/main/Docs/Nginx%E5%8F%8D%E4%BB%A3%E9%99%90%E5%88%B6%E5%9B%BD%E5%A4%96IP%E8%AE%BF%E9%97%AE%E6%95%99%E7%A8%8B.md">Nginx反代限制国外IP访问教程</a><br>
+<a href="https://github.com/kekylin/debnas/blob/main/Docs/Debian%E7%B3%BB%E7%BB%9F%E6%9C%80%E5%B0%8F%E5%8C%96%E5%AE%89%E8%A3%85%E6%95%99%E7%A8%8B.md">Debian系统最小化安装教程</a><br>
+<a href="https://github.com/kekylin/debnas/blob/main/Docs/Debian%E7%B3%BB%E7%BB%9F%E9%80%9A%E8%BF%87Cockpit%E9%9D%A2%E6%9D%BF%E7%9B%B4%E9%80%9A%E7%A1%AC%E7%9B%98%E5%AE%89%E8%A3%85%E9%BB%91%E7%BE%A4%E6%99%96.md">Debian系统通过Cockpit面板直通硬盘安装黑群晖</a><br>
+<a href="https://github.com/kekylin/debnas/blob/main/Docs/%E5%86%85%E7%BD%91%E7%A9%BF%E9%80%8F%E6%9C%8D%E5%8A%A1Tailscale%E5%AE%89%E8%A3%85%E4%BD%BF%E7%94%A8%E6%95%99%E7%A8%8B.md">内网穿透服务Tailscale安装使用教程</a><br>
+<a href="https://github.com/kekylin/debnas/blob/main/Docs/Nginx%E5%8F%8D%E4%BB%A3%E9%99%90%E5%88%B6%E5%9B%BD%E5%A4%96IP%E8%AE%BF%E9%97%AE%E6%95%99%E7%A8%8B.md">Nginx反代限制国外IP访问教程</a><br>
 
 <h3>Docker相关教程</h3>
 <a href="https://docs.qq.com/doc/p/359de0f852ffbf9ba159dbec3ddcf119c33462f2">HomePage导航页部署教程</a><br>
-<a href="https://github.com/kekylin/Debian-HomeNAS/blob/main/Docs/%E9%83%A8%E7%BD%B2Docker%E7%89%88%E8%B0%B7%E6%AD%8C%E6%B5%8F%E8%A7%88%E5%99%A8%E6%95%99%E7%A8%8B.md">部署Docker版谷歌浏览器教程</a><br>
+<a href="https://github.com/kekylin/debnas/blob/main/Docs/%E9%83%A8%E7%BD%B2Docker%E7%89%88%E8%B0%B7%E6%AD%8C%E6%B5%8F%E8%A7%88%E5%99%A8%E6%95%99%E7%A8%8B.md">部署Docker版谷歌浏览器教程</a><br>
 
 <h3>B站视频</h3>
 <a href="https://www.bilibili.com/video/BV16w4m1m78x">基于Linux搭建HomeNAS最终效果展示(Debian/Ubuntu)</a><br>
@@ -124,18 +124,18 @@ https://localhost:9443
   <source
     media="(prefers-color-scheme: dark)"
     srcset="
-      https://api.star-history.com/svg?repos=kekylin/Debian-HomeNAS&type=Date&theme=dark
+      https://api.star-history.com/svg?repos=kekylin/debnas&type=Date&theme=dark
     "
   />
   <source
     media="(prefers-color-scheme: light)"
     srcset="
-      https://api.star-history.com/svg?repos=kekylin/Debian-HomeNAS&type=Date
+      https://api.star-history.com/svg?repos=kekylin/debnas&type=Date
     "
   />
   <img
     alt="Star History Chart"
-    src="https://api.star-history.com/svg?repos=kekylin/Debian-HomeNAS&type=Date"
+    src="https://api.star-history.com/svg?repos=kekylin/debnas&type=Date"
   />
 </picture>
 

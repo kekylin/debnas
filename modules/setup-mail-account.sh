@@ -113,7 +113,7 @@ From: ${sender_email}
 • 通知接收邮箱: ${notify_email}
 • 配置验证时间: $(date +"%Y-%m-%d %H:%M")
 
-如需了解更多 [${app_name}] 使用方法，请访问 https://github.com/kekylin/Debian-HomeNAS
+如需了解更多 [${app_name}] 使用方法，请访问 https://github.com/kekylin/debnas
 
 此邮件为系统自动发送，请勿直接回复。
 EOF
