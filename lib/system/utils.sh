@@ -47,6 +47,69 @@ verify_system_support() {
   return 0
 }
 
+# 验证系统支持，仅支持 Debian 12 和 13
+# 参数：无
+# 返回值：0成功，非0失败
+verify_debian_12_13_support() {
+  local system
+  if command -v lsb_release >/dev/null 2>&1; then
+    system=$(lsb_release -is)
+  else
+    system=$(grep -oP '^ID=\K.*' /etc/os-release | tr -d '"')
+  fi
+  system=$(echo "$system" | tr '[:upper:]' '[:lower:]')
+  if [[ "$system" != "debian" ]]; then
+    log_error "不支持的系统 (${system})，仅支持 Debian 12 和 13"
+    return 1
+  fi
+  
+  # 获取系统代号
+  local codename
+  if command -v lsb_release >/dev/null 2>&1; then
+    codename=$(lsb_release -cs)
+  else
+    codename=$(grep -oP '^VERSION_CODENAME=\K.*' /etc/os-release | tr -d '"')
+  fi
+  
+  # 检查是否为支持的版本代号
+  case "$codename" in
+    "bookworm"|"trixie")
+      log_info "检测到支持的 Debian 版本: $codename"
+      return 0
+      ;;
+    *)
+      log_error "不支持的 Debian 版本代号: $codename，仅支持 bookworm (Debian 12) 和 trixie (Debian 13)"
+      return 1
+      ;;
+  esac
+}
+
+# 获取系统代号
+# 参数：无
+# 返回值：系统代号字符串
+get_system_codename() {
+  if command -v lsb_release >/dev/null 2>&1; then
+    lsb_release -cs
+  else
+    grep -oP '^VERSION_CODENAME=\K.*' /etc/os-release | tr -d '"'
+  fi
+}
+
+# 检查系统代号是否支持
+# 参数：$1 - 系统代号
+# 返回值：0支持，非0不支持
+is_supported_codename() {
+  local codename="$1"
+  case "$codename" in
+    "bookworm"|"trixie")
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 # 获取系统名称
 # 参数：无
 # 返回值：系统名称字符串

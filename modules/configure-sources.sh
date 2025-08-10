@@ -8,6 +8,7 @@ IFS=$'\n\t'
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${SCRIPT_DIR}/lib/core/constants.sh"
 source "${SCRIPT_DIR}/lib/core/logging.sh"
+source "${SCRIPT_DIR}/lib/system/utils.sh"
 
 # 备份指定文件，保留最近 3 个备份，避免数据丢失
 backup() {
@@ -29,34 +30,43 @@ backup() {
 # 镜像源基础 URL，便于后续维护和切换
 MIRROR="https://mirrors.tuna.tsinghua.edu.cn"
 
-# 获取当前系统版本，默认为 bookworm
-VERSION="$(lsb_release -cs 2>/dev/null || echo bookworm)"
+# 验证系统支持
+if ! verify_debian_12_13_support; then
+  log_fail "系统版本不支持，脚本退出"
+  exit 1
+fi
+
+# 获取当前系统代号
+VERSION=$(get_system_codename)
 
 # 处理 debian.sources 前，先重命名旧版 sources.list，避免冲突
 if [ -f /etc/apt/sources.list ]; then
   mv /etc/apt/sources.list /etc/apt/sources.list.bak
-  log_action "已将旧版 /etc/apt/sources.list 重命名为 /etc/apt/sources.list.bak，避免与新软件源冲突。"
+  log_action "已备份旧版 sources.list"
 fi
 
 # 只处理 debian.sources，备份并写入新内容
 ACTIVE_SOURCE="/etc/apt/sources.list.d/debian.sources"
 backup "$ACTIVE_SOURCE"
-log_success "已完成软件源文件的备份。"
 
 log_action "正在配置 DEB822 格式软件源内容..."
+
+# 生成软件源配置
 cat > "$ACTIVE_SOURCE" <<EOF
 Types: deb
-URIs: https://mirrors.tuna.tsinghua.edu.cn/debian
+URIs: $MIRROR/debian
 Suites: $VERSION $VERSION-updates $VERSION-backports
 Components: main contrib non-free non-free-firmware
 Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
 
 Types: deb
-URIs: https://mirrors.tuna.tsinghua.edu.cn/debian-security
+URIs: $MIRROR/debian-security
 Suites: $VERSION-security
 Components: main contrib non-free non-free-firmware
 Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
 EOF
+
+log_success "已配置 Debian $VERSION 软件源"
 
 log_action "开始刷新软件包列表..."
 apt update
