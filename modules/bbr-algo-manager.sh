@@ -74,19 +74,10 @@ perm_enable_bbr() {
   fi
   sed -i "/^${SYSCONF_KEY}[[:space:]]*=/d" "$SYSCONF_FILE" 2>/dev/null || true
   echo "$SYSCONF_KEY = $BBR_ALGO" >> "$SYSCONF_FILE"
-  
-  # 尝试应用配置并检查结果
-  if /sbin/sysctl -p >/dev/null 2>&1; then
+  if sysctl -p >/dev/null 2>&1; then
     log_success "BBR 算法永久启用成功"
   else
-    # 检查配置是否已正确写入
-    if grep -q "^${SYSCONF_KEY}[[:space:]]*=[[:space:]]*${BBR_ALGO}" "$SYSCONF_FILE"; then
-      log_warning "配置已写入 /etc/sysctl.conf，但应用失败"
-      log_info "BBR 算法已临时启用，重启后需要手动执行：/sbin/sysctl -p"
-    else
-      log_fail "配置写入失败"
-      return 1
-    fi
+    log_warning "配置应用失败，但 BBR 已临时启用"
   fi
 }
 
@@ -107,19 +98,10 @@ perm_disable_bbr() {
     return 1
   fi
   sed -i "/^${SYSCONF_KEY}[[:space:]]*=/d" "$SYSCONF_FILE" 2>/dev/null || true
-  
-  # 尝试应用配置并检查结果
-  if /sbin/sysctl -p >/dev/null 2>&1; then
+  if sysctl -p >/dev/null 2>&1; then
     log_success "BBR 算法永久关闭成功"
   else
-    # 检查配置是否已正确删除
-    if ! grep -q "^${SYSCONF_KEY}[[:space:]]*=" "$SYSCONF_FILE"; then
-      log_warning "配置已从 /etc/sysctl.conf 删除，但应用失败"
-      log_info "算法已临时切换，重启后需要手动执行：/sbin/sysctl -p"
-    else
-      log_fail "配置删除失败"
-      return 1
-    fi
+    log_warning "配置应用失败，但算法已临时切换"
   fi
 }
 
