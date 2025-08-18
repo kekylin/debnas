@@ -27,21 +27,33 @@ if ! apt install -y -t "$os_codename-backports" cockpit-machines; then
   exit "${ERROR_GENERAL}"
 fi
 
-# 开启 IP 包转发功能，保障虚拟机网络互通
+# 开启 IP 包转发功能，统一通过 /etc/sysctl.d/99-debnas.conf 管理并由 systemd-sysctl 应用
 log_info "开启 IP 包转发功能..."
-sysctl_conf="/etc/sysctl.conf"
-if grep -qE "^#?net.ipv4.ip_forward=1" "$sysctl_conf"; then
-  sed -i 's/^#net.ipv4.ip_forward=1/net.ipv4.ip_forward=1/' "$sysctl_conf"
-  log_info "已启用 IP 包转发配置。"
-else
-  echo "net.ipv4.ip_forward=1" >> "$sysctl_conf"
-  log_info "已添加 IP 包转发配置。"
+sysctl_dir="/etc/sysctl.d"
+sysctl_conf="/etc/sysctl.d/99-debnas.conf"
+
+mkdir -p "$sysctl_dir"
+touch "$sysctl_conf"
+chmod 644 "$sysctl_conf"
+
+# 若 /etc/sysctl.conf 存在对应键，先注释掉，避免重复配置（简洁日志）
+if [ -f /etc/sysctl.conf ]; then
+  if grep -nEq '^[[:space:]]*#[[:space:]]*net\.ipv4\.ip_forward[[:space:]]*=[[:space:]]*' /etc/sysctl.conf; then
+    :
+  elif grep -nEq '^[[:space:]]*net\.ipv4\.ip_forward[[:space:]]*=[[:space:]]*.*$' /etc/sysctl.conf; then
+    sed -i -E 's|^([[:space:]]*)net\.ipv4\.ip_forward[[:space:]]*=[[:space:]]*|\1# net.ipv4.ip_forward = |' /etc/sysctl.conf 2>/dev/null || true
+    sed -i -E 's|^([[:space:]]*)net\.ipv4\.ip_forward[[:space:]]*=|\1# net.ipv4.ip_forward =|' /etc/sysctl.conf 2>/dev/null || true
+  fi
 fi
 
-if sysctl -p; then
+# 移除旧的相同键值，避免重复
+sed -i '/^net\.ipv4\.ip_forward\s*=\s*/d' "$sysctl_conf" 2>/dev/null || true
+echo "net.ipv4.ip_forward = 1" >> "$sysctl_conf"
+
+if systemctl restart systemd-sysctl.service; then
   log_success "IP 包转发功能已启用。"
 else
-  log_warning "IP 包转发配置应用失败，请手动检查。"
+  log_warning "IP 包转发配置已写入 $sysctl_conf，但应用失败，请手动执行：systemctl restart systemd-sysctl.service"
 fi
 
 # 重启 cockpit 服务，确保新组件生效
