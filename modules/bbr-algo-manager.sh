@@ -16,6 +16,9 @@ readonly DEFAULT_ALGO="cubic"
 readonly SYSCONF_DIR="/etc/sysctl.d"
 readonly SYSCONF_FILE="/etc/sysctl.d/99-debnas.conf"
 readonly SYSCONF_KEY="net.ipv4.tcp_congestion_control"
+readonly SYSCONF_QDISC_KEY="net.core.default_qdisc"
+readonly QDISC_FQ="fq"
+readonly DEFAULT_QDISC="fq_codel"
 
 comment_out_sysctl_conf_key() {
   local key="$1"
@@ -61,42 +64,39 @@ validate_numeric_input() {
 }
 
 check_current_algo() {
-  local current_algo supported_algos
+  local current_algo supported_algos current_qdisc
   current_algo=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo "未知")
   supported_algos=$(sysctl -n net.ipv4.tcp_available_congestion_control 2>/dev/null || echo "未知")
+  current_qdisc=$(sysctl -n net.core.default_qdisc 2>/dev/null || echo "未知")
   log_info "当前拥塞控制算法：$current_algo"
   log_info "系统支持算法：$supported_algos"
+  log_info "当前队列规则：$current_qdisc"
 }
 
 load_bbr_module() {
-  # 检查内核模块文件
-  local kernel_module="/lib/modules/$(uname -r)/kernel/net/ipv4/tcp_bbr.ko"
-  if [[ ! -f "$kernel_module" ]]; then
-    log_fail "内核不支持 BBR 模块，请升级内核或重新编译。"
-    return 1
-  fi
-  
-  # 检查模块是否已加载
-  if lsmod | grep -q "$BBR_MODULE"; then
+  # 模块已加载
+  if lsmod | awk '{print $1}' | grep -qx "$BBR_MODULE"; then
     log_success "BBR 模块已加载"
     return 0
   fi
-  
-  # 尝试加载模块
-  log_action "正在加载 BBR 模块..."
-  if modprobe "$BBR_MODULE" 2>/dev/null; then
-    log_success "BBR 模块加载成功"
-    return 0
-  else
-    log_fail "BBR 模块加载失败，请检查内核配置。"
-    return 1
+
+  # 若可用则加载（兼容 .ko 与 .ko.xz）
+  if modinfo "$BBR_MODULE" >/dev/null 2>&1; then
+    if modprobe "$BBR_MODULE" >/dev/null 2>&1; then
+      log_success "BBR 模块加载成功"
+      return 0
+    fi
   fi
+
+  log_fail "未找到可用的 BBR 模块（tcp_bbr），请检查内核或模块路径"
+  return 1
 }
 
 temp_enable_bbr() {
   log_action "正在临时启用 BBR 算法..."
   if ! load_bbr_module; then return 1; fi
-  if sysctl -w net.ipv4.tcp_congestion_control="$BBR_ALGO" >/dev/null 2>&1; then
+  if sysctl -w net.ipv4.tcp_congestion_control="$BBR_ALGO" >/dev/null 2>&1 && \
+     sysctl -w net.core.default_qdisc="$QDISC_FQ" >/dev/null 2>&1; then
     log_success "BBR 算法临时启用成功"
   else
     log_fail "BBR 算法启用失败，请检查系统权限。"
@@ -111,11 +111,16 @@ perm_enable_bbr() {
     log_fail "BBR 算法启用失败，请检查系统权限。"
     return 1
   fi
+  # 同步设置队列规则为 fq
+  sysctl -w net.core.default_qdisc="$QDISC_FQ" >/dev/null 2>&1 || true
   # 注释掉 /etc/sysctl.conf 中的同名键，避免重复配置
   comment_out_sysctl_conf_key "$SYSCONF_KEY"
+  comment_out_sysctl_conf_key "$SYSCONF_QDISC_KEY"
   ensure_sysctl_file
   sed -i "/^${SYSCONF_KEY}[[:space:]]*=/d" "$SYSCONF_FILE" 2>/dev/null || true
   echo "$SYSCONF_KEY = $BBR_ALGO" >> "$SYSCONF_FILE"
+  sed -i "/^${SYSCONF_QDISC_KEY}[[:space:]]*=/d" "$SYSCONF_FILE" 2>/dev/null || true
+  echo "$SYSCONF_QDISC_KEY = $QDISC_FQ" >> "$SYSCONF_FILE"
   if systemctl restart systemd-sysctl.service >/dev/null 2>&1; then
     log_success "BBR 算法永久启用成功"
   else
@@ -125,7 +130,8 @@ perm_enable_bbr() {
 
 temp_disable_bbr() {
   log_action "正在临时关闭 BBR 算法..."
-  if sysctl -w net.ipv4.tcp_congestion_control="$DEFAULT_ALGO" >/dev/null 2>&1; then
+  if sysctl -w net.ipv4.tcp_congestion_control="$DEFAULT_ALGO" >/dev/null 2>&1 && \
+     sysctl -w net.core.default_qdisc="$DEFAULT_QDISC" >/dev/null 2>&1; then
     log_success "已切换回 $DEFAULT_ALGO 算法"
   else
     log_fail "算法切换失败，请检查系统权限。"
@@ -139,10 +145,14 @@ perm_disable_bbr() {
     log_fail "算法切换失败，请检查系统权限。"
     return 1
   fi
+  # 恢复默认队列规则
+  sysctl -w net.core.default_qdisc="$DEFAULT_QDISC" >/dev/null 2>&1 || true
   # 注释掉 /etc/sysctl.conf 中的同名键，避免旧方式残留导致关闭不彻底
   comment_out_sysctl_conf_key "$SYSCONF_KEY"
+  comment_out_sysctl_conf_key "$SYSCONF_QDISC_KEY"
   ensure_sysctl_file
   sed -i "/^${SYSCONF_KEY}[[:space:]]*=/d" "$SYSCONF_FILE" 2>/dev/null || true
+  sed -i "/^${SYSCONF_QDISC_KEY}[[:space:]]*=/d" "$SYSCONF_FILE" 2>/dev/null || true
   if systemctl restart systemd-sysctl.service >/dev/null 2>&1; then
     log_success "BBR 算法永久关闭成功"
   else
