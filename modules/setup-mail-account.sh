@@ -98,8 +98,23 @@ restart_exim_service() {
 # 发送测试邮件
 send_validation_email() {
   local notify_email="$1" sender_email="$2" smtp_server="$3"
-  local os_name
+  local os_name version_id codename sys_desc
   os_name="$(awk -F= '/^ID=/ {print $2}' /etc/os-release | sed 's/"//g' | { read name; echo "${name^}"; })"
+  version_id="$(awk -F= '/^VERSION_ID=/ {print $2}' /etc/os-release | sed 's/"//g')"
+  codename="$(awk -F= '/^VERSION_CODENAME=/ {print $2}' /etc/os-release | sed 's/"//g')"
+  if [[ "$os_name" == "Debian" ]]; then
+    if [[ -n "$codename" ]]; then
+      sys_desc="Debian ${version_id} (${codename})"
+    else
+      sys_desc="Debian ${version_id}"
+    fi
+  else
+    if [[ -n "$version_id" ]]; then
+      sys_desc="${os_name} ${version_id}"
+    else
+      sys_desc="${os_name}"
+    fi
+  fi
   local app_name="${os_name}-HomeNAS"
   local email_content
   email_content=$(cat <<EOF
@@ -108,6 +123,7 @@ To: ${notify_email}
 From: ${sender_email}
 
 恭喜！您已成功配置 [${app_name}] 的邮件通知功能。
+• 系统版本: ${sys_desc}
 • SMTP 发件服务器: ${smtp_server}
 • 发件邮箱地址: ${sender_email}
 • 通知接收邮箱: ${notify_email}
