@@ -1,5 +1,6 @@
 #!/bin/bash
-# 功能：安装 Cockpit 管理面板
+# 功能：安装 Cockpit 及 45Drives 组件（支持 Debian 12/13）
+# 说明：Debian 12 通过官方仓库安装；Debian 13 通过本地 .deb 安装。
 
 set -euo pipefail
 IFS=$'\n\t'
@@ -11,19 +12,23 @@ source "${SCRIPT_DIR}/lib/core/logging.sh"
 source "${SCRIPT_DIR}/lib/system/utils.sh"
 source "${SCRIPT_DIR}/lib/system/apt-pinning.sh"
 
-# 手动下载并安装 45Drives 的 Cockpit 组件（适用于 Debian 13）
+# Debian 13：手动下载并安装 45Drives 组件
 install_45drives_components_manual() {
   local base_tmp_root="/tmp/debian-homenas"
   mkdir -p "${base_tmp_root}"
-  chmod 700 "${base_tmp_root}" || true
-  local temp_dir
-  temp_dir=$(mktemp -d -p "${base_tmp_root}" "45drives.XXXXXXXX")
-  chmod 700 "${temp_dir}" || true
+  # 临时设置根目录为 0711，允许 `_apt` 遍历以读取本地 .deb
+  local base_orig_mode
+  base_orig_mode="$(stat -c '%a' "${base_tmp_root}" 2>/dev/null || echo 700)"
+  chmod 711 "${base_tmp_root}" || true
+  # 创建 0755 子目录，供 `_apt` 读取 .deb
+  local apt_dir
+  apt_dir=$(mktemp -d -p "${base_tmp_root}" "45drives.XXXXXXXX")
+  chmod 755 "${apt_dir}" || true
   local oldpwd
   oldpwd="$(pwd)"
   # shellcheck disable=SC2064
-  # 函数返回时自动清理并恢复工作目录（在定义时展开变量，并在执行后移除该 trap）
-  trap "trap - RETURN; cd \"${oldpwd}\" >/dev/null 2>&1 || true; rm -rf \"${temp_dir}\"" RETURN
+  # 在 RETURN 时恢复工作目录与权限，并清理临时目录
+  trap "trap - RETURN; cd \"${oldpwd}\" >/dev/null 2>&1 || true; chmod ${base_orig_mode} \"${base_tmp_root}\" >/dev/null 2>&1 || true; rm -rf \"${apt_dir}\"" RETURN
 
   local download_urls=(
     "https://ghfast.top/https://github.com/45Drives/cockpit-navigator/releases/download/v0.5.10/cockpit-navigator_0.5.10-1focal_all.deb"
@@ -33,9 +38,9 @@ install_45drives_components_manual() {
   
   log_info "正在手动下载并安装 45Drives Cockpit 组件..."
   
-  cd "${temp_dir}"
+  cd "${apt_dir}"
   
-  # 下载所有包
+  # 下载 .deb 包
   for url in "${download_urls[@]}"; do
     local filename
     filename=$(basename "$url")
@@ -47,7 +52,7 @@ install_45drives_components_manual() {
     fi
   done
   
-  # 安装所有包
+  # 使用 apt 安装本地 .deb；目录权限已满足 `_apt` 读取要求
   for deb_file in *.deb; do
     if [[ -f "$deb_file" ]]; then
       log_info "正在安装: ${deb_file}"
