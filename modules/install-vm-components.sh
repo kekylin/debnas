@@ -13,7 +13,7 @@ source "${SCRIPT_DIR}/lib/system/apt-pinning.sh"
 
 # 获取系统版本代号
 SYSTEM_CODENAME=$(get_system_codename)
-if [[ $? -ne 0 ]]; then
+if [ -z "$SYSTEM_CODENAME" ]; then
   exit "${ERROR_GENERAL}"
 fi
 

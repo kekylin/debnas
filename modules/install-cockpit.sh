@@ -19,9 +19,11 @@ install_45drives_components_manual() {
   local temp_dir
   temp_dir=$(mktemp -d -p "${base_tmp_root}" "45drives.XXXXXXXX")
   chmod 700 "${temp_dir}" || true
-  local oldpwd="$(pwd)"
-  # 函数返回时自动清理并恢复工作目录
-  trap 'cd "${oldpwd}" >/dev/null 2>&1 || true; rm -rf "${temp_dir}"' RETURN
+  local oldpwd
+  oldpwd="$(pwd)"
+  # shellcheck disable=SC2064
+  # 函数返回时自动清理并恢复工作目录（在定义时展开变量，并在执行后移除该 trap）
+  trap "trap - RETURN; cd \"${oldpwd}\" >/dev/null 2>&1 || true; rm -rf \"${temp_dir}\"" RETURN
 
   local download_urls=(
     "https://ghfast.top/https://github.com/45Drives/cockpit-navigator/releases/download/v0.5.10/cockpit-navigator_0.5.10-1focal_all.deb"
@@ -35,7 +37,8 @@ install_45drives_components_manual() {
   
   # 下载所有包
   for url in "${download_urls[@]}"; do
-    local filename=$(basename "$url")
+    local filename
+    filename=$(basename "$url")
     log_info "正在下载: ${filename}"
     
     if ! curl -LO "$url"; then
