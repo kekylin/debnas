@@ -4,18 +4,12 @@
 一个将Debian系统快速配置成准NAS系统的脚本。可视化WebUI操作界面，可以轻松实现文件共享、照片备份、家庭影音、管理Docker、管理虚拟机、建立RAID等功能，使得Debian系统能够高效稳定地承担NAS任务。
 
 ## 主要特性
-- **开源**  
-
-- **安全**  
-
-- **稳定**  
-
-- **高效**  
-
-- **自由**  
-
-- **易用**  
-
+- **开源** 
+- **安全** 
+- **稳定** 
+- **高效** 
+- **自由**
+- **易用**
 
 ---
 ## 成果展示
@@ -53,11 +47,11 @@ su -
 
 Github地址
   ```shell
-bash <(wget -qO- https://raw.githubusercontent.com/kekylin/debnas/dev/install.sh) -s github@dev
+bash <(wget -qO- https://raw.githubusercontent.com/kekylin/debnas/main/install.sh) -s github@main
   ```
 Gitee地址（国内用户推荐）
   ```shell
-bash <(wget -qO- https://gitee.com/kekylin/debnas/raw/dev/install.sh) -s gitee@dev
+bash <(wget -qO- https://gitee.com/kekylin/debnas/raw/main/install.sh) -s gitee@main
   ```
 - `-s` 参数格式：平台@分支名，如 `-s github@main`、`-s gitee@dev`
 
@@ -76,43 +70,6 @@ Portainer
 https://localhost:9443
   ```
 
-<details>
-  <summary><h2>教程汇总(点我展开)</h2></summary>
-欢迎阅读本项目。在此，我想对本项目的内容做出以下免责声明：
-  
-<br>1、内容来源： 本项目的内容主要来源于互联网，以及我个人在学习和探索过程中的知识总结。我会尽可能保证内容的准确性和可靠性，但不对信息的完整性和及时性做出任何担保。
-
-<br>2、版权保护： 本项目的所有原创内容均采用 CC BY 4.0 许可协议。欢迎个人或非商业性使用者在遵守此协议的前提下引用或转载内容。转载时请注明出处并附上项目的链接。对于任何形式的商业使用或修改内容，须在遵守该许可协议的同时保留原作者信息并注明来源。
-
-<br>3、内容时效性： 鉴于技术和知识的发展迅速，本项目中的一些内容可能会随着时间的推移而失去实用性或准确性。我会尽力更新和修订内容，以保持其新鲜和准确，但无法对过时内容负责。
-
-<br>4、侵权联系： 我尊重他人的知识产权和版权，如果您认为本项目的内容侵犯了您的权益，请通过项目中提供的联系方式与我取得联系。一旦确认侵权行为，我将会立即采取措施删除相关内容或做出调整。
-
-<br>最后，希望您在阅读本项目时能够理解并遵守以上免责声明。感谢您的支持和理解！
-<h3>项目简介</h3>
-<a href="https://github.com/kekylin/debnas/blob/main/Docs/%E6%88%90%E6%9E%9C%E5%B1%95%E7%A4%BA.md">搭建成果展示</a><br>
-<a href="https://github.com/kekylin/debnas/blob/main/Docs/%E8%84%9A%E6%9C%AC%E4%BB%8B%E7%BB%8D.md">脚本介绍（使用前阅读）</a><br>
-
-<h3>系统相关教程</h3>
-<a href="https://docs.qq.com/doc/p/ac7a498302fca24ec7f0d002820ee32eceb03c13">基于Debian搭建HomeNAS图文教程 （本项目核心教程）</a><br>
-<a href="https://docs.qq.com/doc/p/7859e20c9c3fa6816cb9f4d4e5e02a67495fc4a6">基于Ubuntu搭建HomeNAS图文教程 （本项目核心教程）</a><br>
-<a href="https://github.com/kekylin/debnas/blob/main/Docs/Debian%E7%B3%BB%E7%BB%9F%E6%9C%80%E5%B0%8F%E5%8C%96%E5%AE%89%E8%A3%85%E6%95%99%E7%A8%8B.md">Debian系统最小化安装教程</a><br>
-<a href="https://github.com/kekylin/debnas/blob/main/Docs/Debian%E7%B3%BB%E7%BB%9F%E9%80%9A%E8%BF%87Cockpit%E9%9D%A2%E6%9D%BF%E7%9B%B4%E9%80%9A%E7%A1%AC%E7%9B%98%E5%AE%89%E8%A3%85%E9%BB%91%E7%BE%A4%E6%99%96.md">Debian系统通过Cockpit面板直通硬盘安装黑群晖</a><br>
-<a href="https://github.com/kekylin/debnas/blob/main/Docs/%E5%86%85%E7%BD%91%E7%A9%BF%E9%80%8F%E6%9C%8D%E5%8A%A1Tailscale%E5%AE%89%E8%A3%85%E4%BD%BF%E7%94%A8%E6%95%99%E7%A8%8B.md">内网穿透服务Tailscale安装使用教程</a><br>
-<a href="https://github.com/kekylin/debnas/blob/main/Docs/Nginx%E5%8F%8D%E4%BB%A3%E9%99%90%E5%88%B6%E5%9B%BD%E5%A4%96IP%E8%AE%BF%E9%97%AE%E6%95%99%E7%A8%8B.md">Nginx反代限制国外IP访问教程</a><br>
-
-<h3>Docker相关教程</h3>
-<a href="https://docs.qq.com/doc/p/359de0f852ffbf9ba159dbec3ddcf119c33462f2">HomePage导航页部署教程</a><br>
-<a href="https://github.com/kekylin/debnas/blob/main/Docs/%E9%83%A8%E7%BD%B2Docker%E7%89%88%E8%B0%B7%E6%AD%8C%E6%B5%8F%E8%A7%88%E5%99%A8%E6%95%99%E7%A8%8B.md">部署Docker版谷歌浏览器教程</a><br>
-
-<h3>B站视频</h3>
-<a href="https://www.bilibili.com/video/BV16w4m1m78x">基于Linux搭建HomeNAS最终效果展示(Debian/Ubuntu)</a><br>
-<a href="https://www.bilibili.com/video/BV1az42117pt">基于Debian搭建HomeNAS系列教程之系统安装篇</a><br>
-<a href="https://www.bilibili.com/video/BV1EU411d7PM">只需8分钟，快速将Debian系统配置成准NAS系统</a><br>
-<a href="https://www.bilibili.com/video/BV1vZ421H74n">一首歌的时间，在Debian系统直通硬盘安装黑群晖</a><br>
-<a href="https://www.bilibili.com/video/BV1apYXeyEHT">以可视化面板展示NAS服务外网访问来源_Nginx日志监控</a><br>
-  
-</details>
 
 ---
 ## 交流Q群
