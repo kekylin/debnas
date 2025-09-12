@@ -19,9 +19,7 @@ fi
 
 # 镜像加速地址列表，便于后续维护和扩展
 MIRRORS=(
-  "https://docker.ketches.cn"
-  "https://hub.iyuu.cn"
-  "https://docker.1panelproxy.com"
+  "https://docker.1ms.run"
   "https://docker.1panel.live"
 )
 DAEMON_JSON="/etc/docker/daemon.json"
