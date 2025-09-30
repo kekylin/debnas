@@ -19,6 +19,7 @@ fi
 
 # 镜像加速地址列表，便于后续维护和扩展
 MIRRORS=(
+  "https://docker.m.ixdev.cn"
   "https://docker.1ms.run"
   "https://docker.1panel.live"
 )
