@@ -215,6 +215,16 @@ body.login-pf .pf-v6-c-alert__icon {
 EOF
 }
 
+# Cockpit 服务重启
+restart_cockpit() {
+  if systemctl is-active --quiet cockpit; then
+    systemctl restart cockpit
+    log_to_file log_success "Cockpit 服务已重启"
+  else
+    log_to_file log_warning "Cockpit 服务未运行"
+  fi
+}
+
 # 定时任务配置
 add_cron_job() {
   local cron_expr="$1" tmp_cron script_identifier="cockpit-bing-wallpaper"
@@ -234,6 +244,7 @@ disable_bing_wallpaper() {
   crontab -l 2>/dev/null | grep -v "$script_identifier" | crontab - || true
   rm -rf "$BRANDING_DIR"
   echo "基于Debian搭建 HomeNAS" > "$ISSUE_FILE"
+  restart_cockpit
   log_to_file log_success "壁纸功能已禁用"
 }
 
@@ -248,7 +259,7 @@ enable_bing_wallpaper() {
   local cron_expr
   
   if [[ -t 0 ]]; then
-    print_prompt "请输入 Cron 表达式（默认每天凌晨0点）: "
+    print_prompt "请输入 Cron 表达式（默认每天0点更新）: "
     read -r cron_expr
     [[ -z "$cron_expr" ]] && cron_expr="0 0 * * *"
   else
@@ -261,6 +272,7 @@ enable_bing_wallpaper() {
   
   if update_wallpaper; then
     generate_css
+    restart_cockpit
     log_to_file log_success "壁纸功能已启用"
   else
     log_to_file log_error "壁纸下载失败"
@@ -271,6 +283,7 @@ enable_bing_wallpaper() {
 auto_update_mode() {
   if update_wallpaper; then
     generate_css
+    restart_cockpit
   fi
 }
 
@@ -279,7 +292,7 @@ main_menu() {
   local -a menu_options=("启用必应壁纸" "禁用必应壁纸" "查看壁纸计划")
   
   while true; do
-    show_menu_with_border "Cockpit 登录页必应每日壁纸管理" "${menu_options[@]}"
+    show_menu_with_border "Cockpit 必应壁纸" "${menu_options[@]}"
     print_prompt "请选择编号: "
     read -r choice
     
