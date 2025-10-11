@@ -28,6 +28,7 @@ init_module_config() {
     [w13]="enable-cockpit-external|启用外网访问"
     [w14]="disable-cockpit-external|禁用外网访问"
     [w15]="set-cockpit-network|面板管理网络"
+    [w16]="cockpit-auto-bing-wallpaper|面板必应壁纸"
     [m11]="setup-mail-account|配置邮件账户"
     [m12]="enable-login-mail|启用登录通知"
     [m13]="disable-login-mail|禁用登录通知"
@@ -53,7 +54,7 @@ init_module_config() {
   # 菜单结构定义
   MENU_MAP=(
     ["基础配置"]="s11 s12"
-    ["管理面板"]="w11 w12 w13 w14 w15"
+    ["管理面板"]="w11 w12 w13 w14 w15 w16"
     ["通知服务"]="m11 m12 m13"
     ["安全防护"]="a11 a12 a13 a14"
     ["容器管理"]="d11 d12 d13 d14"
