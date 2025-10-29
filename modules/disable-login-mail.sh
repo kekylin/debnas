@@ -15,7 +15,7 @@ PAM_FILE="/etc/pam.d/common-session"
 
 # 移除 pam.d/common-session 中的登录通知配置
 if grep -Fxq "session optional pam_exec.so debug /bin/bash $NOTIFY_SCRIPT" "$PAM_FILE" 2>/dev/null; then
-  sed -i "|session optional pam_exec.so debug /bin/bash $NOTIFY_SCRIPT|d" "$PAM_FILE"
+  sed -i "/session optional pam_exec.so debug \/bin\/bash \/etc\/pam.d\/login-notify.sh/d" "$PAM_FILE"
   log_success "已从 pam.d/common-session 移除登录通知配置。"
 else
   log_info "pam.d/common-session 中未找到登录通知配置，跳过操作。"
