@@ -115,7 +115,7 @@ send_validation_email() {
       sys_desc="${os_name}"
     fi
   fi
-  local app_name="${os_name}-HomeNAS"
+  local app_name="DebNAS"
   local email_content
   email_content=$(cat <<EOF
 Subject: 来自 [${app_name}] 的测试邮件
