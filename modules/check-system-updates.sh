@@ -4,6 +4,10 @@
 set -euo pipefail
 IFS=$'\n\t'
 
+# 统一 UTF-8 环境，优先使用普遍存在的 C.UTF-8，避免缺失 locale 的警告
+export LANG="C.UTF-8"
+export LC_ALL="C.UTF-8"
+
 # 加载公共模块，确保依赖函数和常量可用
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${SCRIPT_DIR}/lib/core/constants.sh"
@@ -37,18 +41,84 @@ setup_script_file() {
   local current_script=$(readlink -f "$0")
   USER_HOME=$(eval echo ~$USER)
   local script_path="$USER_HOME/.system-update-checker.sh"
-  if [[ "$current_script" != "$script_path" ]]; then
-    cp "$current_script" "$script_path" 2>/dev/null
-    if [[ $? -ne 0 ]]; then
-      log_error "无法复制脚本到 ${script_path}，请检查权限。"
-      return 1
-    fi
-    chmod +x "$script_path" 2>/dev/null
-  fi
-  if [[ ! -f "$script_path" ]]; then
-    log_error "脚本文件 ${script_path} 不存在，请确保脚本已正确复制。"
-    return 1
-  fi
+  # 生成独立可运行的轻量脚本（不依赖项目目录与公共库）
+  cat > "$script_path" <<'EOF'
+#!/bin/bash
+set -euo pipefail
+IFS=$'\n\t'
+export LANG="C.UTF-8"; export LC_ALL="C.UTF-8"
+
+# 轻量日志
+log_action(){ printf "[ACTION] %s %s\n" "$(date '+%Y-%m-%d %H:%M:%S')" "$1"; }
+log_success(){ printf "[SUCCESS] %s %s\n" "$(date '+%Y-%m-%d %H:%M:%S')" "$1"; }
+log_error(){ printf "[FAIL] %s %s\n" "$(date '+%Y-%m-%d %H:%M:%S')" "$1" >&2; }
+
+EMAIL_CONFIG_FILE="/etc/exim4/notify_email"
+
+get_email(){
+  [[ -f "$EMAIL_CONFIG_FILE" ]] || { log_error "未找到 $EMAIL_CONFIG_FILE"; exit 3; }
+  local to
+  read -r to < "$EMAIL_CONFIG_FILE" || true
+  [[ -n "$to" ]] || { log_error "通知邮箱为空"; exit 3; }
+  echo "$to"
+}
+
+# 解析 Inst 行并分组
+format_inst_lines(){
+  awk '
+  /^Inst / {
+    if (match($0, /^Inst[[:space:]]+([^[:space:]]+)[[:space:]]+\[([^\]]+)\][[:space:]]+\(([^[:space:]]+)/, m)) {
+      printf "%s\n   ↳ %s → %s\n\n", m[1], m[2], m[3];
+    }
+  }'
+}
+
+run_check(){
+  log_action "正在生成系统更新报告"
+  apt-get update > /dev/null 2>&1 || true
+  local full
+  full=$(apt-get upgrade -s)
+  security_list=$(echo "$full" | grep -E '^Inst' | grep -i 'Debian-Security\|security' || true)
+  regular_list=$(echo "$full" | grep -E '^Inst' | grep -vi 'Debian-Security\|security' || true)
+  security_count=$(echo "$security_list" | grep -c '^Inst' || true)
+  regular_count=$(echo "$regular_list" | grep -c '^Inst' || true)
+}
+
+build_report(){
+  local total=$((security_count + regular_count))
+  printf "🧩 摘要\n"
+  printf "总更新：%s\t|\t🔒 安全：%s\t|\t⚙️ 常规：%s\n\n" "$total" "$security_count" "$regular_count"
+  printf "🔒 安全更新 (%s)\n" "$security_count"
+  [[ $security_count -gt 0 ]] && echo "$security_list" | format_inst_lines
+  printf "\n⚙️ 常规更新 (%s)\n" "$regular_count"
+  [[ $regular_count -gt 0 ]] && echo "$regular_list" | format_inst_lines
+  printf "\n🕒 检测时间\n%s\n\n" "$(date +'%Y-%m-%d %H:%M:%S')"
+  printf "🌐 DebNAS 项目主页\nhttps://github.com/kekylin/debnas\n\n"
+  printf "此邮件为系统自动发送，请勿直接回复。\n"
+}
+
+send_mail(){
+  local to subject
+  to=$(get_email)
+  subject="更新通知 — 发现 $((security_count + regular_count)) 个可用更新"
+  log_action "正在发送通知邮件到 ${to}"
+  {
+    echo "Subject: ${subject}"
+    echo "To: ${to}"
+    echo "Content-Type: text/plain; charset=UTF-8"
+    echo "Content-Transfer-Encoding: 8bit"
+    echo
+    build_report
+  } | /usr/sbin/exim4 -t
+}
+
+run_check
+if [[ $((security_count + regular_count)) -gt 0 ]]; then
+  send_mail
+  log_success "检测到更新，已发送通知邮件"
+fi
+EOF
+  chmod +x "$script_path"
   echo "$script_path"
   return 0
 }
@@ -56,7 +126,11 @@ setup_script_file() {
 # 验证 cron 表达式，防止无效定时任务
 validate_cron_expression() {
   local cron="$1"
-  local fields=($cron)
+  # 使用空格拆分，避免全局 IFS 导致无法按空格分隔
+  local fields=()
+  local __old_ifs="$IFS"
+  IFS=' ' read -r -a fields <<< "$cron"
+  IFS="$__old_ifs"
   if [[ ${#fields[@]} -ne 5 ]]; then
     log_error "Cron 表达式必须包含 5 个字段（分钟 小时 日 月 星期）。"
     return 1
@@ -68,6 +142,15 @@ validate_cron_expression() {
     local min=${range%-*} max=${range#*-}
     if [[ "$value" =~ ^[0-9*]+(-[0-9]+)?(/[0-9]+)?$ || "$value" =~ ^[0-9]+(,[0-9]+)*$ || "$value" == "*" ]]; then
       if [[ "$value" != "*" ]]; then
+        # 支持 */step 语法（如 */2）
+        if [[ "$value" =~ ^\*/([0-9]+)$ ]]; then
+          local step=${BASH_REMATCH[1]}
+          if [[ "$step" -eq 0 ]]; then
+            log_error "步长字段 $value 无效。"
+            return 1
+          fi
+          continue
+        fi
         if [[ "$value" =~ ^([0-9]+)-([0-9]+)$ ]]; then
           local start=${BASH_REMATCH[1]} end=${BASH_REMATCH[2]}
           if [[ "$start" -lt "$min" ]] || [[ "$end" -gt "$max" ]] || [[ "$start" -gt "$end" ]]; then
@@ -101,10 +184,21 @@ validate_cron_expression() {
   return 0
 }
 
-# 格式化更新列表
-format_update_list() {
-  local updates="$1" count="$2" title="$3"
-  [[ $count -gt 0 ]] && printf "%s\n%s\n" "${title}（${count}个）：" "$(echo -e "$updates" | awk '/^Inst/ {printf "  %s: [%s] (%s)\n", $2, $3, $4}')"
+# 将 Inst 行格式化为“包名  旧版 → 新版”
+format_inst_lines() {
+  # 从 stdin 读取 Inst 行，双遍扫描对齐列宽
+  awk '
+  /^Inst / {
+    if (match($0, /^Inst[[:space:]]+([^[:space:]]+)[[:space:]]+\[([^\]]+)\][[:space:]]+\(([^[:space:]]+)/, m)) {
+      n++; pkg[n]=m[1]; oldv[n]=m[2]; newv[n]=m[3];
+    }
+    next
+  }
+  END {
+    for (i=1;i<=n;i++) {
+      printf "%s\n   ↳ %s → %s\n\n", pkg[i], oldv[i], newv[i];
+    }
+  }'
 }
 
 # 检测系统版本更新
@@ -139,28 +233,35 @@ detect_major_version_update() {
 build_report_content() {
   local security_update_list="$1" security_update_count="$2" regular_update_list="$3" regular_update_count="$4"
   local total=$((security_update_count + regular_update_count))
-  local major_update_info=$(detect_major_version_update)
-  printf "更新摘要：\n"
-  printf "总可用更新: %s 个 | 安全更新: %s 个 | 常规更新: %s 个\n\n" "${total}" "${security_update_count}" "${regular_update_count}"
-  printf "更新详情：\n"
-  [[ -n "$major_update_info" ]] && printf "系统版本更新:\n%s\n" "${major_update_info}"
-  format_update_list "$security_update_list" "$security_update_count" "安全更新"
-  [[ -n "$major_update_info" || $security_update_count -gt 0 ]] && printf "\n"
-  format_update_list "$regular_update_list" "$regular_update_count" "常规更新"
-  printf "\n检测时间: %s\n" "$(date +'%Y-%m-%d %H:%M:%S')"
-  printf "\n如需了解更多 DebNAS 使用方法，请访问 https://github.com/kekylin/debnas\n\n此邮件为系统自动发送，请勿直接回复。\n"
+  printf "🧩 摘要\n"
+  printf "总更新：%s\t|\t🔒 安全：%s\t|\t⚙️ 常规：%s\n\n" "${total}" "${security_update_count}" "${regular_update_count}"
+
+  printf "🔒 安全更新 (%s)\n" "${security_update_count}"
+  if [[ ${security_update_count} -gt 0 ]]; then
+    echo -e "${security_update_list}" | format_inst_lines
+  fi
+  printf "\n⚙️ 常规更新 (%s)\n" "${regular_update_count}"
+  if [[ ${regular_update_count} -gt 0 ]]; then
+    echo -e "${regular_update_list}" | format_inst_lines
+  fi
+  printf "\n🕒 检测时间\n"
+  printf "%s\n\n" "$(date +'%Y-%m-%d %H:%M:%S')"
+  printf "🌐 DebNAS 项目主页\n"
+  printf "https://github.com/kekylin/debnas\n\n"
+  printf "此邮件由系统自动生成，请勿直接回复。\n"
 }
 
 # 执行更新检测并生成报告
 run_update_check() {
   log_action "正在生成系统更新报告"
-  apt-get update > /dev/null 2>&1
+  # 刷新索引；若失败则记录警告但不中止
+  apt-get update > /dev/null 2>&1 || log_warning "apt-get update 执行失败，已跳过索引刷新。"
   full_update_list=$(apt-get upgrade -s)
   
-  declare -g security_update_list=$(echo "$full_update_list" | grep -i security | grep '^Inst')
+  declare -g security_update_list=$(echo "$full_update_list" | grep -E '^Inst' | grep -i 'Debian-Security\|security')
   declare -g security_update_count=$(echo "$security_update_list" | grep -c "^Inst")
   
-  declare -g regular_update_list=$(echo "$full_update_list" | grep -v -i security | grep '^Inst')
+  declare -g regular_update_list=$(echo "$full_update_list" | grep -E '^Inst' | grep -vi 'Debian-Security\|security')
   declare -g regular_update_count=$(echo "$regular_update_list" | grep -c "^Inst")
   
   declare -g report_content=$(build_report_content "$security_update_list" "$security_update_count" "$regular_update_list" "$regular_update_count")
@@ -170,33 +271,18 @@ run_update_check() {
 send_email_notification() {
   local notify_email=$(get_email_config)
   local hostname=$(get_hostname)
-  local major_update_info=$(detect_major_version_update)
-  local update_types=()
-  
-  # 确定更新类型
-  [[ -n "$major_update_info" ]] && update_types+=("'系统'")
-  [[ $security_update_count -gt 0 ]] && update_types+=("'安全'")
-  [[ $regular_update_count -gt 0 ]] && update_types+=("'常规'")
-  
-  # 生成动态主题
-  local subject=""
-  case "${#update_types[@]}" in
-    1)
-      subject="发现${update_types[0]}更新"
-      ;;
-    2)
-      subject="发现${update_types[0]}和${update_types[1]}更新"
-      ;;
-    3)
-      subject="发现${update_types[0]}、${update_types[1]}和${update_types[2]}更新"
-      ;;
-    *)
-      subject="发现更新"
-      ;;
-  esac
+  local total_count=$((security_update_count + regular_update_count))
+  local subject="更新通知 — 发现 ${total_count} 个可用更新"
   
   log_action "正在发送通知邮件到 ${notify_email}"
-  echo -e "$report_content" | mail -s "[${hostname} 更新通知] ${subject}" "$notify_email"
+  {
+    echo "Subject: ${subject}"
+    echo "To: ${notify_email}"
+    echo "Content-Type: text/plain; charset=UTF-8"
+    echo "Content-Transfer-Encoding: 8bit"
+    echo
+    echo -e "$report_content"
+  } | /usr/sbin/exim4 -t
 }
 
 # 执行更新检测并处理结果
@@ -218,7 +304,6 @@ execute_update_check() {
 set_cron_task() {
   local schedule="$1" cron
   local script_path=$(setup_script_file) || return 1
-  
   rm -f "$CRON_TASK_FILE" 2>/dev/null
   [[ "$schedule" == "daily" ]] && cron="0 0 * * *" || cron="0 0 * * 1"
   echo "$cron root $script_path --check" > "$CRON_TASK_FILE"
@@ -232,10 +317,8 @@ set_cron_task() {
 set_custom_cron_task() {
   local script_path=$(setup_script_file) || return 1
   local cron
-  
   read -p "请输入 cron 表达式（示例：0 0 * * * 表示每日00:00）： " cron
   validate_cron_expression "$cron" || return 1
-  
   rm -f "$CRON_TASK_FILE" 2>/dev/null
   echo "$cron root $script_path --check" > "$CRON_TASK_FILE"
   chmod 644 "$CRON_TASK_FILE"
