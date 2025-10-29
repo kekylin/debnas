@@ -49,9 +49,8 @@ export LANG="en_US.UTF-8"
 # 安全 IFS（不使用 set -e 避免邮件发送失败时脚本退出）
 IFS=$'\n\t'
 
-# 读取收件人与可选发件人
+# 读取收件人（作为通知接收方，同时用于 From 头显示）
 NOTIFY_EMAIL_FILE="/etc/exim4/notify_email"
-NOTIFY_SENDER_FILE="/etc/exim4/notify_sender"
 NOTIFY_TO=""
 if [[ -f "$NOTIFY_EMAIL_FILE" ]]; then
   read -r NOTIFY_TO < "$NOTIFY_EMAIL_FILE" || true
@@ -60,10 +59,6 @@ if [[ -z "$NOTIFY_TO" ]]; then
   # 未配置收件人则放弃发送
   exit 0
 fi
-if [[ -f "$NOTIFY_SENDER_FILE" ]]; then
-  read -r SENDER < "$NOTIFY_SENDER_FILE" || true
-fi
-SENDER="${SENDER:-$NOTIFY_TO}"
 
 # 设置成功状态
 STATUS_ICON="✅"
@@ -118,8 +113,7 @@ fi
 
 {
   echo "To: ${NOTIFY_TO}"
-  echo "From: DebNAS <${SENDER}>"
-  echo "Subject: 登录警报 · ${PAM_USER} @ ${HOSTNAME}"
+  echo "Subject: 登录通知 · ${PAM_USER} @ ${HOSTNAME}"
   echo "Content-Type: text/plain; charset=UTF-8"
   echo "Content-Transfer-Encoding: 8bit"
   echo
@@ -144,7 +138,7 @@ fi
   echo
   echo "📧 系统通知 · Trace ID ${TRACE_ID}"
   echo "此邮件由系统自动生成，请勿直接回复。"
-} | /usr/sbin/exim4 -t -f "${SENDER}" || true
+} | /usr/sbin/exim4 -t || true
 EOF
 chmod 755 "$NOTIFY_SCRIPT"
 chown root:root "$NOTIFY_SCRIPT"
