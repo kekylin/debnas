@@ -290,43 +290,69 @@ test_tcp_connectivity() {
   fi
 }
 
-# Ping 检测（IPv4/IPv6 自动适配）
+# Ping 检测（IPv4/IPv6 自动适配）并返回延迟值
 # 参数：$1 - IP 地址
-# 返回：0成功，非0失败
+# 返回：延迟值（毫秒，整数），失败返回空字符串
 test_ping_connectivity() {
   local ip="$1"
   local ip_type
   ip_type=$(get_ip_type "$ip")
+  local ping_output
+  local delay=""
   
   if [[ "$ip_type" == "ipv6" ]]; then
-    timeout 3 ping6 -c 1 -W 2 "$ip" >/dev/null 2>&1
+    ping_output=$(timeout 3 ping6 -c 1 -W 2 "$ip" 2>&1 || echo "")
   else
-    timeout 3 ping -c 1 -W 2 "$ip" >/dev/null 2>&1
+    ping_output=$(timeout 3 ping -c 1 -W 2 "$ip" 2>&1 || echo "")
   fi
+  
+  if [[ -n "$ping_output" ]]; then
+    # 提取延迟值（支持 time=XX.XXX 或 time=XX 格式）
+    delay=$(echo "$ping_output" | grep -oP 'time=\K[0-9.]+' | head -1)
+    if [[ -z "$delay" ]]; then
+      delay=$(echo "$ping_output" | awk -F'=' '/time=/{print $NF}' | awk '{print $1}' | head -1)
+    fi
+    # 转换为整数毫秒（四舍五入）
+    if [[ -n "$delay" ]]; then
+      delay=$(awk "BEGIN {printf \"%.0f\", $delay}")
+    fi
+  fi
+  
+  echo "${delay:-}"
 }
 
-# 三级连通性检测（HTTPS > TCP > Ping）
+# 三级连通性检测（汇总所有检测结果和延迟）
 # 参数：$1 - IP 地址，$2 - 域名
-# 返回：检测方法名称（https/tcp/ping）或空字符串（不可达）
+# 返回：检测结果（格式：https|tcp|ping|延迟）
+#       https/tcp/ping 字段：1表示通过，0表示失败
+#       延迟字段：ping延迟毫秒数（整数），无延迟则为空
 test_ip_connectivity() {
   local ip="$1"
   local domain="$2"
+  local https_result=0
+  local tcp_result=0
+  local ping_result=0
+  local ping_delay=""
   
-  # 优先级1：HTTPS 直连检测
+  # 检测 HTTPS
   if test_https_connectivity "$ip" "$domain"; then
-    echo "https"
-    return 0
+    https_result=1
   fi
   
-  # 优先级2：TCP 443 端口检测
+  # 检测 TCP
   if test_tcp_connectivity "$ip" 443; then
-    echo "tcp"
-    return 0
+    tcp_result=1
   fi
   
-  # 优先级3：Ping 检测
-  if test_ping_connectivity "$ip"; then
-    echo "ping"
+  # 检测 Ping 并获取延迟
+  ping_delay=$(test_ping_connectivity "$ip")
+  if [[ -n "$ping_delay" ]]; then
+    ping_result=1
+  fi
+  
+  # 至少有一种检测通过才返回结果
+  if [[ $https_result -eq 1 ]] || [[ $tcp_result -eq 1 ]] || [[ $ping_result -eq 1 ]]; then
+    echo "${https_result}|${tcp_result}|${ping_result}|${ping_delay}"
     return 0
   fi
   
@@ -336,7 +362,7 @@ test_ip_connectivity() {
 
 # 并发检测 IP 地址连通性（使用进程计数控制并发数）
 # 参数：$1 - IP 地址数组引用（格式：IP|DNS），$2 - 域名
-# 返回：可用 IP 地址列表（格式：IP|DNS|检测方法）
+# 返回：可用 IP 地址列表（格式：IP|DNS|https|tcp|ping|延迟）
 test_ips_concurrently() {
   local -n ips_ref="$1"
   local domain="$2"
@@ -383,10 +409,10 @@ test_ips_concurrently() {
       
       # 后台并发检测
       (
-        local method
-        method=$(test_ip_connectivity "$ip" "$domain")
-        if [[ -n "$method" ]]; then
-          echo "${ip}|${dns}|${method}" > "$tmp_file"
+        local test_result
+        test_result=$(test_ip_connectivity "$ip" "$domain")
+        if [[ -n "$test_result" ]]; then
+          echo "${ip}|${dns}|${test_result}" > "$tmp_file"
         fi
       ) &
       pids+=($!)
@@ -425,8 +451,8 @@ test_ips_concurrently() {
     if [[ -f "$tmp_file" ]]; then
       while IFS= read -r line; do
         if [[ -n "$line" ]]; then
-          local ip dns method
-          IFS='|' read -r ip dns method <<< "$line"
+          local ip dns
+          IFS='|' read -r ip dns <<< "$line"
           # 确保 IP 不为空才添加到结果中
           if [[ -n "$ip" && "$ip" != "" ]]; then
             results+=("$line")
@@ -440,8 +466,59 @@ test_ips_concurrently() {
   printf '%s\n' "${results[@]}"
 }
 
-# 选择最优 IP 地址（按协议类型和数量限制）
-# 参数：$1 - 检测结果数组引用（格式：IP|DNS|检测方法），$2 - 域名（可选，用于日志）
+# 计算 IP 评分（功能分 - 延迟惩罚）
+# 参数：$1 - https结果（1/0），$2 - tcp结果（1/0），$3 - ping结果（1/0），$4 - ping延迟（毫秒，可为空）
+# 返回：评分（整数，越高越好）
+calculate_ip_score() {
+  local https_result="$1"
+  local tcp_result="$2"
+  local ping_result="$3"
+  local ping_delay="$4"
+  
+  # 功能分：HTTPS +100，TCP +50，Ping +25
+  local function_score=0
+  if [[ "$https_result" == "1" ]]; then
+    ((function_score += 100))
+  fi
+  if [[ "$tcp_result" == "1" ]]; then
+    ((function_score += 50))
+  fi
+  if [[ "$ping_result" == "1" ]]; then
+    ((function_score += 25))
+  fi
+  
+  # 延迟惩罚：有延迟则用 ping_ms/10，否则固定15
+  local latency_penalty=15
+  if [[ -n "$ping_delay" ]] && [[ "$ping_delay" =~ ^[0-9]+$ ]]; then
+    latency_penalty=$((ping_delay / 10))
+  fi
+  
+  # 最终分数 = 功能分 - 延迟惩罚
+  local score=$((function_score - latency_penalty))
+  echo "$score"
+}
+
+# 确定检测方法名称（优先级：https > tcp > ping）
+# 参数：$1 - https结果（1/0），$2 - tcp结果（1/0），$3 - ping结果（1/0）
+# 返回：检测方法名称
+get_detection_method() {
+  local https_result="$1"
+  local tcp_result="$2"
+  local ping_result="$3"
+  
+  if [[ "$https_result" == "1" ]]; then
+    echo "https"
+  elif [[ "$tcp_result" == "1" ]]; then
+    echo "tcp"
+  elif [[ "$ping_result" == "1" ]]; then
+    echo "ping"
+  else
+    echo ""
+  fi
+}
+
+# 选择最优 IP 地址（基于评分系统）
+# 参数：$1 - 检测结果数组引用（格式：IP|DNS|https|tcp|ping|延迟），$2 - 域名（可选，用于日志）
 # 返回：选中的 IP 地址列表（格式：IP|DNS|检测方法，每行一个）
 select_best_ips() {
   local -n results_ref="$1"
@@ -453,8 +530,8 @@ select_best_ips() {
   # 分离 IPv4 和 IPv6 结果
   for result in "${results_ref[@]}"; do
     [[ -z "$result" ]] && continue
-    local ip dns method
-    IFS='|' read -r ip dns method <<< "$result"
+    local ip dns https_result tcp_result ping_result ping_delay
+    IFS='|' read -r ip dns https_result tcp_result ping_result ping_delay <<< "$result"
     local ip_type
     ip_type=$(get_ip_type "$ip")
     
@@ -465,26 +542,11 @@ select_best_ips() {
     fi
   done
   
-  # 按检测方法优先级排序（https > tcp > ping）
-  sort_priority() {
-    local method="$1"
-    case "$method" in
-      https) echo "1" ;;
-      tcp) echo "2" ;;
-      ping) echo "3" ;;
-      *) echo "4" ;;
-    esac
-  }
-  
   # 确定协议选择策略
-  # True: 双栈，同时选择IPv4和IPv6
-  # IPv4: 优先IPv4，如果没有IPv4则回退到IPv6
-  # IPv6: 优先IPv6，如果没有IPv6则回退到IPv4
   local select_ipv4=0
   local select_ipv6=0
   
   if [[ "$IP_MODE" == "True" ]]; then
-    # 双栈模式：同时支持IPv4和IPv6
     if [[ ${#ipv4_results[@]} -gt 0 ]]; then
       select_ipv4=1
     fi
@@ -492,21 +554,18 @@ select_best_ips() {
       select_ipv6=1
     fi
   elif [[ "$IP_MODE" == "IPv4" ]]; then
-    # IPv4模式：优先IPv4，如果没有则回退到IPv6
     if [[ ${#ipv4_results[@]} -gt 0 ]]; then
       select_ipv4=1
     elif [[ ${#ipv6_results[@]} -gt 0 ]]; then
       select_ipv6=1
     fi
   elif [[ "$IP_MODE" == "IPv6" ]]; then
-    # IPv6模式：优先IPv6，如果没有则回退到IPv4
     if [[ ${#ipv6_results[@]} -gt 0 ]]; then
       select_ipv6=1
     elif [[ ${#ipv4_results[@]} -gt 0 ]]; then
       select_ipv4=1
     fi
   else
-    # 未知模式，默认选择所有可用IP
     if [[ ${#ipv4_results[@]} -gt 0 ]]; then
       select_ipv4=1
     fi
@@ -515,17 +574,18 @@ select_best_ips() {
     fi
   fi
   
-  # 选择 IPv4 IP
+  # 选择 IPv4 IP（按评分排序）
   if [[ $select_ipv4 -eq 1 && ${#ipv4_results[@]} -gt 0 ]]; then
     local -a sorted_ipv4
     IFS=$'\n' read -d '' -r -a sorted_ipv4 < <(
       for result in "${ipv4_results[@]}"; do
-        local ip dns method
-        IFS='|' read -r ip dns method <<< "$result"
-        local priority
-        priority=$(sort_priority "$method")
-        echo "${priority}|${result}"
-      done | sort -t'|' -k1,1n | cut -d'|' -f2-
+        local ip dns https_result tcp_result ping_result ping_delay
+        IFS='|' read -r ip dns https_result tcp_result ping_result ping_delay <<< "$result"
+        local score
+        score=$(calculate_ip_score "$https_result" "$tcp_result" "$ping_result" "$ping_delay")
+        # 输出格式：评分|原始结果（用于排序后提取）
+        echo "${score}|${result}"
+      done | sort -t'|' -k1,1rn | cut -d'|' -f2-
     ) || true
     
     local count=0
@@ -534,30 +594,33 @@ select_best_ips() {
       if [[ $count -ge $MAX_IPS_PER_PROTOCOL ]]; then
         break
       fi
-      local ip dns method
-      IFS='|' read -r ip dns method <<< "$result"
+      local ip dns https_result tcp_result ping_result ping_delay
+      IFS='|' read -r ip dns https_result tcp_result ping_result ping_delay <<< "$result"
       if [[ -n "$ip" && "$ip" != "" ]]; then
-        selected_ips+=("$result")
+        local method
+        method=$(get_detection_method "$https_result" "$tcp_result" "$ping_result")
+        # 输出格式：IP|DNS|检测方法
+        selected_ips+=("${ip}|${dns}|${method}")
         ((count++))
         
         if [[ $CRON_MODE -eq 0 && -n "$domain" ]]; then
-          echo "  选中 IPv4: $ip (检测方法: $method) - $domain" >&2
+          echo "  选中 IPv4: $ip (检测方法: $method, 延迟: ${ping_delay:-未知}ms) - $domain" >&2
         fi
       fi
     done
   fi
   
-  # 选择 IPv6 IP
+  # 选择 IPv6 IP（按评分排序）
   if [[ $select_ipv6 -eq 1 && ${#ipv6_results[@]} -gt 0 ]]; then
     local -a sorted_ipv6
     IFS=$'\n' read -d '' -r -a sorted_ipv6 < <(
       for result in "${ipv6_results[@]}"; do
-        local ip dns method
-        IFS='|' read -r ip dns method <<< "$result"
-        local priority
-        priority=$(sort_priority "$method")
-        echo "${priority}|${result}"
-      done | sort -t'|' -k1,1n | cut -d'|' -f2-
+        local ip dns https_result tcp_result ping_result ping_delay
+        IFS='|' read -r ip dns https_result tcp_result ping_result ping_delay <<< "$result"
+        local score
+        score=$(calculate_ip_score "$https_result" "$tcp_result" "$ping_result" "$ping_delay")
+        echo "${score}|${result}"
+      done | sort -t'|' -k1,1rn | cut -d'|' -f2-
     ) || true
     
     local count=0
@@ -566,14 +629,16 @@ select_best_ips() {
       if [[ $count -ge $MAX_IPS_PER_PROTOCOL ]]; then
         break
       fi
-      local ip dns method
-      IFS='|' read -r ip dns method <<< "$result"
+      local ip dns https_result tcp_result ping_result ping_delay
+      IFS='|' read -r ip dns https_result tcp_result ping_result ping_delay <<< "$result"
       if [[ -n "$ip" && "$ip" != "" ]]; then
-        selected_ips+=("$result")
+        local method
+        method=$(get_detection_method "$https_result" "$tcp_result" "$ping_result")
+        selected_ips+=("${ip}|${dns}|${method}")
         ((count++))
         
         if [[ $CRON_MODE -eq 0 && -n "$domain" ]]; then
-          echo "  选中 IPv6: $ip (检测方法: $method) - $domain" >&2
+          echo "  选中 IPv6: $ip (检测方法: $method, 延迟: ${ping_delay:-未知}ms) - $domain" >&2
         fi
       fi
     done
@@ -653,9 +718,11 @@ resolve_domain() {
   if [[ ${#selected_ips[@]} -eq 0 ]]; then
     # 既然有可用IP但未选中，使用首个可用结果兜底
     local first_result="${test_results[0]}"
-    local ip dns method
-    IFS='|' read -r ip dns method <<< "$first_result"
+    local ip dns https_result tcp_result ping_result ping_delay
+    IFS='|' read -r ip dns https_result tcp_result ping_result ping_delay <<< "$first_result"
     if [[ -n "$ip" && "$ip" != "" ]]; then
+      local method
+      method=$(get_detection_method "$https_result" "$tcp_result" "$ping_result")
       local dns_name="${DNS_NAMES[$dns]:-$dns}"
       if [[ $CRON_MODE -eq 0 ]]; then
         echo "  警告：未匹配到满足协议的 IP，已使用首个可用结果: $ip (${method})" >&2
