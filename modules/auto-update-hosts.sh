@@ -17,12 +17,12 @@ if [[ $CRON_MODE -eq 1 ]]; then
   :
 else
   # 交互模式下加载公共库
-  source "${SCRIPT_DIR}/lib/core/constants.sh"
-  source "${SCRIPT_DIR}/lib/core/logging.sh"
-  source "${SCRIPT_DIR}/lib/system/dependency.sh"
+source "${SCRIPT_DIR}/lib/core/constants.sh"
+source "${SCRIPT_DIR}/lib/core/logging.sh"
+source "${SCRIPT_DIR}/lib/system/dependency.sh"
   source "${SCRIPT_DIR}/lib/system/utils.sh"
-  source "${SCRIPT_DIR}/lib/ui/menu.sh"
-  source "${SCRIPT_DIR}/lib/ui/styles.sh"
+source "${SCRIPT_DIR}/lib/ui/menu.sh"
+source "${SCRIPT_DIR}/lib/ui/styles.sh"
 fi
 
 # 全局配置
