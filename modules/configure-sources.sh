@@ -107,6 +107,11 @@ install_chsrc() {
 
 # ---------- DEB822 源文件准备 ----------
 prepare_sources_env() {
+    # 延迟系统检测：仅在需要时执行
+    if [[ -z "${CODENAME:-}" ]]; then
+        detect_system
+    fi
+
     if [[ -f /etc/apt/sources.list ]]; then
         log "检测到旧版 sources.list，执行备份..."
         mv /etc/apt/sources.list /etc/apt/sources.list.bak
@@ -139,6 +144,14 @@ switch_fastest() {
     command -v chsrc >/dev/null 2>&1 || install_chsrc
     chsrc set debian
     log "测速换源完成。"
+}
+
+switch_first() {
+    prepare_sources_env
+    log "切换至维护团队测速第一的镜像源..."
+    command -v chsrc >/dev/null 2>&1 || install_chsrc
+    chsrc set debian first
+    log "镜像源切换完成。"
 }
 
 switch_list() {
@@ -261,15 +274,16 @@ menu() {
 
 # ---------- 主程序 ----------
 main() {
-    detect_system
-
     if [[ "$1" == "--auto" ]]; then
-        log "无人值守模式：自动执行测速换源..."
+        # 无人值守模式：立即执行系统检测和换源操作
+        detect_system
+        log "无人值守模式：使用维护团队测速第一的镜像源..."
         command -v chsrc >/dev/null 2>&1 || install_chsrc
-        switch_fastest
+        switch_first
         exit 0
     fi
 
+    # 交互模式：延迟所有操作，仅显示菜单
     menu
 }
 

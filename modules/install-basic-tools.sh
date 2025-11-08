@@ -50,12 +50,20 @@ fi
 # 自动将首个普通用户（UID>=1000，排除 nobody）加入 sudo 组，便于后续管理
 first_user=$(awk -F: '$3>=1000 && $1 != "nobody" {print $1}' /etc/passwd | sort | head -n 1)
 
-if [ -n "$first_user" ]; then
-  if usermod -aG sudo "$first_user"; then
-    log_success "用户 $first_user 已加入 sudo 组。"
+if [[ -n "${first_user:-}" ]]; then
+  # 验证用户是否真实存在
+  if id "$first_user" &>/dev/null; then
+    # 检查用户是否已在 sudo 组中
+    if id -nG "$first_user" 2>/dev/null | grep -qw "sudo"; then
+      log_info "用户 $first_user 已在 sudo 组中，跳过操作。"
+    elif usermod -aG sudo "$first_user" 2>/dev/null; then
+      log_success "用户 $first_user 已加入 sudo 组。"
+    else
+      log_warning "添加用户 $first_user 到 sudo 组失败，跳过操作。"
+    fi
   else
-    log_warning "添加用户 $first_user 到 sudo 组失败。"
+    log_warning "检测到的用户 $first_user 不存在，跳过 sudo 组配置。"
   fi
 else
-  log_warning "未找到符合条件的普通用户，跳过 sudo 组配置。"
+  log_info "未找到符合条件的普通用户，跳过 sudo 组配置。"
 fi
