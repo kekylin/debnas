@@ -20,7 +20,7 @@ else
 source "${SCRIPT_DIR}/lib/core/constants.sh"
 source "${SCRIPT_DIR}/lib/core/logging.sh"
 source "${SCRIPT_DIR}/lib/system/dependency.sh"
-  source "${SCRIPT_DIR}/lib/system/utils.sh"
+source "${SCRIPT_DIR}/lib/system/utils.sh"
 source "${SCRIPT_DIR}/lib/ui/menu.sh"
 source "${SCRIPT_DIR}/lib/ui/styles.sh"
 fi
@@ -112,8 +112,8 @@ DOMAINS=(
   "assets.fanart.tv|Fanart"
 )
 
-# 协议模式固定为双栈
-readonly IP_MODE="True"
+# 协议模式固定为 IPv4
+readonly IP_MODE="IPv4"
 
 # 每种协议最多保留 1 个 IP
 readonly MAX_IPS_PER_PROTOCOL="1"
