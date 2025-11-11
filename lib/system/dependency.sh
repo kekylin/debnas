@@ -31,6 +31,8 @@ declare -A cmd_to_pkg=(
   ["exim4"]="exim4"
   ["update-exim4.conf"]="exim4-config"
   ["sysctl"]="procps"
+  ["dig"]="dnsutils"
+  ["ping"]="iputils-ping"
   # 可根据需要扩展
 )
 

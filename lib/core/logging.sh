@@ -48,9 +48,9 @@ log_status() {
   local ts
   ts=$(get_timestamp)
   if [[ -n "$ts" ]]; then
-    printf "%b%s%b %s %s\n" "$color" "$status" "$COLOR_RESET" "$ts" "$message"
+    printf "%b%s%b %s %s\n" "$color" "$status" "$COLOR_RESET" "$ts" "$message" >&2
   else
-    printf "%b%s%b %s\n" "$color" "$status" "$COLOR_RESET" "$message"
+    printf "%b%s%b %s\n" "$color" "$status" "$COLOR_RESET" "$message" >&2
   fi
 }
 

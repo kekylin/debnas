@@ -23,7 +23,11 @@ for mod_desc in "${MODULES[@]}"; do
   script_name="${mod_desc%%|*}"
   zh_desc="${mod_desc#*|}"
   log_action "正在执行模块：${zh_desc}..."
-  bash "$SCRIPT_DIR/modules/${script_name}.sh"
+  if [[ "$script_name" == "configure-sources" ]]; then
+    bash "$SCRIPT_DIR/modules/${script_name}.sh" --auto
+  else
+    bash "$SCRIPT_DIR/modules/${script_name}.sh"
+  fi
   if [[ $? -ne 0 ]]; then
     log_fail "模块 ${zh_desc} 执行失败，已中断一键配置。"
     exit "${ERROR_GENERAL}"
