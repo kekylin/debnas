@@ -17,54 +17,98 @@ readonly -a GITHUB_PROXY_ENDPOINTS=(
 	"https://gitproxy.click"
 	"https://hubproxy.jiaozi.live"
 	"https://gh.llkk.cc"
+	"https://gh-proxy.top"
 )
 
-# 构建镜像候选列表，包含镜像站与源站
-build_github_candidate_urls() {
-	local source_url="$1"
-	local -a candidate_urls=()
-	local proxy_prefix
-	for proxy_prefix in "${GITHUB_PROXY_ENDPOINTS[@]}"; do
-		candidate_urls+=("${proxy_prefix}/${source_url}")
-	done
-	candidate_urls+=("${source_url}")
+BEST_GITHUB_PROXY_SELECTION_STATE=""
+BEST_GITHUB_PROXY=""
+BEST_GITHUB_PROXY_LATENCY=""
 
-	printf '%s\n' "${candidate_urls[@]}"
+measure_ping_latency() {
+	local target="$1"
+	local output latency
+	if ! output=$(ping -c 1 -W 1 "${target}" 2>/dev/null); then
+		return 1
+	fi
+	latency=$(printf '%s\n' "${output}" | awk -F'time=' '/time=/{split($2,a," "); print a[1]; exit}')
+	if [[ -z "${latency}" ]]; then
+		return 1
+	fi
+	printf '%s\n' "${latency}"
+	return 0
 }
 
-# 对镜像候选执行健康检查并按延迟排序，返回最优顺序
-rank_github_candidate_urls() {
-	local source_url="$1"
-	local -a candidate_urls=()
-	local candidate
-	while IFS= read -r candidate; do
-		candidate_urls+=("${candidate}")
-	done < <(build_github_candidate_urls "${source_url}")
+select_best_github_proxy() {
+	if [[ "${BEST_GITHUB_PROXY_SELECTION_STATE}" == "done" || "${BEST_GITHUB_PROXY_SELECTION_STATE}" == "skip" ]]; then
+		[[ "${BEST_GITHUB_PROXY_SELECTION_STATE}" == "done" ]]
+		return
+	fi
 
-	local -a scored_urls=()
-	local -a unreachable_urls=()
-	local idx=0
-	for candidate in "${candidate_urls[@]}"; do
-		local start_ns end_ns elapsed_ms
-		start_ns="$(date +%s%N)"
-		if curl -fsI --connect-timeout 5 --max-time 8 "${candidate}" >/dev/null 2>&1; then
-			end_ns="$(date +%s%N)"
-			elapsed_ms=$(((end_ns - start_ns) / 1000000))
-			scored_urls+=("${elapsed_ms}|${idx}|${candidate}")
+	if ! command -v ping >/dev/null 2>&1; then
+		log_warning "ping 未安装，无法执行 GitHub 镜像延迟检测，将按预设顺序尝试下载"
+		BEST_GITHUB_PROXY_SELECTION_STATE="skip"
+		return 1
+	fi
+
+	local -a measurements=()
+	local prefix host latency
+	for prefix in "${GITHUB_PROXY_ENDPOINTS[@]}"; do
+		host=$(printf '%s\n' "${prefix}" | sed -E 's#^[a-z]+://([^/]+).*#\1#')
+		if latency=$(measure_ping_latency "${host}"); then
+			measurements+=("${latency}|${prefix}")
 		else
-			unreachable_urls+=("${idx}|${candidate}")
+			measurements+=("999999|${prefix}")
 		fi
-		idx=$((idx + 1))
 	done
+	if latency=$(measure_ping_latency "github.com"); then
+		measurements+=("${latency}|DIRECT")
+	else
+		measurements+=("999999|DIRECT")
+	fi
 
-	if ((${#scored_urls[@]} > 0)); then
-		printf '%s\n' "${scored_urls[@]}" | sort -t'|' -k1,1n -k2,2n | cut -d'|' -f3
-		if ((${#unreachable_urls[@]} > 0)); then
-			printf '%s\n' "${unreachable_urls[@]}" | sort -t'|' -k1,1n | cut -d'|' -f2
+	local best_entry
+	best_entry=$(printf '%s\n' "${measurements[@]}" | sort -t'|' -k1,1g | head -n1)
+	local best_prefix="${best_entry#*|}"
+	BEST_GITHUB_PROXY_LATENCY="${best_entry%%|*}"
+
+	if [[ "${best_prefix}" == "DIRECT" ]]; then
+		BEST_GITHUB_PROXY="DIRECT"
+		log_info "选定下载地址: GitHub 源站（延迟 ${BEST_GITHUB_PROXY_LATENCY} ms）"
+	else
+		BEST_GITHUB_PROXY="${best_prefix}"
+		log_info "选定下载地址: ${BEST_GITHUB_PROXY}（延迟 ${BEST_GITHUB_PROXY_LATENCY} ms）"
+	fi
+
+	BEST_GITHUB_PROXY_SELECTION_STATE="done"
+	return 0
+}
+
+build_ordered_github_candidates() {
+	local source_url="$1"
+	local -a ordered_urls=()
+
+	if select_best_github_proxy; then
+		if [[ "${BEST_GITHUB_PROXY}" == "DIRECT" ]]; then
+			ordered_urls+=("${source_url}")
+			for prefix in "${GITHUB_PROXY_ENDPOINTS[@]}"; do
+				ordered_urls+=("${prefix}/${source_url}")
+			done
+		else
+			ordered_urls+=("${BEST_GITHUB_PROXY}/${source_url}")
+			for prefix in "${GITHUB_PROXY_ENDPOINTS[@]}"; do
+				[[ "${prefix}" == "${BEST_GITHUB_PROXY}" ]] && continue
+				ordered_urls+=("${prefix}/${source_url}")
+			done
+			ordered_urls+=("${source_url}")
 		fi
 	else
-		printf '%s\n' "${candidate_urls[@]}"
+		for prefix in "${GITHUB_PROXY_ENDPOINTS[@]}"; do
+			ordered_urls+=("${prefix}/${source_url}")
+		done
+		ordered_urls+=("${source_url}")
 	fi
+
+	printf '%s\n' "${ordered_urls[@]}"
 }
 
 # download_from_github_mirrors 优先通过 GitHub 镜像站下载文件，自动选择最快镜像并回退到源站。
@@ -85,15 +129,15 @@ download_from_github_mirrors() {
 	local candidate
 	while IFS= read -r candidate; do
 		[[ -z "${candidate}" ]] && continue
-		log_info "尝试下载镜像: ${candidate}"
+		log_info "开始下载: ${candidate}"
 		if curl -fL --connect-timeout 10 --retry 2 --retry-delay 3 -o "${tmp_file}" "${candidate}"; then
 			mv "${tmp_file}" "${output_name}"
-			log_info "镜像下载成功: ${candidate}"
+			log_info "下载完成: ${candidate}"
 			return 0
 		fi
-		log_warning "镜像不可用: ${candidate}"
+		log_warning "下载失败: ${candidate}"
 		rm -f "${tmp_file}"
-	done < <(rank_github_candidate_urls "${source_url}")
+	done < <(build_ordered_github_candidates "${source_url}")
 
 	return 1
 }
