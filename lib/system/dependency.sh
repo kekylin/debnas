@@ -72,7 +72,7 @@ install_missing_dependencies() {
     log_info "所有依赖命令均已安装"
     return 0
   fi
-  log_warn "发现缺失的依赖命令：${missing_cmds[*]}"
+  log_warning "发现缺失的依赖命令：${missing_cmds[*]}"
   if ! has_valid_main_apt_source; then
     log_error "未检测到有效主软件源（/etc/apt/sources.list 或 /etc/apt/sources.list.d/debian.sources），请先配置软件源后再安装依赖：${missing_cmds[*]}"
     return 1
@@ -103,7 +103,7 @@ list_missing_dependencies() {
     log_info "所有依赖命令均已安装"
     return 0
   fi
-  log_warn "以下依赖命令缺失："
+  log_warning "以下依赖命令缺失："
   for cmd in "${missing_cmds[@]}"; do
     echo "- $cmd"
   done
@@ -120,4 +120,3 @@ list_missing_dependencies() {
     fi
   done
 }
-
