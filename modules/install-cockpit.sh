@@ -42,19 +42,29 @@ rank_github_candidate_urls() {
 	done < <(build_github_candidate_urls "${source_url}")
 
 	local -a scored_urls=()
+	local -a unreachable_urls=()
+	local idx=0
 	for candidate in "${candidate_urls[@]}"; do
 		local start_ns end_ns elapsed_ms
 		start_ns="$(date +%s%N)"
 		if curl -fsI --connect-timeout 5 --max-time 8 "${candidate}" >/dev/null 2>&1; then
 			end_ns="$(date +%s%N)"
 			elapsed_ms=$(((end_ns - start_ns) / 1000000))
-			scored_urls+=("${elapsed_ms}|${candidate}")
+			scored_urls+=("${elapsed_ms}|${idx}|${candidate}")
 		else
-			scored_urls+=("999999|${candidate}")
+			unreachable_urls+=("${idx}|${candidate}")
 		fi
+		idx=$((idx + 1))
 	done
 
-	printf '%s\n' "${scored_urls[@]}" | sort -n | cut -d'|' -f2
+	if ((${#scored_urls[@]} > 0)); then
+		printf '%s\n' "${scored_urls[@]}" | sort -t'|' -k1,1n -k2,2n | cut -d'|' -f3
+		if ((${#unreachable_urls[@]} > 0)); then
+			printf '%s\n' "${unreachable_urls[@]}" | sort -t'|' -k1,1n | cut -d'|' -f2
+		fi
+	else
+		printf '%s\n' "${candidate_urls[@]}"
+	fi
 }
 
 # download_from_github_mirrors 优先通过 GitHub 镜像站下载文件，自动选择最快镜像并回退到源站。
