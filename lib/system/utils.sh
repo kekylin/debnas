@@ -26,7 +26,7 @@ verify_system_support() {
     log_error "不支持的系统 (${system})，仅支持 Debian 12 及以上版本"
     return 1
   fi
-  
+
   # 检查 Debian 版本
   local version
   if [[ -f /etc/debian_version ]]; then
@@ -34,7 +34,7 @@ verify_system_support() {
   else
     version=$(grep -oP '^VERSION_ID="\K[0-9.]+' /etc/os-release || echo "0")
   fi
-  
+
   # 检查是否为 Debian 12 或更高版本
   if [[ "$version" =~ ^[0-9]+\.?[0-9]*$ ]]; then
     local major_version=${version%%.*}
@@ -43,7 +43,7 @@ verify_system_support() {
       return 1
     fi
   fi
-  
+
   return 0
 }
 
@@ -62,7 +62,7 @@ verify_debian_12_13_support() {
     log_error "不支持的系统 (${system})，仅支持 Debian 12 和 13"
     return 1
   fi
-  
+
   # 获取系统代号
   local codename
   if command -v lsb_release >/dev/null 2>&1; then
@@ -70,10 +70,10 @@ verify_debian_12_13_support() {
   else
     codename=$(grep -oP '^VERSION_CODENAME=\K.*' /etc/os-release | tr -d '"')
   fi
-  
+
   # 检查是否为支持的版本代号
   case "$codename" in
-    "bookworm"|"trixie")
+    "bookworm" | "trixie")
       log_info "检测到支持的 Debian 版本: $codename"
       return 0
       ;;
@@ -101,7 +101,7 @@ get_system_codename() {
 is_supported_codename() {
   local codename="$1"
   case "$codename" in
-    "bookworm"|"trixie")
+    "bookworm" | "trixie")
       return 0
       ;;
     *)
@@ -185,16 +185,16 @@ get_kernel_version() {
 check_architecture_compatibility() {
   local arch=$(get_system_architecture)
   local supported_archs=("x86_64" "amd64" "aarch64" "arm64" "armv7l" "armv8l")
-  
+
   for supported in "${supported_archs[@]}"; do
     if [[ "$arch" == "$supported" ]]; then
       SYSTEM_CHECK_RESULTS["architecture"]="兼容 ($arch)"
       return 0
     fi
   done
-  
+
   SYSTEM_CHECK_RESULTS["architecture"]="不兼容 ($arch)"
-  log_warn "系统架构 $arch 可能不完全兼容，建议使用 x86_64 或 aarch64"
+  log_warning "系统架构 $arch 可能不完全兼容，建议使用 x86_64 或 aarch64"
   return 1
 }
 
@@ -205,14 +205,14 @@ check_kernel_compatibility() {
   local kernel_version=$(get_kernel_version)
   local major_version=$(echo "$kernel_version" | cut -d. -f1)
   local minor_version=$(echo "$kernel_version" | cut -d. -f2)
-  
+
   # 检查内核版本是否 >= 5.10 (Debian 12 默认内核)
   if [[ "$major_version" -gt 5 ]] || ([[ "$major_version" -eq 5 ]] && [[ "$minor_version" -ge 10 ]]); then
     SYSTEM_CHECK_RESULTS["kernel"]="兼容 ($kernel_version)"
     return 0
   else
     SYSTEM_CHECK_RESULTS["kernel"]="不兼容 ($kernel_version)"
-    log_warn "内核版本 $kernel_version 可能过低，建议使用 5.10 或更高版本"
+    log_warning "内核版本 $kernel_version 可能过低，建议使用 5.10 或更高版本"
     return 1
   fi
 }
@@ -224,13 +224,13 @@ check_memory_requirements() {
   local min_memory="${1:-512}"
   local total_memory_kb=$(grep MemTotal /proc/meminfo | awk '{print $2}')
   local total_memory_mb=$((total_memory_kb / 1024))
-  
+
   if [[ $total_memory_mb -ge $min_memory ]]; then
     SYSTEM_CHECK_RESULTS["memory"]="满足要求 (${total_memory_mb}MB >= ${min_memory}MB)"
     return 0
   else
     SYSTEM_CHECK_RESULTS["memory"]="不满足要求 (${total_memory_mb}MB < ${min_memory}MB)"
-    log_warn "系统内存不足，当前 ${total_memory_mb}MB，建议至少 ${min_memory}MB"
+    log_warning "系统内存不足，当前 ${total_memory_mb}MB，建议至少 ${min_memory}MB"
     return 1
   fi
 }
@@ -243,13 +243,13 @@ check_disk_space() {
   local min_space_gb="${2:-5}"
   local available_space_kb=$(df "$check_path" | awk 'NR==2 {print $4}')
   local available_space_gb=$((available_space_kb / 1024 / 1024))
-  
+
   if [[ $available_space_gb -ge $min_space_gb ]]; then
     SYSTEM_CHECK_RESULTS["disk_space"]="满足要求 (${available_space_gb}GB >= ${min_space_gb}GB)"
     return 0
   else
     SYSTEM_CHECK_RESULTS["disk_space"]="不满足要求 (${available_space_gb}GB < ${min_space_gb}GB)"
-    log_warn "磁盘空间不足，当前可用 ${available_space_gb}GB，建议至少 ${min_space_gb}GB"
+    log_warning "磁盘空间不足，当前可用 ${available_space_gb}GB，建议至少 ${min_space_gb}GB"
     return 1
   fi
 }
@@ -260,7 +260,7 @@ check_disk_space() {
 check_network_connectivity() {
   local test_url="${1:-https://mirrors.tuna.tsinghua.edu.cn}"
   local timeout="${2:-10}"
-  
+
   if command -v curl >/dev/null 2>&1; then
     if curl -s --max-time "$timeout" --connect-timeout "$timeout" "$test_url" >/dev/null 2>&1; then
       SYSTEM_CHECK_RESULTS["network"]="连接正常"
@@ -272,9 +272,9 @@ check_network_connectivity() {
       return 0
     fi
   fi
-  
+
   SYSTEM_CHECK_RESULTS["network"]="连接异常"
-  log_warn "网络连接测试失败，可能影响软件包下载"
+  log_warning "网络连接测试失败，可能影响软件包下载"
   return 1
 }
 
@@ -283,7 +283,7 @@ check_network_connectivity() {
 # 返回值：0所有服务正常，非0有服务异常
 check_critical_services() {
   local failed_services=()
-  
+
   # 检查 systemd 是否正在运行
   if ! is_systemd; then
     failed_services+=("systemd")
@@ -294,7 +294,7 @@ check_critical_services() {
     return 0
   else
     SYSTEM_CHECK_RESULTS["services"]="服务异常: ${failed_services[*]}"
-    log_warn "发现异常服务: ${failed_services[*]}"
+    log_warning "发现异常服务: ${failed_services[*]}"
     return 1
   fi
 }
@@ -308,14 +308,14 @@ check_package_manager() {
     log_error "apt 包管理器未安装"
     return 1
   fi
-  
+
   # 检查 apt 是否被锁定（只检查锁定文件，不执行 apt update）
   if [[ -f /var/lib/apt/lists/lock ]] || [[ -f /var/cache/apt/archives/lock ]]; then
     SYSTEM_CHECK_RESULTS["package_manager"]="apt 被锁定"
-    log_warn "apt 包管理器被锁定，可能有其他进程在使用"
+    log_warning "apt 包管理器被锁定，可能有其他进程在使用"
     return 1
   fi
-  
+
   SYSTEM_CHECK_RESULTS["package_manager"]="apt 正常"
   return 0
 }
@@ -329,7 +329,7 @@ check_user_permissions() {
     log_error "脚本需要 root 权限运行"
     return 1
   fi
-  
+
   SYSTEM_CHECK_RESULTS["permissions"]="权限足够"
   return 0
 }
@@ -340,7 +340,7 @@ check_user_permissions() {
 check_container_compatibility() {
   if is_container; then
     SYSTEM_CHECK_RESULTS["container"]="容器环境 (部分功能受限)"
-    log_warn "检测到容器环境，部分功能可能受限"
+    log_warning "检测到容器环境，部分功能可能受限"
     return 1
   else
     SYSTEM_CHECK_RESULTS["container"]="物理/虚拟机环境"
@@ -354,64 +354,64 @@ check_container_compatibility() {
 perform_system_compatibility_check() {
   local show_details="${1:-true}"
   local failed_checks=0
-  
+
   log_info "开始执行系统兼容性检查..."
-  
+
   # 清空之前的结果
   SYSTEM_CHECK_RESULTS=()
-  
+
   # 基础系统检查
   if ! verify_system_support; then
     ((failed_checks++))
   else
     SYSTEM_CHECK_RESULTS["system"]="兼容 ($(get_system_name) $(get_system_version))"
   fi
-  
+
   # 权限检查
   if ! check_user_permissions; then
     ((failed_checks++))
   fi
-  
+
   # 架构检查
   if ! check_architecture_compatibility; then
     ((failed_checks++))
   fi
-  
+
   # 内核检查
   if ! check_kernel_compatibility; then
     ((failed_checks++))
   fi
-  
+
   # 内存检查
   if ! check_memory_requirements 512; then
     ((failed_checks++))
   fi
-  
+
   # 磁盘空间检查
   if ! check_disk_space "/" 5; then
     ((failed_checks++))
   fi
-  
+
   # 网络连接检查
   if ! check_network_connectivity; then
     ((failed_checks++))
   fi
-  
+
   # 包管理器检查
   if ! check_package_manager; then
     ((failed_checks++))
   fi
-  
+
   # 服务检查
   if ! check_critical_services; then
     ((failed_checks++))
   fi
-  
+
   # 容器环境检查
   if ! check_container_compatibility; then
     ((failed_checks++))
   fi
-  
+
   # 显示检查结果
   if [[ "$show_details" == "true" ]]; then
     echo ""
@@ -422,12 +422,12 @@ perform_system_compatibility_check() {
     done
     echo "=================================="
   fi
-  
+
   if [[ $failed_checks -eq 0 ]]; then
     log_success "系统兼容性检查通过"
     return 0
   else
-    log_warn "系统兼容性检查发现 $failed_checks 个问题"
+    log_warning "系统兼容性检查发现 $failed_checks 个问题"
     return 1
   fi
-} 
+}
