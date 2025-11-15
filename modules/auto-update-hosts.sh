@@ -16,13 +16,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 if [[ $CRON_MODE -eq 1 ]]; then
   :
 else
-  # 交互模式下加载公共库
-source "${SCRIPT_DIR}/lib/core/constants.sh"
-source "${SCRIPT_DIR}/lib/core/logging.sh"
-source "${SCRIPT_DIR}/lib/system/dependency.sh"
-source "${SCRIPT_DIR}/lib/system/utils.sh"
-source "${SCRIPT_DIR}/lib/ui/menu.sh"
-source "${SCRIPT_DIR}/lib/ui/styles.sh"
+  source "${SCRIPT_DIR}/lib/core/constants.sh"
+  source "${SCRIPT_DIR}/lib/core/logging.sh"
+  source "${SCRIPT_DIR}/lib/system/dependency.sh"
+  source "${SCRIPT_DIR}/lib/system/utils.sh"
+  source "${SCRIPT_DIR}/lib/ui/menu.sh"
+  source "${SCRIPT_DIR}/lib/ui/styles.sh"
 fi
 
 # 全局配置
@@ -39,7 +38,6 @@ declare -Ar DNS_IP_BY_NAME=(
   ["DNS114"]="114.114.114.114"
 )
 
-# 构建 DNS 服务器列表与名称映射
 declare -A DNS_NAMES=()
 DNS_SERVERS=()
 for dns_name in "${DNS_NAME_ORDER[@]}"; do
@@ -48,7 +46,6 @@ for dns_name in "${DNS_NAME_ORDER[@]}"; do
   DNS_NAMES["$ip"]="$dns_name"
 done
 
-# 按固定列对齐的输出函数
 print_host_entry() {
   local ip="$1"
   local domain="$2"
@@ -118,14 +115,12 @@ readonly IP_MODE="IPv4"
 # 每种协议最多保留 1 个 IP
 readonly MAX_IPS_PER_PROTOCOL="1"
 
-# 统计计数器
 TOTAL_DOMAINS=0
 SUCCESS_DOMAINS=0
 UNRESOLVED_DOMAINS=0
 UNREACHABLE_DOMAINS=0
 RESOLVE_RESULT="unknown"
 
-# 初始化临时文件目录
 setup_temp_environment() {
   local base_tmp_dir="/tmp/debian-homenas"
   
@@ -148,6 +143,20 @@ setup_temp_environment() {
   export TMP_DIR="${base_tmp_dir}"
 }
 
+# 生成域名哈希值用于临时文件名
+# 参数：$1 - 域名
+# 返回：MD5 哈希值（32 字符）
+get_domain_hash() {
+  local domain="$1"
+  if command -v md5sum >/dev/null 2>&1; then
+    printf '%s\n' "${domain}" | md5sum | awk '{print $1}'
+  elif command -v md5 >/dev/null 2>&1; then
+    printf '%s\n' "${domain}" | md5 | awk '{print $1}'
+  else
+    printf '%s\n' "${domain}" | sha256sum 2>/dev/null | awk '{print substr($1,1,16)}' || echo "fallback"
+  fi
+}
+
 # 识别 IP 地址类型
 # 参数：$1 - IP 地址
 # 返回：ipv4、ipv6 或 unknown
@@ -155,7 +164,7 @@ get_ip_type() {
   local ip="$1"
   if [[ "$ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
     echo "ipv4"
-  elif [[ "$ip" =~ ^([0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}$ ]]; then
+  elif command -v ping6 >/dev/null 2>&1 && ping6 -c 1 -W 1 "$ip" &>/dev/null; then
     echo "ipv6"
   else
     echo "unknown"
@@ -170,7 +179,6 @@ resolve_from_dns() {
   local dns="$2"
   local -a ips=()
   
-  # 按协议模式筛选解析结果
   if [[ "$IP_MODE" == "True" ]] || [[ "$IP_MODE" == "IPv4" ]]; then
     local ipv4_ips
     ipv4_ips=$(timeout 5 dig +short "@$dns" A "$domain" 2>/dev/null | grep -Eo '([0-9]{1,3}\.){3}[0-9]{1,3}' || true)
@@ -203,14 +211,15 @@ resolve_domain_ips() {
   local -a all_ips=()
   local pids=()
   local tmp_files=()
+  local safe_domain_hash
+  safe_domain_hash=$(get_domain_hash "$domain")
+  local found_ipv4=0
   
-  # 为每个 DNS 服务器创建临时文件
   for dns in "${dns_servers_ref[@]}"; do
     local tmp_file
-    tmp_file=$(mktemp "${TMP_DIR}/dns-${dns}-${domain}.XXXXXX") || continue
+    tmp_file=$(mktemp "${TMP_DIR}/dns-${dns}-${safe_domain_hash}.XXXXXX") || continue
     tmp_files+=("$tmp_file")
     
-    # 后台并行解析，记录DNS来源
     (
       local -a ips
       mapfile -t ips < <(resolve_from_dns "$domain" "$dns")
@@ -223,12 +232,38 @@ resolve_domain_ips() {
     pids+=($!)
   done
   
-  # 等待所有 DNS 查询完成
-  for pid in "${pids[@]}"; do
-    wait "$pid" 2>/dev/null || true
-  done
+  if [[ "$IP_MODE" == "IPv4" ]]; then
+    local early_found=0
+    for pid in "${pids[@]}"; do
+      if wait "$pid" 2>/dev/null; then
+        for tmp_file in "${tmp_files[@]}"; do
+          if [[ -f "$tmp_file" ]]; then
+            while IFS= read -r line; do
+              if [[ -n "$line" ]]; then
+                local ip
+                IFS='|' read -r ip _ <<< "$line"
+                if [[ "$ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+                  found_ipv4=1
+                  early_found=1
+                  break 2
+                fi
+              fi
+            done < "$tmp_file"
+          fi
+        done
+      fi
+      [[ $early_found -eq 1 ]] && break
+    done
+    
+    for pid in "${pids[@]}"; do
+      wait "$pid" 2>/dev/null || true
+    done
+  else
+    for pid in "${pids[@]}"; do
+      wait "$pid" 2>/dev/null || true
+    done
+  fi
   
-  # 收集所有 IP 地址（带DNS信息）
   for tmp_file in "${tmp_files[@]}"; do
     if [[ -f "$tmp_file" ]]; then
       while IFS= read -r line; do
@@ -240,13 +275,12 @@ resolve_domain_ips() {
     fi
   done
   
-  # 去重（保留第一个出现的DNS来源）
   if [[ ${#all_ips[@]} -gt 0 ]]; then
     declare -A seen_ips
     local -a unique_ips=()
     for ip_dns in "${all_ips[@]}"; do
       local ip
-      ip=$(echo "$ip_dns" | cut -d'|' -f1)
+      IFS='|' read -r ip _ <<< "$ip_dns"
       if [[ -z "${seen_ips[$ip]:-}" ]]; then
         seen_ips["$ip"]=1
         unique_ips+=("$ip_dns")
@@ -258,9 +292,9 @@ resolve_domain_ips() {
   printf '%s\n' "${all_ips[@]}"
 }
 
-# HTTPS 直连检测（携带 Host 头，跳过证书验证）
+# HTTPS 连通性检测（携带 Host 头，跳过证书验证）
 # 参数：$1 - IP 地址，$2 - 域名
-# 返回：0成功，非0失败
+# 返回：0 成功，非 0 失败
 test_https_connectivity() {
   local ip="$1"
   local domain="$2"
@@ -268,15 +302,15 @@ test_https_connectivity() {
   ip_type=$(get_ip_type "$ip")
   
   if [[ "$ip_type" == "ipv6" ]]; then
-    timeout 5 curl -s -k -m 3 --connect-timeout 2 -H "Host: $domain" "https://[$ip]" >/dev/null 2>&1
+    timeout 4 curl -s -k --connect-timeout 2 -m 2 -H "Host: $domain" "https://[$ip]" >/dev/null 2>&1
   else
-    timeout 5 curl -s -k -m 3 --connect-timeout 2 -H "Host: $domain" "https://$ip" >/dev/null 2>&1
+    timeout 4 curl -s -k --connect-timeout 2 -m 2 -H "Host: $domain" "https://$ip" >/dev/null 2>&1
   fi
 }
 
-# TCP 443 端口连通性检测
-# 参数：$1 - IP 地址，$2 - 端口（默认443）
-# 返回：0成功，非0失败
+# TCP 端口连通性检测
+# 参数：$1 - IP 地址，$2 - 端口（默认 443）
+# 返回：0 成功，非 0 失败
 test_tcp_connectivity() {
   local ip="$1"
   local port="${2:-443}"
@@ -284,13 +318,47 @@ test_tcp_connectivity() {
   ip_type=$(get_ip_type "$ip")
   
   if [[ "$ip_type" == "ipv6" ]]; then
-    timeout 3 bash -c "exec 3<>/dev/tcp/[$ip]/$port" 2>/dev/null && exec 3<&- && exec 3>&-
+    if timeout 3 bash -c "exec 3<>/dev/tcp/[$ip]/$port" 2>/dev/null; then
+      exec 3>&- 3<&-
+      return 0
+    fi
   else
-    timeout 3 bash -c "exec 3<>/dev/tcp/$ip/$port" 2>/dev/null && exec 3<&- && exec 3>&-
+    if timeout 3 bash -c "exec 3<>/dev/tcp/$ip/$port" 2>/dev/null; then
+      exec 3>&- 3<&-
+      return 0
+    fi
   fi
+  return 1
 }
 
-# Ping 检测（IPv4/IPv6 自动适配）并返回延迟值
+# 解析 ping 输出中的延迟值
+# 参数：$1 - ping 输出文本
+# 返回：延迟值（毫秒，整数），失败返回空字符串
+parse_ping_delay() {
+  local ping_output="$1"
+  local delay=""
+  
+  if [[ -z "$ping_output" ]]; then
+    echo ""
+    return 1
+  fi
+  
+  if command -v grep >/dev/null 2>&1 && grep -oP 'time=\K[0-9.]+' <<< "$ping_output" >/dev/null 2>&1; then
+    delay=$(grep -oP 'time=\K[0-9.]+' <<< "$ping_output" | head -1)
+  fi
+  
+  if [[ -z "$delay" ]] && command -v awk >/dev/null 2>&1; then
+    delay=$(awk -F'=' '/time=/{print $NF}' <<< "$ping_output" | awk '{print $1}' | head -1)
+  fi
+  
+  if [[ -n "$delay" ]] && command -v awk >/dev/null 2>&1; then
+    delay=$(awk "BEGIN {printf \"%.0f\", $delay}")
+  fi
+  
+  echo "${delay:-}"
+}
+
+# Ping 连通性检测并返回延迟值
 # 参数：$1 - IP 地址
 # 返回：延迟值（毫秒，整数），失败返回空字符串
 test_ping_connectivity() {
@@ -306,51 +374,57 @@ test_ping_connectivity() {
     ping_output=$(timeout 3 ping -c 1 -W 2 "$ip" 2>&1 || echo "")
   fi
   
-  if [[ -n "$ping_output" ]]; then
-    # 提取延迟值（支持 time=XX.XXX 或 time=XX 格式）
-    delay=$(echo "$ping_output" | grep -oP 'time=\K[0-9.]+' | head -1)
-    if [[ -z "$delay" ]]; then
-      delay=$(echo "$ping_output" | awk -F'=' '/time=/{print $NF}' | awk '{print $1}' | head -1)
-    fi
-    # 转换为整数毫秒（四舍五入）
-    if [[ -n "$delay" ]]; then
-      delay=$(awk "BEGIN {printf \"%.0f\", $delay}")
-    fi
-  fi
-  
+  delay=$(parse_ping_delay "$ping_output")
   echo "${delay:-}"
 }
 
+# 判断是否为需要严格检测的域名
+# 参数：$1 - 域名组名
+# 返回：0 需要严格检测，1 普通检测
+is_strict_domain() {
+  local group="$1"
+  if [[ "$group" == "GitHub" ]]; then
+    return 0
+  fi
+  return 1
+}
+
 # 三级连通性检测（汇总所有检测结果和延迟）
-# 参数：$1 - IP 地址，$2 - 域名
+# 参数：$1 - IP 地址，$2 - 域名，$3 - 域名组名（可选）
 # 返回：检测结果（格式：https|tcp|ping|延迟）
 #       https/tcp/ping 字段：1表示通过，0表示失败
 #       延迟字段：ping延迟毫秒数（整数），无延迟则为空
 test_ip_connectivity() {
   local ip="$1"
   local domain="$2"
+  local group="${3:-}"
   local https_result=0
   local tcp_result=0
   local ping_result=0
   local ping_delay=""
   
-  # 检测 HTTPS
   if test_https_connectivity "$ip" "$domain"; then
     https_result=1
   fi
   
-  # 检测 TCP
   if test_tcp_connectivity "$ip" 443; then
     tcp_result=1
   fi
   
-  # 检测 Ping 并获取延迟
   ping_delay=$(test_ping_connectivity "$ip")
   if [[ -n "$ping_delay" ]]; then
     ping_result=1
   fi
   
-  # 至少有一种检测通过才返回结果
+  if is_strict_domain "$group"; then
+    if [[ $https_result -eq 1 ]] && [[ $tcp_result -eq 1 ]]; then
+      echo "${https_result}|${tcp_result}|${ping_result}|${ping_delay}"
+      return 0
+    fi
+    echo ""
+    return 1
+  fi
+  
   if [[ $https_result -eq 1 ]] || [[ $tcp_result -eq 1 ]] || [[ $ping_result -eq 1 ]]; then
     echo "${https_result}|${tcp_result}|${ping_result}|${ping_delay}"
     return 0
@@ -360,7 +434,7 @@ test_ip_connectivity() {
   return 1
 }
 
-# 并发检测 IP 地址连通性（使用进程计数控制并发数）
+# 并发检测 IP 地址连通性
 # 参数：$1 - IP 地址数组引用（格式：IP|DNS），$2 - 域名
 # 返回：可用 IP 地址列表（格式：IP|DNS|https|tcp|ping|延迟）
 test_ips_concurrently() {
@@ -372,45 +446,46 @@ test_ips_concurrently() {
   local running=0
   local index=0
   
-  # 过滤空 IP，创建有效 IP 数组
   local -a valid_ips=()
   for ip_dns in "${ips_ref[@]}"; do
     if [[ -n "$ip_dns" && "$ip_dns" != "" ]]; then
       local ip
-      ip=$(echo "$ip_dns" | cut -d'|' -f1)
+      IFS='|' read -r ip _ <<< "$ip_dns"
       if [[ -n "$ip" && "$ip" != "" ]]; then
         valid_ips+=("$ip_dns")
       fi
     fi
   done
 
-  # 如果没有有效 IP，直接返回
   if [[ ${#valid_ips[@]} -eq 0 ]]; then
     return 0
   fi
   
-  # 为每个有效 IP 创建临时文件
   for ip_dns in "${valid_ips[@]}"; do
-    local ip
-    ip=$(echo "$ip_dns" | cut -d'|' -f1)
+    local ip safe_ip_hash
+    IFS='|' read -r ip _ <<< "$ip_dns"
+    safe_ip_hash=$(get_domain_hash "$ip")
     local tmp_file
-    tmp_file=$(mktemp "${TMP_DIR}/test-${ip}.XXXXXX") || continue
+    tmp_file=$(mktemp "${TMP_DIR}/test-${safe_ip_hash}.XXXXXX") || continue
     tmp_files+=("$tmp_file")
   done
   
-  # 并发检测：控制同时运行的进程数不超过 CONCURRENT_THREADS
   while [[ $index -lt ${#valid_ips[@]} ]] || [[ $running -gt 0 ]]; do
-    # 启动新进程（如果还有 IP 未检测且并发数未达到上限）
     while [[ $running -lt $CONCURRENT_THREADS ]] && [[ $index -lt ${#valid_ips[@]} ]]; do
       local ip_dns="${valid_ips[$index]}"
       local tmp_file="${tmp_files[$index]}"
       local ip dns
       IFS='|' read -r ip dns <<< "$ip_dns"
       
-      # 后台并发检测
       (
         local test_result
-        test_result=$(test_ip_connectivity "$ip" "$domain")
+        local domain_group_info
+        domain_group_info=$(printf '%s\n' "${DOMAINS[@]}" | grep "^${domain}|" | head -1 || echo "")
+        local group=""
+        if [[ -n "$domain_group_info" ]]; then
+          IFS='|' read -r _ group <<< "$domain_group_info"
+        fi
+        test_result=$(test_ip_connectivity "$ip" "$domain" "$group")
         if [[ -n "$test_result" ]]; then
           echo "${ip}|${dns}|${test_result}" > "$tmp_file"
         fi
@@ -420,13 +495,11 @@ test_ips_concurrently() {
       ((index++))
     done
     
-    # 等待至少一个进程完成
     if [[ $running -gt 0 ]]; then
       local wait_pid
       for wait_pid in "${pids[@]}"; do
         if wait "$wait_pid" 2>/dev/null; then
           ((running--))
-          # 从 pids 数组中移除已完成的进程
           local -a new_pids=()
           local pid
           for pid in "${pids[@]}"; do
@@ -441,19 +514,16 @@ test_ips_concurrently() {
     fi
   done
   
-  # 等待所有剩余进程完成
   for pid in "${pids[@]}"; do
     wait "$pid" 2>/dev/null || true
   done
   
-  # 收集检测结果（验证 IP 不为空）
   for tmp_file in "${tmp_files[@]}"; do
     if [[ -f "$tmp_file" ]]; then
       while IFS= read -r line; do
         if [[ -n "$line" ]]; then
-          local ip dns
-          IFS='|' read -r ip dns <<< "$line"
-          # 确保 IP 不为空才添加到结果中
+          local ip
+          IFS='|' read -r ip _ <<< "$line"
           if [[ -n "$ip" && "$ip" != "" ]]; then
             results+=("$line")
           fi
@@ -466,8 +536,37 @@ test_ips_concurrently() {
   printf '%s\n' "${results[@]}"
 }
 
-# 计算 IP 评分（功能分 - 延迟惩罚）
-# 参数：$1 - https结果（1/0），$2 - tcp结果（1/0），$3 - ping结果（1/0），$4 - ping延迟（毫秒，可为空）
+# 计算延迟分数
+# 参数：$1 - ping 延迟（毫秒，整数）
+# 返回：延迟分数（0-100，越高越好）
+calculate_latency_score() {
+  local delay="$1"
+  local score=0
+  
+  if [[ -z "$delay" ]] || ! [[ "$delay" =~ ^[0-9]+$ ]]; then
+    echo "50"
+    return 0
+  fi
+  
+  if [[ $delay -le 200 ]]; then
+    score=100
+  elif [[ $delay -le 400 ]]; then
+    score=80
+  elif [[ $delay -le 600 ]]; then
+    score=60
+  elif [[ $delay -le 800 ]]; then
+    score=40
+  elif [[ $delay -le 1000 ]]; then
+    score=20
+  else
+    score=0
+  fi
+  
+  echo "$score"
+}
+
+# 计算 IP 评分
+# 参数：$1 - HTTPS 结果（1/0），$2 - TCP 结果（1/0），$3 - Ping 结果（1/0），$4 - Ping 延迟（毫秒，可为空）
 # 返回：评分（整数，越高越好）
 calculate_ip_score() {
   local https_result="$1"
@@ -475,32 +574,35 @@ calculate_ip_score() {
   local ping_result="$3"
   local ping_delay="$4"
   
-  # 功能分：HTTPS +100，TCP +50，Ping +25
   local function_score=0
   if [[ "$https_result" == "1" ]]; then
     ((function_score += 100))
   fi
+  
   if [[ "$tcp_result" == "1" ]]; then
     ((function_score += 50))
   fi
+  
   if [[ "$ping_result" == "1" ]]; then
     ((function_score += 25))
   fi
   
-  # 延迟惩罚：有延迟则用 ping_ms/10，否则固定15
-  local latency_penalty=15
+  local latency_score=0
   if [[ -n "$ping_delay" ]] && [[ "$ping_delay" =~ ^[0-9]+$ ]]; then
-    latency_penalty=$((ping_delay / 10))
+    latency_score=$(calculate_latency_score "$ping_delay")
+  else
+    latency_score=50
   fi
   
-  # 最终分数 = 功能分 - 延迟惩罚
-  local score=$((function_score - latency_penalty))
+  local latency_weighted=$((latency_score * 30 / 100))
+  local score=$((function_score + latency_weighted))
+  
   echo "$score"
 }
 
-# 确定检测方法名称（优先级：https > tcp > ping）
-# 参数：$1 - https结果（1/0），$2 - tcp结果（1/0），$3 - ping结果（1/0）
-# 返回：检测方法名称
+# 确定检测方法名称
+# 参数：$1 - HTTPS 结果（1/0），$2 - TCP 结果（1/0），$3 - Ping 结果（1/0）
+# 返回：检测方法名称（优先级：https > tcp > ping）
 get_detection_method() {
   local https_result="$1"
   local tcp_result="$2"
@@ -517,7 +619,7 @@ get_detection_method() {
   fi
 }
 
-# 选择最优 IP 地址（基于评分系统）
+# 选择最优 IP 地址
 # 参数：$1 - 检测结果数组引用（格式：IP|DNS|https|tcp|ping|延迟），$2 - 域名（可选，用于日志）
 # 返回：选中的 IP 地址列表（格式：IP|DNS|检测方法，每行一个）
 select_best_ips() {
@@ -527,7 +629,6 @@ select_best_ips() {
   local -a ipv6_results=()
   local -a selected_ips=()
   
-  # 分离 IPv4 和 IPv6 结果
   for result in "${results_ref[@]}"; do
     [[ -z "$result" ]] && continue
     local ip dns https_result tcp_result ping_result ping_delay
@@ -542,7 +643,6 @@ select_best_ips() {
     fi
   done
   
-  # 确定协议选择策略
   local select_ipv4=0
   local select_ipv6=0
   
@@ -574,7 +674,6 @@ select_best_ips() {
     fi
   fi
   
-  # 选择 IPv4 IP（按评分排序）
   if [[ $select_ipv4 -eq 1 && ${#ipv4_results[@]} -gt 0 ]]; then
     local -a sorted_ipv4
     IFS=$'\n' read -d '' -r -a sorted_ipv4 < <(
@@ -583,9 +682,8 @@ select_best_ips() {
         IFS='|' read -r ip dns https_result tcp_result ping_result ping_delay <<< "$result"
         local score
         score=$(calculate_ip_score "$https_result" "$tcp_result" "$ping_result" "$ping_delay")
-        # 输出格式：评分|原始结果（用于排序后提取）
         echo "${score}|${result}"
-      done | sort -t'|' -k1,1rn | cut -d'|' -f2-
+      done | sort -t'|' -k1,1rn | sed 's/^[^|]*|//'
     ) || true
     
     local count=0
@@ -599,7 +697,6 @@ select_best_ips() {
       if [[ -n "$ip" && "$ip" != "" ]]; then
         local method
         method=$(get_detection_method "$https_result" "$tcp_result" "$ping_result")
-        # 输出格式：IP|DNS|检测方法
         selected_ips+=("${ip}|${dns}|${method}")
         ((count++))
         
@@ -610,7 +707,6 @@ select_best_ips() {
     done
   fi
   
-  # 选择 IPv6 IP（按评分排序）
   if [[ $select_ipv6 -eq 1 && ${#ipv6_results[@]} -gt 0 ]]; then
     local -a sorted_ipv6
     IFS=$'\n' read -d '' -r -a sorted_ipv6 < <(
@@ -620,7 +716,7 @@ select_best_ips() {
         local score
         score=$(calculate_ip_score "$https_result" "$tcp_result" "$ping_result" "$ping_delay")
         echo "${score}|${result}"
-      done | sort -t'|' -k1,1rn | cut -d'|' -f2-
+      done | sort -t'|' -k1,1rn | sed 's/^[^|]*|//'
     ) || true
     
     local count=0
@@ -662,7 +758,6 @@ resolve_domain() {
     echo "正在解析域名: $domain" >&2
   fi
   
-  # 并行从多个 DNS 服务器解析
   local -a all_ips
   mapfile -t all_ips < <(resolve_domain_ips "$domain" DNS_SERVERS)
   
@@ -679,7 +774,6 @@ resolve_domain() {
     echo "  获取到 ${#all_ips[@]} 个候选 IP（IPv4/IPv6），开始三级连通性检测: $domain" >&2
   fi
   
-  # 并发检测 IP 连通性
   local -a test_results
   mapfile -t test_results < <(test_ips_concurrently all_ips "$domain")
   
@@ -692,11 +786,9 @@ resolve_domain() {
     return
   fi
   
-  # 选择最优 IP
   local -a selected_ips
   mapfile -t selected_ips < <(select_best_ips test_results "$domain")
   
-  # 过滤空元素，确保统计与写入一致
   if [[ ${#selected_ips[@]} -gt 0 ]]; then
     local -a filtered_selected=()
     local ip_item
@@ -714,9 +806,7 @@ resolve_domain() {
   
   local wrote_success=0
   
-  # 写入 hosts 文件（格式：IP 域名  # 检测方法 | DNS: DNS服务器名称）
   if [[ ${#selected_ips[@]} -eq 0 ]]; then
-    # 既然有可用IP但未选中，使用首个可用结果兜底
     local first_result="${test_results[0]}"
     local ip dns https_result tcp_result ping_result ping_delay
     IFS='|' read -r ip dns https_result tcp_result ping_result ping_delay <<< "$first_result"
@@ -755,7 +845,6 @@ resolve_domain() {
 
 export -f resolve_domain get_ip_type test_https_connectivity test_tcp_connectivity test_ping_connectivity test_ip_connectivity
 
-# 清理 hosts 文件中的旧内容
 cleanup_old_hosts() {
   if grep -q "$START_MARK" "${HOSTS_FILE}" && grep -q "$END_MARK" "${HOSTS_FILE}"; then
     sed -i "/$START_MARK/,/$END_MARK/d" "${HOSTS_FILE}"
@@ -770,7 +859,6 @@ cleanup_old_hosts() {
   mv "${temp_hosts}" "${HOSTS_FILE}"
 }
 
-# 生成 hosts 文件头部标记
 generate_hosts_header() {
   local output_file="$1"
   local need_blank_line="$2"
@@ -786,7 +874,6 @@ generate_hosts_header() {
   } > "${output_file}"
 }
 
-# 生成 hosts 文件尾部标记
 generate_hosts_footer() {
   local output_file="$1"
   
@@ -796,7 +883,6 @@ generate_hosts_footer() {
   } >> "${output_file}"
 }
 
-# 解析所有域名并生成 hosts 内容（按域名组分类）
 process_all_domains() {
   local hosts_content="$1"
   
@@ -809,16 +895,13 @@ process_all_domains() {
   UNRESOLVED_DOMAINS=0
   UNREACHABLE_DOMAINS=0
   
-  # 定义组输出顺序
   local -a GROUP_ORDER=("GitHub" "TMDB" "OpenSubtitles" "Fanart")
   declare -A group_files
   
-  # 按域名组分类处理
   for domain_group in "${DOMAINS[@]}"; do
     local domain group
     IFS='|' read -r domain group <<< "$domain_group"
     
-    # 初始化组级临时文件
     if [[ -z "${group_files[$group]:-}" ]]; then
       local group_file
       group_file=$(mktemp "${TMP_DIR}/group-${group}.XXXXXX") || continue
@@ -837,7 +920,6 @@ process_all_domains() {
   
   local first_group_written=0
 
-  # 按预设顺序输出各组
   for group in "${GROUP_ORDER[@]}"; do
     local group_file="${group_files[$group]:-}"
     if [[ -n "$group_file" ]] && [[ -f "$group_file" ]] && [[ -s "$group_file" ]]; then
@@ -851,7 +933,6 @@ process_all_domains() {
     fi
   done
   
-  # 输出未列入预设顺序的其余组
   for group in "${!group_files[@]}"; do
     local found=0
     for ordered_group in "${GROUP_ORDER[@]}"; do
@@ -881,7 +962,7 @@ process_all_domains() {
 }
 
 # 更新 /etc/hosts 文件
-# 返回：0成功，非0失败
+# 返回：0 成功，非 0 失败
 update_hosts() {
   if [[ $CRON_MODE -eq 0 ]]; then
     log_action "开始更新 /etc/hosts 文件..."
@@ -926,7 +1007,6 @@ update_hosts() {
   return 0
 }
 
-# 检查并安装必需的系统依赖
 check_required_dependencies() {
   local required_cmds=("dig" "ping" "curl" "awk" "sed" "grep")
   
@@ -940,7 +1020,7 @@ check_required_dependencies() {
 }
 
 # 创建定时任务
-# 返回：0成功，非0失败
+# 返回：0 成功，非 0 失败
 create_cron_job() {
   local script_path
   local cron_job
@@ -974,7 +1054,6 @@ create_cron_job() {
   return 0
 }
 
-# 删除定时任务
 remove_cron_job() {
   if crontab -l 2>/dev/null | grep -q "# DebNAS Hosts Update"; then
     crontab -l 2>/dev/null | grep -v "# DebNAS Hosts Update" | crontab - || true
@@ -984,7 +1063,6 @@ remove_cron_job() {
   fi
 }
 
-# 查询定时任务
 list_cron_jobs() {
   log_info "定时任务如下："
   if crontab -l 2>/dev/null | grep -q "# DebNAS Hosts Update"; then
@@ -994,7 +1072,6 @@ list_cron_jobs() {
   fi
 }
 
-# 交互式菜单
 menu() {
   while true; do
     print_separator "-"
@@ -1033,7 +1110,6 @@ menu() {
   done
 }
 
-# 主函数
 main() {
   if [[ $CRON_MODE -eq 0 ]]; then
     setup_temp_environment
