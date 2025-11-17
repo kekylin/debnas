@@ -53,12 +53,8 @@ check_system_services() {
 check_docker_containers() {
   local host_ip="$1"
   declare -A docker_containers=(
-    ["ddns-go"]="http://${host_ip}:9876"
     ["dockge"]="http://${host_ip}:5001"
-    ["nginx-ui"]="http://${host_ip}:12800"
     ["portainer"]="https://${host_ip}:9443"
-    ["portainer_zh-cn"]="http://${host_ip}:9999"
-    ["scrutiny"]="http://${host_ip}:9626"
   )
 
   for container in "${!docker_containers[@]}"; do
