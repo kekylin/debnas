@@ -152,65 +152,94 @@ generate_css() {
   cat > "$BRANDING_CSS" <<EOF
 /* Cockpit 登录页样式（自动生成） */
 body.login, body.login-pf {
-    background: url("login-bg.png") no-repeat center center fixed !important;
-    background-size: cover !important;
-    --color-background: rgba(255, 255, 255, 0.18) !important;
-    --color-input-background: rgba(255, 255, 255, 0.12) !important;
-    --color-border: rgba(255, 255, 255, 0.22) !important;
-    --color-text: #ffffff !important;
-    --color-text-light: #ffffff !important;
-    --color-text-lighter: #ffffff !important;
-    --color-secondary-text: #ffffff !important;
+  background: url("login-bg.png") no-repeat center center fixed !important;
+  background-size: cover !important;
+  --color-background: rgba(255, 255, 255, 0.18) !important;
+  --color-input-background: rgba(255, 255, 255, 0.12) !important;
+  --color-border: rgba(255, 255, 255, 0.22) !important;
+  --color-text: #ffffff !important;
+  --color-text-light: #ffffff !important;
+  --color-text-lighter: #ffffff !important;
+  --color-secondary-text: #ffffff !important;
 }
 
 #brand::before {
-    content: "\${NAME}";
-    font-size: 18pt;
-    text-transform: uppercase;
+  content: "\${NAME}";
+  font-size: 18pt;
+  text-transform: uppercase;
 }
 
 #login label, #login input, #login .control-label, #login .button-text, #login-note {
-    color: #ffffff !important;
-    text-shadow: 0 1px 2px rgba(0,0,0,0.4);
+  color: #ffffff !important;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.4);
 }
 
 #login input {
-    background-color: rgba(255,255,255,0.12) !important;
-    border: 1px solid rgba(255,255,255,0.22) !important;
+  background-color: rgba(255,255,255,0.12) !important;
+  border: 1px solid rgba(255,255,255,0.22) !important;
 }
 
 #login .login-button {
-    background: var(--color-primary, #06c) !important;
-    border: 1px solid rgba(255,255,255,0.25) !important;
-    color: #fff !important;
+  background: var(--color-primary, #06c) !important;
+  border: 1px solid rgba(255,255,255,0.25) !important;
+  color: #fff !important;
 }
 
 #login .login-password-toggle {
-    background: none !important;
-    border: 1px solid rgba(255,255,255,0.22) !important;
-    color: #fff !important;
+  background: none !important;
+  border: 1px solid rgba(255,255,255,0.22) !important;
+  color: #fff !important;
 }
 
 body.login-pf #banner {
-    position: absolute !important;
-    top: 20px !important;
-    left: 20px !important;
-    margin: 0 !important;
-    max-width: 40%;
-    text-align: left !important;
-    background-color: transparent !important;
-    border: none !important;
-    box-shadow: none !important;
-    z-index: 1000;
+  position: absolute !important;
+  top: 20px !important;
+  left: 20px !important;
+  margin: 0 !important;
+  max-width: 40%;
+  text-align: left !important;
+  background-color: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  z-index: 1000;
 }
 
 body.login-pf #banner, body.login-pf #banner * {
-    color: #ffffff !important;
-    text-shadow: 0 1px 2px rgba(0,0,0,0.4);
+  color: #ffffff !important;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.4);
 }
 
 body.login-pf .pf-v6-c-alert__icon {
-    display: none !important;
+  display: none !important;
+}
+
+/* 中等屏幕（平板等）调整横幅位置，减小与登录框冲突概率 */
+@media (max-width: 992px) {
+  body.login, body.login-pf {
+    background-position: center top !important;
+  }
+
+  body.login-pf #banner {
+    top: 16px !important;
+    left: 16px !important;
+    max-width: 60%;
+  }
+}
+
+/* 小屏幕（手机等）响应式适配 */
+@media (max-width: 768px) {
+  body.login, body.login-pf {
+    background-position: center top !important;
+    background-size: cover !important;
+  }
+
+  body.login-pf #banner {
+    position: static !important;
+    margin: 16px auto 0 auto !important;
+    padding: 0 16px !important;
+    max-width: 100%;
+    text-align: left !important;
+  }
 }
 EOF
 }
