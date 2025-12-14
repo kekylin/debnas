@@ -244,8 +244,13 @@ check_ipset_bound() {
 # 返回：0 表示有效，1 表示无效
 validate_ipv4() {
     local ip=$1 sipcalc_output
+    # 先进行基本格式检查，避免调用 sipcalc 处理明显无效的输入
+    if [[ ! "$ip" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){0,3}(/[0-9]{1,2})?$ ]]; then
+        return 1
+    fi
     if sipcalc_output=$(sipcalc "$ip" 2>/dev/null); then
-        if echo "$sipcalc_output" | grep -qiE "(ipv4|ipv4addr)"; then
+        # 检查输出中是否包含有效的 IPv4 标识（排除 int-ipv4 等无效格式）
+        if echo "$sipcalc_output" | grep -qiE "^\\-\\[ipv4\\s*:"; then
             return 0
         fi
     fi
@@ -257,8 +262,13 @@ validate_ipv4() {
 # 返回：0 表示有效，1 表示无效
 validate_ipv6() {
     local ip=$1 sipcalc_output
+    # 先进行基本格式检查，避免调用 sipcalc 处理明显无效的输入
+    if [[ ! "$ip" =~ ^[0-9a-fA-F:]+(/[0-9]{1,3})?$ ]]; then
+        return 1
+    fi
     if sipcalc_output=$(sipcalc "$ip" 2>/dev/null); then
-        if echo "$sipcalc_output" | grep -qiE "(ipv6|ipv6addr)"; then
+        # 检查输出中是否包含有效的 IPv6 标识（排除 int-ipv6 等无效格式）
+        if echo "$sipcalc_output" | grep -qiE "^\\-\\[ipv6\\s*:"; then
             return 0
         fi
     fi
@@ -271,10 +281,12 @@ validate_ipv6() {
 validate_ip() {
     local ip=$1 sipcalc_output
     if sipcalc_output=$(sipcalc "$ip" 2>/dev/null); then
-        if echo "$sipcalc_output" | grep -qiE "(ipv4|ipv4addr)"; then
+        # 检查输出中是否包含有效的 IPv4 标识（排除 int-ipv4 等无效格式）
+        if echo "$sipcalc_output" | grep -qiE "^\\-\\[ipv4\\s*:"; then
             echo "ipv4"
             return 0
-        elif echo "$sipcalc_output" | grep -qiE "(ipv6|ipv6addr)"; then
+        # 检查输出中是否包含有效的 IPv6 标识（排除 int-ipv6 等无效格式）
+        elif echo "$sipcalc_output" | grep -qiE "^\\-\\[ipv6\\s*:"; then
             echo "ipv6"
             return 0
         fi
@@ -287,18 +299,20 @@ validate_ip() {
 # 返回：输出 "前缀 掩码"，退出码 0 表示有效，1 表示无效
 validate_cidr_ipv4() {
     local input=$1 prefix mask sipcalc_output
+    # 先进行基本格式检查
+    if [[ ! $input =~ ^([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3})/([0-9]{1,2})$ ]]; then
+        return 1
+    fi
+    prefix=${BASH_REMATCH[1]}
+    mask=${BASH_REMATCH[2]}
+    if [[ ! $mask =~ ^[0-9]+$ ]] || [[ $mask -gt 32 ]] || [[ $mask -lt 0 ]]; then
+        return 1
+    fi
     if sipcalc_output=$(sipcalc "$input" 2>/dev/null); then
-        if echo "$sipcalc_output" | grep -qiE "(ipv4|ipv4addr)"; then
-            if [[ $input =~ ^([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3})/([0-9]{1,2})$ ]]; then
-                prefix=${BASH_REMATCH[1]}
-                mask=${BASH_REMATCH[2]}
-                if [[ ! $mask =~ ^[0-9]+$ ]] || [[ $mask -gt 32 ]] || [[ $mask -lt 0 ]]; then
-                    log_message "WARNING" "无效 IPv4 CIDR 掩码：$input"
-                    return 1
-                fi
-                echo "$prefix $mask"
-                return 0
-            fi
+        # 检查输出中是否包含有效的 IPv4 标识（排除 int-ipv4 等无效格式）
+        if echo "$sipcalc_output" | grep -qiE "^\\-\\[ipv4\\s*:"; then
+            echo "$prefix $mask"
+            return 0
         fi
     fi
     return 1
@@ -309,9 +323,12 @@ validate_cidr_ipv4() {
 # 参数：input - 原始输入字符串
 # 返回：清理后的字符串，退出码 0 表示成功，1 表示输入为空
 normalize_ip_input() {
-    local input="$1"
+    local input="$1" clean_ip
     [[ -z "$input" ]] && return 1
-    echo "$input" | cut -d'#' -f1 | tr -d '[:space:]'
+    # 提取 # 之前的内容，去除首尾空白字符（使用 xargs 更可靠）
+    clean_ip=$(echo "$input" | cut -d'#' -f1 | xargs)
+    [[ -z "$clean_ip" ]] && return 1
+    echo "$clean_ip"
 }
 
 # 处理 IPv4 CIDR 格式
@@ -948,12 +965,22 @@ unbind_ipsets_from_zone() {
 # 返回：0 表示无需重载，1 表示需要重载
 delete_single_ipset() {
     local ipset_name="$1" ip_type="$2" need_reload=0
+    local ipset_old_file="/etc/firewalld/ipsets/${ipset_name}.xml.old"
+    
     if ! check_ipset_exists "$ipset_name"; then
+        # 即使 IPSet 不存在，也清理可能残留的备份文件
+        if [[ -f "$ipset_old_file" ]]; then
+            rm -f "$ipset_old_file" 2>/dev/null || true
+        fi
         return 0
     fi
     log_message "INFO" "删除 $ip_type IPSet：$ipset_name"
     if firewall-cmd --permanent --delete-ipset="$ipset_name" &>/dev/null; then
         need_reload=1
+        # 删除 IPSet 后，清理对应的备份文件
+        if [[ -f "$ipset_old_file" ]]; then
+            rm -f "$ipset_old_file" 2>/dev/null || true
+        fi
     else
         log_message "WARNING" "删除 $ip_type IPSet 失败，继续执行清理"
     fi
@@ -993,6 +1020,11 @@ cleanup_drop_zone_config() {
             log_message "INFO" "drop 区域已清空，删除自定义配置文件：$drop_xml_file"
             if rm -f "$drop_xml_file"; then
                 need_reload=1
+                # 删除区域配置文件后，清理对应的备份文件
+                local drop_old_file="/etc/firewalld/zones/drop.xml.old"
+                if [[ -f "$drop_old_file" ]]; then
+                    rm -f "$drop_old_file" 2>/dev/null || true
+                fi
             else
                 log_message "WARNING" "删除 drop 区域配置文件失败：$drop_xml_file，继续执行清理"
             fi
@@ -1294,6 +1326,9 @@ filter_and_add_ips() {
         cleanup_temp_files
         return 1
     fi
+    
+    # 使用 --permanent 修改 IPSet 后必须重载防火墙才能生效
+    need_reload=1
     
     if ! reload_firewalld $need_reload; then
         log_message "ERROR" "Firewalld 重载失败"
