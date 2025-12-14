@@ -33,6 +33,7 @@ declare -A cmd_to_pkg=(
   ["sysctl"]="procps"
   ["dig"]="dnsutils"
   ["ping"]="iputils-ping"
+  ["sipcalc"]="sipcalc"
   # 可根据需要扩展
 )
 
@@ -78,9 +79,11 @@ install_missing_dependencies() {
     return 1
   fi
   for cmd in "${missing_cmds[@]}"; do
-    if [[ -n "${cmd_to_pkg[$cmd]}" ]]; then
-      log_info "尝试安装 $cmd 对应的包：${cmd_to_pkg[$cmd]}"
-      if apt update && apt install -y "${cmd_to_pkg[$cmd]}"; then
+    # 使用 ${var:-} 避免 unbound variable 错误（set -u 环境下）
+    local pkg_name="${cmd_to_pkg[$cmd]:-}"
+    if [[ -n "$pkg_name" ]]; then
+      log_info "尝试安装 $cmd 对应的包：$pkg_name"
+      if apt update && apt install -y "$pkg_name"; then
         log_success "成功安装 $cmd"
       else
         log_error "安装 $cmd 失败，请手动安装"
@@ -113,8 +116,10 @@ list_missing_dependencies() {
   fi
   log_info "请使用以下命令安装缺失的依赖："
   for cmd in "${missing_cmds[@]}"; do
-    if [[ -n "${cmd_to_pkg[$cmd]}" ]]; then
-      echo "apt install ${cmd_to_pkg[$cmd]}"
+    # 使用 ${var:-} 避免 unbound variable 错误（set -u 环境下）
+    local pkg_name="${cmd_to_pkg[$cmd]:-}"
+    if [[ -n "$pkg_name" ]]; then
+      echo "apt install $pkg_name"
     else
       echo "# 无法确定 $cmd 的包名，请手动查找并安装"
     fi

@@ -40,7 +40,7 @@ else
 fi
 
 # 安装常用必备软件，保障系统基础功能
-if apt install -y sudo curl git vim wget exim4 gnupg apt-transport-https ca-certificates smartmontools; then
+if apt install -y sudo curl git vim wget exim4 gnupg apt-transport-https ca-certificates udisks2-lvm2 smartmontools; then
   log_success "必备软件包安装完成。"
 else
   log_fail "必备软件包安装失败。"
