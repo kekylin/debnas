@@ -19,7 +19,7 @@ MODULES=(
   "configure-security|配置基础安全防护"
   "install-firewall|安装防火墙服务"
   "install-fail2ban|安装 fail2ban 自动封锁"
-  "install-docker|安装 Docker"
+  "install-docker-ce|安装 Docker"
   "add-docker-mirror|添加 Docker 镜像加速"
   "install-service-query|安装服务查询工具"
 )

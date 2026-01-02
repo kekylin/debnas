@@ -159,6 +159,7 @@ get_docker_mirror() {
   local docker_official="https://download.docker.com/linux/debian"
   
   local -a fallback_mirrors=(
+    "https://mirrors.cernet.edu.cn"
     "https://mirrors.tuna.tsinghua.edu.cn"
     "https://mirrors.ustc.edu.cn"
     "https://mirrors.aliyun.com"

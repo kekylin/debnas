@@ -36,7 +36,7 @@ init_module_config() {
     [a12]="install-firewall|安装 Firewalld"
     [a13]="install-fail2ban|安装 Fail2ban"
     [a14]="block-threat-ips|IP 封禁工具"
-    [d11]="install-docker|安装 Docker"
+    [d11]="install-docker-ce|安装 Docker"
     [d12]="add-docker-mirror|镜像加速"
     [d13]="install-docker-apps|安装应用"
     [d14]="backup-restore|备份恢复"
