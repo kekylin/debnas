@@ -20,6 +20,26 @@ if ! check_dependencies "${REQUIRED_CMDS[@]}"; then
   exit "${ERROR_DEPENDENCY}"
 fi
 
+# 获取系统架构
+get_system_architecture() {
+  uname -m 2>/dev/null || echo "未知"
+}
+
+# 获取内核版本
+get_kernel_version() {
+  uname -r 2>/dev/null || echo "未知"
+}
+
+# 获取主机名
+get_hostname() {
+  local hostname=$(hostname 2>/dev/null)
+  if [[ -z "$hostname" || "$hostname" == "(none)" ]]; then
+    get_system_name
+  else
+    echo "$hostname"
+  fi
+}
+
 # 输出系统摘要信息
 get_system_summary() {
   echo "系统: $(get_system_name) $(get_system_version) ($(get_system_architecture))"
@@ -74,7 +94,6 @@ simple_network_test() {
 minimal_compat_check() {
   local issues_resource=()
   local issues_network=()
-  local issues_permission=()
   log_info "基础环境兼容性检查..."
   echo "[系统信息]"
   get_system_summary
@@ -95,16 +114,13 @@ minimal_compat_check() {
   if ! curl -s --max-time 5 --connect-timeout 5 "https://www.debian.org" >/dev/null 2>&1; then
     issues_network+=("无法访问debian.org，网络异常")
   fi
-  if ! is_root_user; then
-    issues_permission+=("非root用户运行")
-  fi
   echo "检查结论："
-  if [[ ${#issues_resource[@]} -eq 0 && ${#issues_network[@]} -eq 0 && ${#issues_permission[@]} -eq 0 ]]; then
+  if [[ ${#issues_resource[@]} -eq 0 && ${#issues_network[@]} -eq 0 ]]; then
     echo "- 兼容性结论：适合"
     echo "- 发现问题：无"
   else
     echo "- 兼容性结论：存在风险"
-    local all_issues=("${issues_resource[@]}" "${issues_network[@]}" "${issues_permission[@]}")
+    local all_issues=("${issues_resource[@]}" "${issues_network[@]}")
     echo "- 发现问题：${all_issues[*]}"
   fi
 }
@@ -113,7 +129,6 @@ minimal_compat_check() {
 full_compat_check() {
   local issues_resource=()
   local issues_network=()
-  local issues_permission=()
   local issues_time=()
   local issues_virtual=()
   local issues_service=()
@@ -137,9 +152,6 @@ full_compat_check() {
   fi
   if ! curl -s --max-time 5 --connect-timeout 5 "https://www.debian.org" >/dev/null 2>&1; then
     issues_network+=("无法访问debian.org，网络异常")
-  fi
-  if ! is_root_user; then
-    issues_permission+=("非root用户运行")
   fi
   echo "[时间同步]"
   if command -v timedatectl >/dev/null 2>&1; then
@@ -199,12 +211,12 @@ full_compat_check() {
     echo "- smartctl: 未检测/未安装"
   fi
   echo "检查结论："
-  if [[ ${#issues_resource[@]} -eq 0 && ${#issues_network[@]} -eq 0 && ${#issues_permission[@]} -eq 0 && ${#issues_time[@]} -eq 0 && ${#issues_virtual[@]} -eq 0 && ${#issues_service[@]} -eq 0 && ${#issues_diskhealth[@]} -eq 0 ]]; then
+  if [[ ${#issues_resource[@]} -eq 0 && ${#issues_network[@]} -eq 0 && ${#issues_time[@]} -eq 0 && ${#issues_virtual[@]} -eq 0 && ${#issues_service[@]} -eq 0 && ${#issues_diskhealth[@]} -eq 0 ]]; then
     echo "- 兼容性结论：适合"
     echo "- 发现问题：无"
   else
     echo "- 兼容性结论：存在风险"
-    local all_issues=("${issues_resource[@]}" "${issues_network[@]}" "${issues_permission[@]}" "${issues_time[@]}" "${issues_virtual[@]}" "${issues_service[@]}" "${issues_diskhealth[@]}")
+    local all_issues=("${issues_resource[@]}" "${issues_network[@]}" "${issues_time[@]}" "${issues_virtual[@]}" "${issues_service[@]}" "${issues_diskhealth[@]}")
     echo "- 发现问题：${all_issues[*]}"
   fi
 }

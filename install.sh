@@ -35,6 +35,12 @@ if [[ -z "${PLATFORM:-}" || -z "${BRANCH:-}" ]]; then
   usage
 fi
 
+# 检查 root 权限（在下载前检查，避免浪费资源）
+if [[ $EUID -ne 0 ]]; then
+  echo "[FAIL] 脚本需要以 root 权限运行。请切换到 root 用户后重试。"
+  exit 1
+fi
+
 # 设置下载链接和解压后子目录名
 if [[ "$PLATFORM" == "gitee" ]]; then
   TAR_URL="https://gitee.com/kekylin/debnas/repository/archive/$BRANCH.tar.gz"

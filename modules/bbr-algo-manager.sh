@@ -185,10 +185,6 @@ handle_choice() {
 }
 
 main() {
-  if ! is_root_user; then
-    log_fail "此脚本需要 root 权限运行。"
-    exit "${ERROR_PERMISSION}"
-  fi
   if ! verify_system_support; then
     log_fail "当前系统不支持此功能。"
     exit "${ERROR_UNSUPPORTED_OS}"

@@ -259,30 +259,10 @@ main_menu_loop() {
   done
 }
 
-# 执行基础系统兼容性检查，提前发现潜在环境问题
+# 执行系统版本检查
 perform_system_checks() {
-  local failed_checks=0
   if ! verify_system_support; then
-    ((failed_checks++))
-  fi
-  if ! is_root_user; then
-    log_fail "脚本需要以 root 权限运行。请切换到 root 用户后重试。"
-    exit "${ERROR_PERMISSION}"
-  fi
-  if ! check_memory_requirements 256; then
-    ((failed_checks++))
-  fi
-  if ! check_disk_space "/" 2; then
-    ((failed_checks++))
-  fi
-  if [[ $failed_checks -gt 0 ]]; then
-    log_warning "系统兼容性检查发现部分问题，但不影响脚本运行。请根据提示优化环境配置。"
-    echo
-    read -rp "是否继续运行脚本？(y/N): " continue_choice
-    if [[ "$continue_choice" != "y" && "$continue_choice" != "Y" ]]; then
-      log_action "用户选择退出，脚本已终止。"
-      exit 0
-    fi
+    exit "${ERROR_UNSUPPORTED_OS}"
   fi
 }
 

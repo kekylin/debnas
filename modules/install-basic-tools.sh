@@ -23,11 +23,6 @@ if ! verify_system_support; then
   exit "${ERROR_UNSUPPORTED_OS}"
 fi
 
-# 检查根分区磁盘空间，建议至少 2GB，避免安装失败
-if ! check_disk_space "/" 2; then
-  log_warning "磁盘空间不足，可能影响软件安装。"
-fi
-
 # 安装基础软件包，分两步：先解决依赖，再配置权限
 log_action "正在安装基础软件包..."
 

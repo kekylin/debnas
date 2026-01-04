@@ -27,6 +27,16 @@ fi
 EMAIL_CONFIG_FILE="/etc/exim4/notify_email"
 CRON_TASK_FILE="/etc/cron.d/system-update-checker"
 
+# 获取主机名
+get_hostname() {
+  local hostname=$(hostname 2>/dev/null)
+  if [[ -z "$hostname" || "$hostname" == "(none)" ]]; then
+    get_system_name
+  else
+    echo "$hostname"
+  fi
+}
+
 # 验证并获取邮箱配置
 get_email_config() {
   if [[ ! -f "$EMAIL_CONFIG_FILE" ]] || [[ -z "$(cat "$EMAIL_CONFIG_FILE")" ]]; then

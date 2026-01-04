@@ -12,12 +12,6 @@ source "${SCRIPT_DIR}/lib/system/dependency.sh"
 source "${SCRIPT_DIR}/lib/ui/menu.sh"
 source "${SCRIPT_DIR}/lib/ui/styles.sh"
 
-# 检查 root 权限
-if [[ $EUID -ne 0 ]]; then
-  log_error "此脚本需要 root 权限运行。"
-  exit "${ERROR_PERMISSION}"
-fi
-
 # 信号处理，确保中断时清理和恢复服务状态
 trap 'log_info "脚本中断，正在清理..."; if [[ "${docker_was_active:-}" == "active" ]]; then start_docker_service; fi; exit 1' SIGINT
 
