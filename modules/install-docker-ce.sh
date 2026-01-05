@@ -8,7 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${SCRIPT_DIR}/lib/core/constants.sh"
 source "${SCRIPT_DIR}/lib/core/logging.sh"
 source "${SCRIPT_DIR}/lib/system/utils.sh"
-source "${SCRIPT_DIR}/lib/system/mirrors.sh"
+source "${SCRIPT_DIR}/lib/system/urls.sh"
 
 # ==================== 函数定义 ====================
 

@@ -9,7 +9,7 @@ source "${SCRIPT_DIR}/lib/core/constants.sh"
 source "${SCRIPT_DIR}/lib/core/logging.sh"
 source "${SCRIPT_DIR}/lib/system/dependency.sh"
 source "${SCRIPT_DIR}/lib/system/utils.sh"
-source "${SCRIPT_DIR}/lib/system/mirrors.sh"
+source "${SCRIPT_DIR}/lib/system/urls.sh"
 
 readonly DEB822_PATH="/etc/apt/sources.list.d/debian.sources"
 readonly TRADITIONAL_PATH="/etc/apt/sources.list"

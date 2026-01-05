@@ -11,33 +11,60 @@ source "${SCRIPT_DIR}/lib/core/constants.sh"
 source "${SCRIPT_DIR}/lib/core/logging.sh"
 source "${SCRIPT_DIR}/lib/system/utils.sh"
 source "${SCRIPT_DIR}/lib/system/apt-pinning.sh"
-
-readonly -a GITHUB_PROXY_ENDPOINTS=(
-	"https://ghfast.top"
-	"https://gitproxy.click"
-	"https://hubproxy.jiaozi.live"
-	"https://gh.llkk.cc"
-	"https://gh-proxy.top"
-)
+source "${SCRIPT_DIR}/lib/system/urls.sh"
 
 BEST_GITHUB_PROXY_SELECTION_STATE=""
 BEST_GITHUB_PROXY=""
 BEST_GITHUB_PROXY_LATENCY=""
 
+# ping 超时时间（秒）：增加到 3 秒，提高成功率
+readonly PING_TIMEOUT=3
+
+# 测量单个目标的 ping 延迟
+# 参数：$1 - 目标主机
+# 返回：延迟值（毫秒），失败返回 999999
 measure_ping_latency() {
 	local target="$1"
 	local output latency
-	if ! output=$(ping -c 1 -W 1 "${target}" 2>/dev/null); then
+
+	# 使用更长的超时时间，提高测试成功率
+	if ! output=$(ping -c 1 -W "${PING_TIMEOUT}" "${target}" 2>/dev/null); then
 		return 1
 	fi
+
 	latency=$(printf '%s\n' "${output}" | awk -F'time=' '/time=/{split($2,a," "); print a[1]; exit}')
 	if [[ -z "${latency}" ]]; then
 		return 1
 	fi
+
 	printf '%s\n' "${latency}"
 	return 0
 }
 
+# 并发测试单个镜像站的延迟（后台进程）
+# 参数：$1 - 镜像站 URL 或 "DIRECT"
+#      $2 - 临时结果文件路径
+# 说明：后台执行，将结果写入临时文件
+_measure_proxy_latency_async() {
+	local prefix="$1"
+	local result_file="$2"
+	local host latency
+
+	if [[ "$prefix" == "DIRECT" ]]; then
+		host="github.com"
+	else
+		host=$(printf '%s\n' "${prefix}" | sed -E 's#^[a-z]+://([^/]+).*#\1#')
+	fi
+
+	if latency=$(measure_ping_latency "${host}"); then
+		printf '%s|%s\n' "${latency}" "${prefix}" > "${result_file}"
+	else
+		printf '%s|%s\n' "999999" "${prefix}" > "${result_file}"
+	fi
+}
+
+# 选择最佳 GitHub 代理（并发测试优化）
+# 说明：使用并发测试提高效率，所有镜像站并行测试
 select_best_github_proxy() {
 	if [[ "${BEST_GITHUB_PROXY_SELECTION_STATE}" == "done" || "${BEST_GITHUB_PROXY_SELECTION_STATE}" == "skip" ]]; then
 		[[ "${BEST_GITHUB_PROXY_SELECTION_STATE}" == "done" ]]
@@ -50,22 +77,48 @@ select_best_github_proxy() {
 		return 1
 	fi
 
-	local -a measurements=()
-	local prefix host latency
+	log_info "正在并发测试 GitHub 镜像站延迟..."
+
+	# 创建临时目录存储测试结果
+	local temp_dir
+	temp_dir=$(mktemp -d -p "/tmp/debian-homenas" "github-proxy-test.XXXXXXXX")
+	local -a result_files=()
+	local -a pids=()
+
+	# 并发测试所有代理镜像站
 	for prefix in "${GITHUB_PROXY_ENDPOINTS[@]}"; do
-		host=$(printf '%s\n' "${prefix}" | sed -E 's#^[a-z]+://([^/]+).*#\1#')
-		if latency=$(measure_ping_latency "${host}"); then
-			measurements+=("${latency}|${prefix}")
-		else
-			measurements+=("999999|${prefix}")
+		local result_file="${temp_dir}/$(basename "${prefix}" | tr -cd '[:alnum:]').result"
+		result_files+=("${result_file}")
+		_measure_proxy_latency_async "${prefix}" "${result_file}" &
+		pids+=($!)
+	done
+
+	# 并发测试 GitHub 源站
+	local direct_result_file="${temp_dir}/direct.result"
+	result_files+=("${direct_result_file}")
+	_measure_proxy_latency_async "DIRECT" "${direct_result_file}" &
+	pids+=($!)
+
+	# 等待所有后台进程完成
+	local failed_count=0
+	for pid in "${pids[@]}"; do
+		if ! wait "${pid}"; then
+			((failed_count++)) || true
 		fi
 	done
-	if latency=$(measure_ping_latency "github.com"); then
-		measurements+=("${latency}|DIRECT")
-	else
-		measurements+=("999999|DIRECT")
-	fi
 
+	# 收集所有测试结果
+	local -a measurements=()
+	for result_file in "${result_files[@]}"; do
+		if [[ -f "${result_file}" ]]; then
+			measurements+=("$(cat "${result_file}")")
+		fi
+	done
+
+	# 清理临时目录
+	rm -rf "${temp_dir}"
+
+	# 选择延迟最低的镜像站
 	local best_entry
 	best_entry=$(printf '%s\n' "${measurements[@]}" | sort -t'|' -k1,1g | head -n1)
 	local best_prefix="${best_entry#*|}"
@@ -127,16 +180,31 @@ download_from_github_mirrors() {
 	rm -f "${tmp_file}"
 
 	local candidate
+	local attempt_count=0
+	local max_attempts=3
+
 	while IFS= read -r candidate; do
 		[[ -z "${candidate}" ]] && continue
-		log_info "开始下载: ${candidate}"
-		if curl -fL --connect-timeout 10 --retry 2 --retry-delay 3 -o "${tmp_file}" "${candidate}"; then
+		((attempt_count++)) || true
+		log_info "开始下载 (尝试 ${attempt_count}/${max_attempts}): ${candidate}"
+
+		# 使用 curl 的重试机制：--retry 2 表示最多重试 2 次（共 3 次尝试）
+		# --retry-delay 3 表示重试间隔 3 秒
+		# --connect-timeout 10 表示连接超时 10 秒
+		# --max-time 60 表示整个下载过程最大超时 60 秒
+		if curl -fL --connect-timeout 10 --max-time 60 --retry 2 --retry-delay 3 -o "${tmp_file}" "${candidate}"; then
 			mv "${tmp_file}" "${output_name}"
 			log_info "下载完成: ${candidate}"
 			return 0
 		fi
+
 		log_warning "下载失败: ${candidate}"
 		rm -f "${tmp_file}"
+
+		# 如果已达到最大尝试次数，停止尝试
+		if [[ $attempt_count -ge $max_attempts ]]; then
+			break
+		fi
 	done < <(build_ordered_github_candidates "${source_url}")
 
 	return 1

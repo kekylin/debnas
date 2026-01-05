@@ -1,5 +1,5 @@
 #!/bin/bash
-# 功能：系统兼容性检查工具（无交互菜单，直接输出结果）
+# 功能：系统兼容性检查工具（检查系统是否满足项目脚本运行要求）
 
 set -euo pipefail
 IFS=$'\n\t'
@@ -10,261 +10,124 @@ source "${SCRIPT_DIR}/lib/core/constants.sh"
 source "${SCRIPT_DIR}/lib/core/logging.sh"
 source "${SCRIPT_DIR}/lib/system/dependency.sh"
 source "${SCRIPT_DIR}/lib/system/utils.sh"
-source "${SCRIPT_DIR}/lib/ui/menu.sh"
-source "${SCRIPT_DIR}/lib/ui/styles.sh"
+source "${SCRIPT_DIR}/lib/system/urls.sh"
 
 # 检查依赖，确保必备命令已安装
-REQUIRED_CMDS=(awk grep df uname)
+REQUIRED_CMDS=(awk grep df uname curl)
 if ! check_dependencies "${REQUIRED_CMDS[@]}"; then
   log_error "依赖缺失，请先安装必备命令：${REQUIRED_CMDS[*]}。"
   exit "${ERROR_DEPENDENCY}"
 fi
 
-# 获取系统架构
-get_system_architecture() {
-  uname -m 2>/dev/null || echo "未知"
-}
-
-# 获取内核版本
-get_kernel_version() {
-  uname -r 2>/dev/null || echo "未知"
-}
-
-# 获取主机名
-get_hostname() {
-  local hostname=$(hostname 2>/dev/null)
-  if [[ -z "$hostname" || "$hostname" == "(none)" ]]; then
-    get_system_name
-  else
-    echo "$hostname"
-  fi
-}
-
-# 输出系统摘要信息
-get_system_summary() {
-  echo "系统: $(get_system_name) $(get_system_version) ($(get_system_architecture))"
-  echo "主机名: $(get_hostname)"
-  echo "内核: $(get_kernel_version)"
-  echo "内存: $(( $(grep MemTotal /proc/meminfo | awk '{print $2}') / 1024 ))MB"
-  echo "磁盘可用: $(df / | awk 'NR==2 {print int($4/1024/1024)}')GB"
-  echo "用户: $(whoami) (UID: $EUID)"
-}
-
-# 输出关键运行指标
-get_system_key_metrics() {
-  local memory_mb=$(( $(grep MemTotal /proc/meminfo | awk '{print $2}') / 1024 ))
-  local disk_gb=$(df / | awk 'NR==2 {print int($4/1024/1024)}')
-  local load_avg=$(uptime | awk -F'load average:' '{print $2}' | awk '{print $1}' | tr -d ',')
-  echo "负载: $load_avg  内存: ${memory_mb}MB  磁盘: ${disk_gb}GB"
-  echo "运行时长: $(uptime -p | sed 's/up //')"
-}
-
-# 输出硬件信息
-get_detailed_hardware_info() {
-  local cpu="$(grep 'model name' /proc/cpuinfo | head -1 | cut -d: -f2 | sed 's/^[ \t]*//')"
-  local cores="$(grep -c 'processor' /proc/cpuinfo)"
-  local arch="$(uname -m)"
-  local total_mem=$(( $(grep MemTotal /proc/meminfo | awk '{print $2}') / 1024 ))
-  echo "CPU: $cpu ($cores 核心, $arch)"
-  echo "总内存: ${total_mem}MB"
-  df -h | awk 'NR==1 || /^\/dev\// {printf("磁盘: %s %s/%s 可用:%s 挂载:%s\n", $1, $3, $2, $4, $6)}'
-}
-
-# 网络连通性测试
-simple_network_test() {
-  local urls=("https://mirrors.tuna.tsinghua.edu.cn" "https://www.debian.org")
-  for url in "${urls[@]}"; do
-    if curl -s --max-time 5 --connect-timeout 5 "$url" >/dev/null 2>&1; then
-      echo "网络: $url ✓"
-    else
-      echo "网络: $url ✗"
-    fi
-  done
-  local domains=("debian.org" "github.com")
-  for domain in "${domains[@]}"; do
-    if nslookup "$domain" >/dev/null 2>&1; then
-      echo "DNS: $domain ✓"
-    else
-      echo "DNS: $domain ✗"
-    fi
-  done
-}
-
-# 基础环境兼容性检查
-minimal_compat_check() {
+# 系统兼容性检查（最小化检查，仅检查项目脚本运行必需项）
+check_system_compatibility() {
+  local issues_system=()
   local issues_resource=()
   local issues_network=()
-  log_info "基础环境兼容性检查..."
-  echo "[系统信息]"
-  get_system_summary
-  echo "[运行指标]"
-  get_system_key_metrics
-  echo "[硬件信息]"
-  get_detailed_hardware_info
-  echo "[网络状态]"
-  simple_network_test
-  local mem_mb=$(( $(grep MemTotal /proc/meminfo | awk '{print $2}') / 1024 ))
-  if [[ $mem_mb -lt 512 ]]; then
-    issues_resource+=("内存低于512MB")
-  fi
-  local disk_gb=$(df / | awk 'NR==2 {print int($4/1024/1024)}')
-  if [[ $disk_gb -lt 5 ]]; then
-    issues_resource+=("根分区可用空间低于5GB")
-  fi
-  if ! curl -s --max-time 5 --connect-timeout 5 "https://www.debian.org" >/dev/null 2>&1; then
-    issues_network+=("无法访问debian.org，网络异常")
-  fi
-  echo "检查结论："
-  if [[ ${#issues_resource[@]} -eq 0 && ${#issues_network[@]} -eq 0 ]]; then
-    echo "- 兼容性结论：适合"
-    echo "- 发现问题：无"
-  else
-    echo "- 兼容性结论：存在风险"
-    local all_issues=("${issues_resource[@]}" "${issues_network[@]}")
-    echo "- 发现问题：${all_issues[*]}"
-  fi
-}
-
-# 全面环境兼容性检查
-full_compat_check() {
-  local issues_resource=()
-  local issues_network=()
-  local issues_time=()
-  local issues_virtual=()
   local issues_service=()
-  local issues_diskhealth=()
-  log_info "增强环境兼容性检查..."
-  echo "[系统信息]"
-  get_system_summary
-  echo "[运行指标]"
-  get_system_key_metrics
-  echo "[硬件信息]"
-  get_detailed_hardware_info
-  echo "[网络状态]"
-  simple_network_test
+
+  log_info "正在执行系统兼容性检查..."
+
+  # 1. 系统类型和版本检查（必需）
+  echo "[系统检查]"
+  if ! verify_system_support; then
+    issues_system+=("系统不满足要求（需要 Debian 12 或更高版本）")
+    echo "- 系统类型：不满足要求"
+  else
+    local codename
+    codename=$(get_system_codename)
+    echo "- 系统类型：$(get_system_name) $(get_system_version)"
+    echo "- 系统版本：${codename}"
+  fi
+
+  # 2. 系统架构检查（必需，项目主要支持 x86-64）
+  local arch
+  arch=$(get_system_architecture)
+  echo "- 系统架构：${arch}"
+  if ! verify_architecture_support "x86_64"; then
+    issues_system+=("系统架构为 ${arch}，项目主要支持 x86_64")
+  fi
+
+  # 3. 资源检查（必需）
+  echo "[资源检查]"
   local mem_mb=$(( $(grep MemTotal /proc/meminfo | awk '{print $2}') / 1024 ))
+  echo "- 内存：${mem_mb}MB"
   if [[ $mem_mb -lt 1024 ]]; then
-    issues_resource+=("内存低于1GB")
+    issues_resource+=("内存低于1GB（建议>=1GB）")
   fi
+
   local disk_gb=$(df / | awk 'NR==2 {print int($4/1024/1024)}')
+  echo "- 磁盘可用空间：${disk_gb}GB"
   if [[ $disk_gb -lt 10 ]]; then
-    issues_resource+=("根分区可用空间低于10GB")
+    issues_resource+=("根分区可用空间低于10GB（建议>=10GB）")
   fi
-  if ! curl -s --max-time 5 --connect-timeout 5 "https://www.debian.org" >/dev/null 2>&1; then
-    issues_network+=("无法访问debian.org，网络异常")
-  fi
-  echo "[时间同步]"
-  if command -v timedatectl >/dev/null 2>&1; then
-    if timedatectl show | grep -q 'NTPSynchronized=yes'; then
-      echo "- NTP同步：正常"
-    else
-      echo "- NTP同步：异常"
-      issues_time+=("系统时间未同步或无NTP服务")
+
+  # 4. 网络连通性检查（必需，项目需要下载软件包）
+  echo "[网络检查]"
+  local mirror_available=false
+  local mirror_name
+  local url
+  
+  # 检查国内镜像站连通性
+  for url in "${APT_MIRRORS[@]}"; do
+    mirror_name=$(get_mirror_name "$url")
+    if curl -s --max-time 5 --connect-timeout 5 "$url" >/dev/null 2>&1; then
+      echo "- 镜像站: ${mirror_name} ✓"
+      mirror_available=true
+      break
     fi
-  else
-    echo "- NTP同步：未检测/未安装"
-  fi
-  echo "[虚拟化]"
-  if command -v egrep >/dev/null 2>&1; then
-    if [[ $(egrep -c '(vmx|svm)' /proc/cpuinfo) -eq 0 ]]; then
-      echo "- CPU虚拟化：不支持"
-      issues_virtual+=("CPU不支持虚拟化")
+  done
+  
+  # 如果国内镜像站都不可用，检查官方镜像站
+  if [[ "$mirror_available" == "false" ]]; then
+    if curl -s --max-time 5 --connect-timeout 5 "${APT_OFFICIAL_MIRROR}" >/dev/null 2>&1; then
+      echo "- 镜像站: ${APT_OFFICIAL_MIRROR_NAME} ✓"
+      mirror_available=true
     else
-      echo "- CPU虚拟化：支持"
+      echo "- 镜像站: 所有镜像站均不可用 ✗"
+      issues_network+=("无法连接到任何镜像站，无法下载软件包")
     fi
-  else
-    echo "- CPU虚拟化：未检测/未安装"
   fi
-  echo "[服务状态]"
+
+  # 5. 基本服务检查（推荐，但不强制）
+  echo "[服务检查]"
   if command -v systemctl >/dev/null 2>&1; then
-    for svc in ssh cron; do
-      if systemctl is-active --quiet "$svc"; then
-        echo "- $svc: 运行中"
-      else
-        echo "- $svc: 未运行"
-        issues_service+=("$svc服务未运行")
-      fi
-    done
-  else
-    echo "- 服务状态：未检测/未安装"
-  fi
-  echo "[安全模块]"
-  if command -v aa-status >/dev/null 2>&1; then
-    aa_status=$(aa-status --enabled 2>/dev/null | grep 'enabled' || true)
-    if [[ -n "$aa_status" ]]; then
-      echo "- AppArmor: 启用"
+    # SSH 服务（用于远程管理）
+    if systemctl is-active --quiet ssh 2>/dev/null || systemctl is-active --quiet sshd 2>/dev/null; then
+      echo "- SSH: 运行中"
     else
-      echo "- AppArmor: 未启用"
+      echo "- SSH: 未运行（建议启用，用于远程管理）"
+    fi
+    
+    # Cron 服务（用于定时任务）
+    if systemctl is-active --quiet cron 2>/dev/null; then
+      echo "- Cron: 运行中"
+    else
+      echo "- Cron: 未运行（如使用定时任务功能，需要启用）"
     fi
   else
-    echo "- AppArmor: 未检测/未安装"
+    echo "- 服务状态：无法检测（systemctl 不可用）"
   fi
-  echo "[磁盘健康]"
-  if command -v smartctl >/dev/null 2>&1; then
-    if smartctl -H /dev/sda | grep -q 'PASSED'; then
-      echo "- /dev/sda: 健康"
-    else
-      echo "- /dev/sda: 存在健康风险"
-      issues_diskhealth+=("/dev/sda健康异常")
-    fi
-  else
-    echo "- smartctl: 未检测/未安装"
-  fi
+
+  # 输出检查结论
+  echo ""
   echo "检查结论："
-  if [[ ${#issues_resource[@]} -eq 0 && ${#issues_network[@]} -eq 0 && ${#issues_time[@]} -eq 0 && ${#issues_virtual[@]} -eq 0 && ${#issues_service[@]} -eq 0 && ${#issues_diskhealth[@]} -eq 0 ]]; then
-    echo "- 兼容性结论：适合"
+  if [[ ${#issues_system[@]} -eq 0 && ${#issues_resource[@]} -eq 0 && ${#issues_network[@]} -eq 0 ]]; then
+    echo "- 兼容性结论：✓ 适合运行项目脚本"
     echo "- 发现问题：无"
   else
-    echo "- 兼容性结论：存在风险"
-    local all_issues=("${issues_resource[@]}" "${issues_network[@]}" "${issues_time[@]}" "${issues_virtual[@]}" "${issues_service[@]}" "${issues_diskhealth[@]}")
-    echo "- 发现问题：${all_issues[*]}"
+    echo "- 兼容性结论：⚠ 存在风险"
+    local all_issues=("${issues_system[@]}" "${issues_resource[@]}" "${issues_network[@]}")
+    echo "- 发现问题："
+    for issue in "${all_issues[@]}"; do
+      echo "  • ${issue}"
+    done
   fi
 }
 
-# 菜单
-show_check_mode_menu() {
-  print_separator "-"
-  print_menu_item "1" "基础检查"
-  print_menu_item "2" "增强检查"
-  print_menu_item "0" "返回" "true"
-  print_separator "-"
-}
-
+# 主函数：直接执行检查
 main() {
-  while true; do
-    show_check_mode_menu
-    print_prompt "请选择编号: "
-    read -r choice
-    
-    # 验证输入
-    if [[ ! "$choice" =~ ^[0-9]+$ ]]; then
-      log_error "请输入数字编号"
-      continue
-    fi
-    
-    if [[ "$choice" -lt 0 ]] || [[ "$choice" -gt 2 ]]; then
-      log_error "无效选择，请输入 0-2"
-      continue
-    fi
-    
-    case $choice in
-      1)
-        minimal_compat_check
-        break
-        ;;
-      2)
-        full_compat_check
-        break
-        ;;
-      0)
-        log_action "返回"
-        return 0
-        ;;
-      *)
-        log_error "无效选项，请重新输入。"
-        ;;
-    esac
-  done
+  check_system_compatibility
 }
 
 main "$@" 

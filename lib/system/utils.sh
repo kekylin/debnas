@@ -272,3 +272,31 @@ get_system_version() {
     echo "未知"
   fi
 }
+
+# 获取系统架构
+# 参数：无
+# 返回：系统架构字符串（如 x86_64、arm64 等）
+get_system_architecture() {
+  uname -m 2>/dev/null || echo "未知"
+}
+
+# 验证系统架构是否支持
+# 参数：$1 - 支持的架构列表（空格分隔，如 "x86_64 amd64"）
+# 返回：0 支持，非 0 不支持
+verify_architecture_support() {
+  local supported_archs="$1"
+  local current_arch
+  current_arch=$(get_system_architecture)
+
+  if [[ -z "$supported_archs" ]]; then
+    return 1
+  fi
+
+  for arch in $supported_archs; do
+    if [[ "$current_arch" == "$arch" ]]; then
+      return 0
+    fi
+  done
+
+  return 1
+}
