@@ -46,8 +46,16 @@ readonly -a APT_MIRRORS=("${MIRRORS[@]}")
 
 # ==================== Docker 镜像源配置 ====================
 
+# Docker 官方下载地址（用于安装 Docker）
 readonly DOCKER_OFFICIAL_MIRROR="https://download.docker.com/linux/debian"
 readonly -a DOCKER_FALLBACK_MIRRORS=("${MIRRORS[@]}")
+
+# Docker 镜像加速地址（用于配置 daemon.json 的 registry-mirrors）
+readonly -a DOCKER_REGISTRY_MIRRORS=(
+  "https://docker.m.ixdev.cn"
+  "https://docker.1ms.run"
+  "https://docker.1panel.live"
+)
 
 # ==================== GitHub 配置 ====================
 
@@ -79,5 +87,14 @@ get_github_proxy_endpoints() {
   local endpoint
   for endpoint in "${GITHUB_PROXY_ENDPOINTS[@]}"; do
     echo "$endpoint"
+  done
+}
+
+# 获取 Docker 镜像加速地址列表
+# 设计说明：使用函数封装，便于未来添加过滤或排序逻辑
+get_docker_registry_mirrors() {
+  local mirror
+  for mirror in "${DOCKER_REGISTRY_MIRRORS[@]}"; do
+    echo "$mirror"
   done
 }

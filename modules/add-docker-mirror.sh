@@ -9,6 +9,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${SCRIPT_DIR}/lib/core/constants.sh"
 source "${SCRIPT_DIR}/lib/core/logging.sh"
 source "${SCRIPT_DIR}/lib/system/dependency.sh"
+source "${SCRIPT_DIR}/lib/system/urls.sh"
 
 # 检查依赖，确保 Docker 已安装
 REQUIRED_CMDS=(docker)
@@ -17,12 +18,9 @@ if ! check_dependencies "${REQUIRED_CMDS[@]}"; then
   exit "${ERROR_DEPENDENCY}"
 fi
 
-# 镜像加速地址列表，便于后续维护和扩展
-MIRRORS=(
-  "https://docker.m.ixdev.cn"
-  "https://docker.1ms.run"
-  "https://docker.1panel.live"
-)
+# 从统一配置库获取 Docker 镜像加速地址
+DOCKER_MIRRORS=("${DOCKER_REGISTRY_MIRRORS[@]}")
+
 DAEMON_JSON="/etc/docker/daemon.json"
 
 # 将 Bash 数组转换为 JSON 数组字符串
@@ -83,5 +81,5 @@ reload_and_restart_docker() {
 }
 
 # 主流程，自动合并镜像源并重启服务
-update_registry_mirrors "${MIRRORS[@]}"
+update_registry_mirrors "${DOCKER_MIRRORS[@]}"
 reload_and_restart_docker 
