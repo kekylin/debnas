@@ -213,20 +213,12 @@ download_from_github_mirrors() {
 
 # Debian 13：手动下载并安装 45Drives 组件
 install_45drives_components_manual() {
-	local base_tmp_root="${DEBNAS_TMP_BASE}"
-	mkdir -p "${base_tmp_root}"
-	# 临时设置根目录为 0711，允许 `_apt` 遍历以读取本地 .deb
-	local base_orig_mode
-	base_orig_mode="$(stat -c '%a' "${base_tmp_root}" 2>/dev/null || echo 700)"
-	chmod 711 "${base_tmp_root}" || true
-	# 创建 0755 子目录，供 `_apt` 读取 .deb
 	local apt_dir
-	apt_dir=$(mktemp -d -p "${base_tmp_root}" "45drives.XXXXXXXX")
-	chmod 755 "${apt_dir}" || true
+	apt_dir=$(create_temp_dir "45drives")
 	local oldpwd
 	oldpwd="$(pwd)"
-	# 在 RETURN 时恢复工作目录与权限，并清理临时目录
-	trap 'trap - RETURN; cd "${oldpwd}" >/dev/null 2>&1 || true; chmod "${base_orig_mode}" "${base_tmp_root}" >/dev/null 2>&1 || true; rm -rf "${apt_dir}"' RETURN
+	# 在 RETURN 时恢复工作目录并清理临时目录
+	trap 'trap - RETURN; cd "${oldpwd}" >/dev/null 2>&1 || true; rm -rf "${apt_dir}"' RETURN
 
 	local upstream_urls=(
 		"https://github.com/45Drives/cockpit-file-sharing/releases/download/v4.3.2/cockpit-file-sharing_4.3.2-2bookworm_all.deb"

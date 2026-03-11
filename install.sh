@@ -56,9 +56,9 @@ fi
 # 创建唯一临时根目录
 DEBNAS_TMP_BASE="/tmp/debnas"
 mkdir -p "$DEBNAS_TMP_BASE"
-chmod 700 "$DEBNAS_TMP_BASE"
+chmod 755 "$DEBNAS_TMP_BASE"
 TMPROOT=$(mktemp -d "${DEBNAS_TMP_BASE}/install.XXXXXX")
-chmod 700 "$TMPROOT"
+chmod 755 "$TMPROOT"
 
 # 下载并解压仓库
 TARFILE="$TMPROOT/repo.tar.gz"

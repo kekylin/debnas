@@ -3,7 +3,7 @@
 #
 # 提供统一的临时文件与目录的创建、跟踪及自动清理机制。
 # 所有临时资源存放于 /tmp/debnas/，通过 mktemp 生成唯一文件名，
-# 基目录权限设置为 0700，脚本退出时自动清理已跟踪的资源。
+# 基目录权限设置为 0755，脚本退出时自动清理已跟踪的资源。
 #
 # 用法：
 #   source lib/system/tempfile.sh
@@ -33,7 +33,7 @@ declare -g _DEBNAS_NORMAL_EXIT=0
 # ==================== 核心函数 ====================
 
 # 初始化临时文件基目录
-# 若目录不存在则创建，并确保权限为 0700（仅 root 可访问）
+# 若目录不存在则创建，权限为 0755（允许 _apt 等系统用户遍历访问）
 # 返回：0 成功，1 失败
 init_temp_dir() {
   if [[ ! -d "$DEBNAS_TMP_BASE" ]]; then
@@ -41,12 +41,7 @@ init_temp_dir() {
       echo "临时目录创建失败：${DEBNAS_TMP_BASE}" >&2
       return 1
     }
-  fi
-
-  local current_mode
-  current_mode=$(stat -c %a "$DEBNAS_TMP_BASE" 2>/dev/null || echo "")
-  if [[ "$current_mode" != "700" ]]; then
-    chmod 700 "$DEBNAS_TMP_BASE" || {
+    chmod 755 "$DEBNAS_TMP_BASE" || {
       echo "临时目录权限设置失败：${DEBNAS_TMP_BASE}" >&2
       return 1
     }
@@ -91,7 +86,7 @@ create_temp_dir() {
     return 1
   }
 
-  chmod 700 "$temp_dir"
+  chmod 755 "$temp_dir"
   _DEBNAS_TEMP_FILES+=("$temp_dir")
   echo "$temp_dir"
 }
@@ -155,44 +150,4 @@ mark_normal_exit() {
   _DEBNAS_NORMAL_EXIT=1
 }
 
-# 为 apt 安装场景创建临时目录
-# 流程：提升基目录权限至 0711（允许 _apt 用户遍历）→ 创建 0755 子目录
-# 使用完毕后须调用 restore_apt_temp_permissions 恢复基目录原始权限
-# 参数：
-#   $1 - 子目录名前缀（必填）
-# 输出：子目录绝对路径
-# 返回：0 成功，1 失败
-prepare_apt_temp() {
-  local prefix="${1:?prepare_apt_temp: 缺少必要参数：子目录名前缀}"
-  local apt_dir orig_mode
 
-  init_temp_dir || return 1
-
-  # 保存基目录原始权限，用于后续恢复
-  orig_mode=$(stat -c '%a' "$DEBNAS_TMP_BASE" 2>/dev/null || echo "700")
-  echo "$orig_mode" > "${DEBNAS_TMP_BASE}/.orig_mode" 2>/dev/null || true
-
-  # 提升基目录权限，允许 _apt 用户遍历访问
-  chmod 711 "$DEBNAS_TMP_BASE" || true
-
-  apt_dir=$(mktemp -d -p "$DEBNAS_TMP_BASE" "${prefix}.XXXXXXXX") || {
-    chmod "$orig_mode" "$DEBNAS_TMP_BASE" 2>/dev/null || true
-    echo "apt 临时目录创建失败" >&2
-    return 1
-  }
-
-  chmod 755 "$apt_dir" || true
-  _DEBNAS_TEMP_FILES+=("$apt_dir")
-  echo "$apt_dir"
-}
-
-# 恢复 apt 场景下基目录的原始权限
-# 读取 prepare_apt_temp 保存的权限值并恢复
-restore_apt_temp_permissions() {
-  local orig_mode="700"
-  if [[ -f "${DEBNAS_TMP_BASE}/.orig_mode" ]]; then
-    orig_mode=$(cat "${DEBNAS_TMP_BASE}/.orig_mode" 2>/dev/null || echo "700")
-    rm -f "${DEBNAS_TMP_BASE}/.orig_mode" 2>/dev/null || true
-  fi
-  chmod "$orig_mode" "$DEBNAS_TMP_BASE" 2>/dev/null || true
-}
