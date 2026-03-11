@@ -359,8 +359,6 @@ main() {
 
 	if [[ "${support_45drives}" == true ]]; then
 		configure_45drives_repo
-	else
-		log_info "Debian 13 不支持 45Drives 软件源，跳过配置步骤"
 	fi
 
 	if ! configure_cockpit_pinning "${system_codename}"; then
