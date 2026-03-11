@@ -18,7 +18,7 @@ source "${SCRIPT_DIR}/lib/system/urls.sh"
 probe_mirror() {
   local mirror_url="$1"
   
-  if wget --spider --quiet --timeout=5 --tries=1 "${mirror_url}" 2>/dev/null; then
+  if curl -fsSL --head --max-time 5 --connect-timeout 5 -o /dev/null "${mirror_url}" 2>/dev/null; then
     return 0
   else
     return 1
@@ -84,8 +84,8 @@ get_docker_mirror() {
       echo "$DOCKER_OFFICIAL_MIRROR" >&1
       return 0
     else
-      if probe_mirror "$base_mirror"; then
-        docker_mirror="${base_mirror}/docker-ce/linux/debian"
+      docker_mirror="${base_mirror}/docker-ce/linux/debian"
+      if probe_mirror "${docker_mirror}/dists/"; then
         log_info "使用系统配置的镜像源: ${base_mirror}" >&2
         echo "$docker_mirror" >&1
         return 0
@@ -98,8 +98,8 @@ get_docker_mirror() {
   fi
   
   for fallback in "${DOCKER_FALLBACK_MIRRORS[@]}"; do
-    if probe_mirror "$fallback"; then
-      docker_mirror="${fallback}/docker-ce/linux/debian"
+    docker_mirror="${fallback}/docker-ce/linux/debian"
+    if probe_mirror "${docker_mirror}/dists/"; then
       log_info "使用备用镜像源: ${fallback}" >&2
       echo "$docker_mirror" >&1
       return 0

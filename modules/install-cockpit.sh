@@ -221,7 +221,7 @@ install_45drives_components_manual() {
 	trap 'trap - RETURN; cd "${oldpwd}" >/dev/null 2>&1 || true; rm -rf "${apt_dir}"' RETURN
 
 	local upstream_urls=(
-		"https://github.com/45Drives/cockpit-file-sharing/releases/download/v4.3.2/cockpit-file-sharing_4.3.2-2bookworm_all.deb"
+		"https://github.com/45Drives/cockpit-file-sharing/releases/download/v4.5.4-8/cockpit-file-sharing_4.5.4-8bookworm_all.deb"
 		"https://github.com/45Drives/cockpit-identities/releases/download/v0.1.12/cockpit-identities_0.1.12-1focal_all.deb"
 	)
 
