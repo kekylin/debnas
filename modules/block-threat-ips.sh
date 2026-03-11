@@ -68,7 +68,7 @@ REQUIRED_CMDS=(firewall-cmd ipset wget gzip awk sed grep sort comm head crontab 
 
 DATA_DIR="/var/lib/firewalld-ipthreat"
 LOG_DIR="/var/log"
-TEMP_DIR="/tmp/debian-homenas"
+TEMP_DIR="/tmp/debnas"
 CONFIG_FILE="${DATA_DIR}/ipthreat.conf"
 CRON_SCRIPT_PATH="${DATA_DIR}/firewalld_ipthreat.sh"
 LOG_FILE="/var/log/firewalld-ipthreat.log"

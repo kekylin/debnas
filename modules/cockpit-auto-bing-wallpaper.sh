@@ -36,6 +36,7 @@ else
   source "${SCRIPT_DIR}/lib/core/constants.sh"
   source "${SCRIPT_DIR}/lib/core/logging.sh"
   source "${SCRIPT_DIR}/lib/system/dependency.sh"
+  source "${SCRIPT_DIR}/lib/system/tempfile.sh"
   source "${SCRIPT_DIR}/lib/system/utils.sh"
   source "${SCRIPT_DIR}/lib/ui/styles.sh"
   source "${SCRIPT_DIR}/lib/ui/menu.sh"
@@ -259,7 +260,7 @@ add_cron_job() {
   local cron_expr="$1" tmp_cron script_identifier="cockpit-bing-wallpaper"
   
   create_script_copy
-  tmp_cron=$(mktemp)
+  tmp_cron=$(create_temp_file "cron")
   crontab -l 2>/dev/null | grep -v "$script_identifier" > "$tmp_cron" || true
   echo "$cron_expr $SCRIPT_COPY --auto # $script_identifier" >> "$tmp_cron"
   crontab "$tmp_cron"

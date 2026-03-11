@@ -122,7 +122,7 @@ UNREACHABLE_DOMAINS=0
 RESOLVE_RESULT="unknown"
 
 setup_temp_environment() {
-  local base_tmp_dir="/tmp/debian-homenas"
+  local base_tmp_dir="/tmp/debnas"
   
   if [[ ! -d "$base_tmp_dir" ]]; then
     if ! mkdir -p "${base_tmp_dir}"; then

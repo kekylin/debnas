@@ -9,6 +9,7 @@ IFS=$'\n\t'
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${SCRIPT_DIR}/lib/core/constants.sh"
 source "${SCRIPT_DIR}/lib/core/logging.sh"
+source "${SCRIPT_DIR}/lib/system/tempfile.sh"
 source "${SCRIPT_DIR}/lib/system/utils.sh"
 source "${SCRIPT_DIR}/lib/system/apt-pinning.sh"
 source "${SCRIPT_DIR}/lib/system/urls.sh"
@@ -81,7 +82,7 @@ select_best_github_proxy() {
 
 	# 创建临时目录存储测试结果
 	local temp_dir
-	temp_dir=$(mktemp -d -p "/tmp/debian-homenas" "github-proxy-test.XXXXXXXX")
+	temp_dir=$(create_temp_dir "github-proxy-test")
 	local -a result_files=()
 	local -a pids=()
 
@@ -212,7 +213,7 @@ download_from_github_mirrors() {
 
 # Debian 13：手动下载并安装 45Drives 组件
 install_45drives_components_manual() {
-	local base_tmp_root="/tmp/debian-homenas"
+	local base_tmp_root="${DEBNAS_TMP_BASE}"
 	mkdir -p "${base_tmp_root}"
 	# 临时设置根目录为 0711，允许 `_apt` 遍历以读取本地 .deb
 	local base_orig_mode

@@ -9,6 +9,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${SCRIPT_DIR}/lib/core/constants.sh"
 source "${SCRIPT_DIR}/lib/core/logging.sh"
 source "${SCRIPT_DIR}/lib/system/dependency.sh"
+source "${SCRIPT_DIR}/lib/system/tempfile.sh"
 source "${SCRIPT_DIR}/lib/system/utils.sh"
 source "${SCRIPT_DIR}/lib/ui/menu.sh"
 source "${SCRIPT_DIR}/lib/ui/styles.sh"
@@ -93,8 +94,8 @@ setup_environment() {
     trap 'log_warning "用户中断操作，正在清理临时文件并退出。"; rm -rf "$TMP_DIR"; exit 1' INT
     trap 'rm -rf "$TMP_DIR"' EXIT
   else
-    TMP_DIR="/tmp/debnas.$(date +%s%N)$$"
-    mkdir -p "${TMP_DIR}"
+    init_temp_dir
+    TMP_DIR=$(mktemp -d "${DEBNAS_TMP_BASE}/main.XXXXXX")
     chmod 700 "${TMP_DIR}"
     trap 'log_warning "用户中断操作，正在清理临时文件并退出。"; rm -rf "${TMP_DIR}"; exit 1' INT
     trap 'rm -rf "${TMP_DIR}"' EXIT

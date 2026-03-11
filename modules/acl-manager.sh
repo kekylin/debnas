@@ -9,14 +9,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${SCRIPT_DIR}/lib/core/constants.sh"
 source "${SCRIPT_DIR}/lib/core/logging.sh"
 source "${SCRIPT_DIR}/lib/system/dependency.sh"
+source "${SCRIPT_DIR}/lib/system/tempfile.sh"
 source "${SCRIPT_DIR}/lib/ui/menu.sh"
 source "${SCRIPT_DIR}/lib/ui/styles.sh"
 
-# 临时文件管理，避免并发冲突和数据泄露
-mkdir -p /tmp/debnas
-chmod 700 /tmp/debnas
-ACL_OUTPUT=$(mktemp /tmp/debnas/acl-output.XXXXXX)
-trap 'rm -f "$ACL_OUTPUT"' EXIT
+# 临时文件管理
+register_temp_cleanup
+ACL_OUTPUT=$(create_temp_file "acl-output")
 
 # 日志文件路径
 LOG_FILE="/var/log/homenas_acl_manager.log"
