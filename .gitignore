@@ -16,6 +16,7 @@ Thumbs.db
 
 # 忽略开发环境和文档目录
 .cursor/
+.github/
 devdocs/
 docs/
 old-projects/
