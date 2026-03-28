@@ -15,11 +15,15 @@ source "${SCRIPT_DIR}/lib/ui/styles.sh"
 # 信号处理，确保中断时清理和恢复服务状态
 trap 'log_info "脚本中断，正在清理..."; if [[ "${docker_was_active:-}" == "active" ]]; then start_docker_service; fi; exit "${ERROR_GENERAL}"' SIGINT
 
-# 检查依赖，确保 Docker、tar、rsync、systemctl 已安装
+# 检查依赖，确保 Docker、tar、rsync、systemctl 已安装（自动安装缺失项）
 REQUIRED_CMDS=(docker tar rsync systemctl)
 if ! check_dependencies "${REQUIRED_CMDS[@]}"; then
-  log_error "依赖缺失，请先安装 Docker、tar、rsync 和 systemctl。"
-  exit "${ERROR_DEPENDENCY}"
+  log_warning "检测到依赖缺失，正在尝试自动安装..."
+  install_missing_dependencies "${REQUIRED_CMDS[@]}"
+  if ! check_dependencies "${REQUIRED_CMDS[@]}"; then
+    log_error "依赖自动安装失败，请手动安装 Docker、tar、rsync 和 systemctl。"
+    exit "${ERROR_DEPENDENCY}"
+  fi
 fi
 
 # 默认配置文件路径
