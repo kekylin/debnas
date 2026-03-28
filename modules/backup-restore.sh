@@ -13,7 +13,7 @@ source "${SCRIPT_DIR}/lib/ui/menu.sh"
 source "${SCRIPT_DIR}/lib/ui/styles.sh"
 
 # 信号处理，确保中断时清理和恢复服务状态
-trap 'log_info "脚本中断，正在清理..."; if [[ "${docker_was_active:-}" == "active" ]]; then start_docker_service; fi; exit 1' SIGINT
+trap 'log_info "脚本中断，正在清理..."; if [[ "${docker_was_active:-}" == "active" ]]; then start_docker_service; fi; exit "${ERROR_GENERAL}"' SIGINT
 
 # 检查依赖，确保 Docker、tar、rsync、systemctl 已安装
 REQUIRED_CMDS=(docker tar rsync systemctl)

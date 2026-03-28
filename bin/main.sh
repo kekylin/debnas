@@ -76,16 +76,14 @@ init_module_config() {
 
 # 解析 --tmpdir 参数
 TMP_DIR=""
-for arg in "$@"; do
-  case $arg in
+while [[ $# -gt 0 ]]; do
+  case "$1" in
     --tmpdir)
       shift
-      TMP_DIR="$1"
+      TMP_DIR="${1:-}"
       ;;
   esac
-  shift || true
-  # 兼容无参数时不报错
-  [[ $# -eq 0 ]] && break
+  shift
 done
 
 # 设置临时目录和信号处理，确保脚本异常退出时自动清理临时文件

@@ -27,11 +27,16 @@ fi
 log_action "正在安装基础软件包..."
 
 # 更新软件源，确保获取最新包信息
-if apt update; then
-  log_success "软件源更新成功。"
+if [[ "${_DEBNAS_APT_UPDATED:-0}" -eq 1 ]]; then
+  log_info "已全局更新过软件包列表，跳过 apt update。"
 else
-  log_fail "软件源更新失败。"
-  exit "${ERROR_GENERAL}"
+  if apt update; then
+    export _DEBNAS_APT_UPDATED=1
+    log_success "软件源更新成功。"
+  else
+    log_fail "软件源更新失败。"
+    exit "${ERROR_GENERAL}"
+  fi
 fi
 
 # 安装常用必备软件，保障系统基础功能
@@ -43,7 +48,7 @@ else
 fi
 
 # 自动将首个普通用户（UID>=1000，排除 nobody）加入 sudo 组，便于后续管理
-first_user=$(awk -F: '$3>=1000 && $1 != "nobody" {print $1}' /etc/passwd | sort | head -n 1)
+first_user=$(get_first_regular_user)
 
 if [[ -n "${first_user:-}" ]]; then
   # 验证用户是否真实存在

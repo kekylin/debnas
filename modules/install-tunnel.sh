@@ -14,7 +14,7 @@ source "${SCRIPT_DIR}/lib/system/utils.sh"
 # 检查 curl、apt、systemctl 依赖，确保后续操作可用
 REQUIRED_CMDS=(curl apt systemctl)
 if ! check_dependencies "${REQUIRED_CMDS[@]}"; then
-  log_fail "缺少 curl、apt 或 systemctl，请先手动安装。"
+  log_error "缺少 curl、apt 或 systemctl，请先手动安装。"
   exit "${ERROR_DEPENDENCY}"
 fi
 
@@ -23,15 +23,28 @@ if ! verify_system_support; then
   exit "${ERROR_UNSUPPORTED_OS}"
 fi
 
+# 动态获取系统代号，避免硬编码导致跨版本不兼容
+CODENAME=$(get_system_codename)
+if [[ -z "${CODENAME}" ]]; then
+  log_error "无法获取系统版本代号。"
+  exit "${ERROR_GENERAL}"
+fi
+
 log_action "开始安装 Tailscale..."
 
 # 添加 Tailscale 的包签名密钥和存储库，确保软件源可信
 log_action "添加 Tailscale 密钥和存储库..."
-curl -fsSL https://pkgs.tailscale.com/stable/debian/bookworm.noarmor.gpg | tee /usr/share/keyrings/tailscale-archive-keyring.gpg >/dev/null
-curl -fsSL https://pkgs.tailscale.com/stable/debian/bookworm.tailscale-keyring.list | tee /etc/apt/sources.list.d/tailscale.list
+curl -fsSL "https://pkgs.tailscale.com/stable/debian/${CODENAME}.noarmor.gpg" \
+  | tee /usr/share/keyrings/tailscale-archive-keyring.gpg >/dev/null
+curl -fsSL "https://pkgs.tailscale.com/stable/debian/${CODENAME}.tailscale-keyring.list" \
+  | tee /etc/apt/sources.list.d/tailscale.list
 
 # 安装 Tailscale，保障内网穿透能力
-apt update
+if [[ "${_DEBNAS_APT_UPDATED:-0}" -eq 1 ]]; then
+  log_info "已全局更新过软件包列表，跳过 apt update。"
+else
+  apt update && export _DEBNAS_APT_UPDATED=1
+fi
 log_action "安装 Tailscale..."
 apt install -y tailscale
 

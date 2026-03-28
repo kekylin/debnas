@@ -27,10 +27,10 @@ prompt_message() {
   echo -e "$1"
 }
 
-# 安全文件写入
+# 安全文件写入（避免内容出现在进程参数列表中）
 safe_write() {
   local file="$1" content="$2"
-  echo "$content" > "$file" || { log_error "写入文件 $file 失败。"; return 1; }
+  printf '%s\n' "$content" > "$file" || { log_error "写入文件 $file 失败。"; return 1; }
   return 0
 }
 

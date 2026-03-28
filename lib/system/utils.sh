@@ -300,3 +300,9 @@ verify_architecture_support() {
 
   return 1
 }
+
+# 获取第一个常规用户（UID >= 1000，排除 nobody）
+# 返回：用户名字符串，找不到则返回空
+get_first_regular_user() {
+  awk -F: '$3>=1000 && $1 != "nobody" {print $1; exit}' /etc/passwd
+}

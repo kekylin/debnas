@@ -103,7 +103,7 @@ if [[ "${RUN_MODE}" == "cron" ]]; then
     if [[ ! -d "${DEBNAS_TMP_BASE}" ]]; then
       mkdir -p "${DEBNAS_TMP_BASE}" || {
         log_error "创建临时目录失败：${DEBNAS_TMP_BASE}"
-        exit 1
+        exit "${ERROR_GENERAL}"
       }
       chmod 700 "${DEBNAS_TMP_BASE}"
     fi
@@ -133,7 +133,7 @@ if [[ "${RUN_MODE}" == "cron" ]]; then
 
   register_temp_cleanup() {
     trap 'cleanup_temp_files' EXIT
-    trap 'cleanup_temp_files; exit 1' INT TERM
+    trap 'cleanup_temp_files; exit "${ERROR_GENERAL}"' INT TERM
   }
 
   mark_normal_exit() {
@@ -381,7 +381,7 @@ configure_single_ipset() {
       --option=family="${ip_family}" \
       --option=maxelem=${MAX_IP_LIMIT} &>/dev/null; then
       log_message "ERROR" "配置 ${ip_type} IPSet 失败（请检查 Firewalld 配置）"
-      exit 1
+      exit "${ERROR_GENERAL}"
     fi
     need_reload=1
   fi
@@ -391,7 +391,7 @@ configure_single_ipset() {
       --zone="${ZONE}" \
       --add-source="ipset:${ipset_name}" &>/dev/null; then
       log_message "ERROR" "配置 ${ip_type} IPSet 失败"
-      exit 1
+      exit "${ERROR_GENERAL}"
     fi
     need_reload=1
   fi
@@ -415,7 +415,7 @@ configure_ipset() {
 validate_zone() {
   if ! firewall-cmd --get-zones | grep -qw "${ZONE}"; then
     log_message "ERROR" "无效 Firewalld 区域：${ZONE}"
-    exit 1
+    exit "${ERROR_GENERAL}"
   fi
 }
 
@@ -877,7 +877,7 @@ disable_auto_update() {
   sed -i '/# IPThreat Firewalld Update/d' "${temp_cron}"
   if ! crontab "${temp_cron}"; then
     log_message "ERROR" "移除 crontab 失败（请检查 cron 服务）"
-    exit 1
+    exit "${ERROR_GENERAL}"
   fi
 
   remove_all_ips || {
@@ -888,14 +888,14 @@ disable_auto_update() {
     log_message "INFO" "删除配置文件：${CONFIG_FILE}"
     rm -f "${CONFIG_FILE}" || {
       log_message "ERROR" "删除配置文件失败：${CONFIG_FILE}"
-      exit 1
+      exit "${ERROR_GENERAL}"
     }
   fi
   if [[ -f "${CRON_SCRIPT_PATH}" ]]; then
     log_message "INFO" "删除脚本文件：${CRON_SCRIPT_PATH}"
     rm -f "${CRON_SCRIPT_PATH}" || {
       log_message "ERROR" "删除脚本文件失败：${CRON_SCRIPT_PATH}"
-      exit 1
+      exit "${ERROR_GENERAL}"
     }
   fi
   if [[ -d "${DATA_DIR}" ]]; then
@@ -1015,7 +1015,7 @@ init_data_dir() {
     log_message "INFO" "创建数据目录：${DATA_DIR}"
     mkdir -p "${DATA_DIR}" || {
       log_message "ERROR" "创建数据目录失败：${DATA_DIR}"
-      exit 1
+      exit "${ERROR_GENERAL}"
     }
     chmod 755 "${DATA_DIR}"
   fi
@@ -1026,7 +1026,7 @@ init_manual() {
     log_message "INFO" "创建日志目录：${LOG_DIR}"
     mkdir -p "${LOG_DIR}" || {
       log_message "ERROR" "创建日志目录失败：${LOG_DIR}"
-      exit 1
+      exit "${ERROR_GENERAL}"
     }
     chmod 755 "${LOG_DIR}"
   fi
@@ -1034,13 +1034,13 @@ init_manual() {
     log_message "INFO" "创建日志文件：${LOG_FILE}"
     touch "${LOG_FILE}" || {
       log_message "ERROR" "创建日志文件失败：${LOG_FILE}"
-      exit 1
+      exit "${ERROR_GENERAL}"
     }
     chmod 644 "${LOG_FILE}"
   fi
   if [[ ! -w "${LOG_FILE}" ]]; then
     log_message "ERROR" "日志文件不可写：${LOG_FILE}（请检查权限）"
-    exit 1
+    exit "${ERROR_GENERAL}"
   fi
   THREAT_LEVEL=${DEFAULT_THREAT_LEVEL}
 }
@@ -1048,18 +1048,18 @@ init_manual() {
 init_cron() {
   if [[ ! -f "${LOG_FILE}" ]]; then
     log_message "ERROR" "日志文件不存在：${LOG_FILE}"
-    exit 1
+    exit "${ERROR_GENERAL}"
   fi
   if [[ ! -w "${LOG_FILE}" ]]; then
     log_message "ERROR" "日志文件不可写：${LOG_FILE}（请检查权限）"
-    exit 1
+    exit "${ERROR_GENERAL}"
   fi
 
   init_data_dir
 
   if [[ ! -f "${CONFIG_FILE}" ]]; then
     log_message "ERROR" "配置文件不存在：${CONFIG_FILE}"
-    exit 1
+    exit "${ERROR_GENERAL}"
   fi
   while IFS='=' read -r key value; do
     case "${key}" in
@@ -1177,7 +1177,7 @@ main() {
 
   if ! [[ "${MAX_IP_LIMIT}" =~ ^[0-9]+$ ]]; then
     log_message "ERROR" "无效 MAX_IP_LIMIT：${MAX_IP_LIMIT}"
-    exit 1
+    exit "${ERROR_GENERAL}"
   fi
 
   if [[ "${RUN_MODE}" == "manual" ]]; then

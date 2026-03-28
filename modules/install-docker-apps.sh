@@ -24,17 +24,21 @@ fi
 COMPOSE_DIR="${PROJECT_ROOT}/docker-compose"
 if [[ ! -d "$COMPOSE_DIR" ]]; then
   log_error "compose 目录不存在：$COMPOSE_DIR。"
-  exit 1
+  exit "${ERROR_GENERAL}"
 fi
 
 # 读取容器配置
 declare -A container_desc
 declare -A container_compose
 declare -a container_order
+
+# 全局菜单映射（避免 export+eval 传递关联数组）
+declare -A g_index_to_key
+declare -a g_sorted_keys
 load_container_config() {
   if [[ ! -f "$CONTAINER_CONFIG" ]]; then
     log_error "容器配置文件不存在：$CONTAINER_CONFIG"
-    exit 1
+    exit "${ERROR_GENERAL}"
   fi
   container_order=()
   # 使用 while read ... || [ -n "$key" ] 方式，确保最后一行无换行符也能被处理
@@ -54,20 +58,17 @@ show_container_menu() {
   IFS=$'\n' sorted_keys=($(sort <<<"${sorted_keys[*]}"))
   unset IFS
   local idx=1
-  declare -A index_to_key
+  g_index_to_key=()
   for key in "${sorted_keys[@]}"; do
-    echo "$idx、${container_desc[$key]}"
-    index_to_key[$idx]="$key"
-    idx=$((idx+1))
+    printf "%s、%s\n" "$idx" "${container_desc[$key]}"
+    g_index_to_key[$idx]="$key"
+    ((idx++))
   done
-  echo "99、安装全部"
-  echo "0、返回"
-  echo "支持多选，空格分隔，如：1 2 3"
-  echo -n "请选择编号: "
-  # 返回 index_to_key 供后续选择映射
-  export MENU_INDEX_TO_KEY=$(declare -p index_to_key)
-  export MENU_SORTED_KEYS=$(IFS=,; echo "${sorted_keys[*]}")
-  return 0
+  g_sorted_keys=("${sorted_keys[@]}")
+  printf "%s\n" "99、安装全部"
+  printf "%s\n" "0、返回"
+  printf "%s\n" "支持多选，空格分隔，如：1 2 3"
+  printf "%s" "请选择编号: "
 }
 
 # 部署指定容器
@@ -98,16 +99,13 @@ main() {
   [[ " ${choices[*]} " =~ " 0 " ]] && return 0
 
   local containers=()
-  # 解析 index_to_key 和 sorted_keys
-  eval "${MENU_INDEX_TO_KEY}"
-  IFS=',' read -r -a sorted_keys <<< "${MENU_SORTED_KEYS}"
 
   if [[ " ${choices[*]} " =~ " 99 " ]]; then
-    containers=("${sorted_keys[@]}")
+    containers=("${g_sorted_keys[@]}")
   else
-  for choice in "${choices[@]}"; do
-      if [[ -n "${index_to_key[$choice]:-}" ]]; then
-        containers+=("${index_to_key[$choice]}")
+    for choice in "${choices[@]}"; do
+      if [[ -n "${g_index_to_key[$choice]:-}" ]]; then
+        containers+=("${g_index_to_key[$choice]}")
       else
         log_warning "无效选项：$choice。"
       fi

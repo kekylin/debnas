@@ -64,10 +64,27 @@ update_registry_mirrors() {
     done
     [[ $seen -eq 0 ]] && unique_mirrors+=("$m")
   done
-  local updated_mirrors_json
-  updated_mirrors_json=$(array_to_json_array "${unique_mirrors[@]}")
   log_info "正在更新 Docker 镜像加速配置..."
-  echo -e "{\n  \"registry-mirrors\": $updated_mirrors_json\n}" > "$DAEMON_JSON"
+  # 使用 python3 合并 JSON，保留 daemon.json 中已有的其他配置项
+  if command -v python3 >/dev/null 2>&1 && [[ -f "$DAEMON_JSON" ]]; then
+    python3 -c "
+import json, sys
+try:
+    with open(sys.argv[1], 'r') as f:
+        data = json.load(f)
+except (json.JSONDecodeError, FileNotFoundError):
+    data = {}
+mirrors = [m for m in sys.argv[2:] if m]
+data['registry-mirrors'] = mirrors
+with open(sys.argv[1], 'w') as f:
+    json.dump(data, f, indent=2, ensure_ascii=False)
+    f.write('\\n')
+" "$DAEMON_JSON" ${unique_mirrors[*]}
+  else
+    local updated_mirrors_json
+    updated_mirrors_json=$(array_to_json_array "${unique_mirrors[@]}")
+    printf '{\n  "registry-mirrors": %s\n}\n' "$updated_mirrors_json" > "$DAEMON_JSON"
+  fi
 }
 
 # 重启 Docker 服务，确保新配置生效
@@ -76,7 +93,7 @@ reload_and_restart_docker() {
   systemctl daemon-reload
   if ! systemctl restart docker; then
     log_error "重启 Docker 服务失败，请检查 systemctl 状态或日志。"
-    exit 1
+    exit "${ERROR_GENERAL}"
   fi
 }
 

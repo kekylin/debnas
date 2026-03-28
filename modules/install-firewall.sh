@@ -32,9 +32,14 @@ fi
 
 # 安装 firewalld，保障系统安全
 log_info "安装 firewalld 防火墙..."
-if ! apt update; then
-  log_error "apt update 失败。"
-  exit "${ERROR_GENERAL}"
+if [[ "${_DEBNAS_APT_UPDATED:-0}" -eq 1 ]]; then
+  log_info "已全局更新过软件包列表，跳过 apt update。"
+else
+  if ! apt update; then
+    log_error "apt update 失败。"
+    exit "${ERROR_GENERAL}"
+  fi
+  export _DEBNAS_APT_UPDATED=1
 fi
 if ! apt install firewalld -y; then
   log_error "firewalld 安装失败。"

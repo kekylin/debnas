@@ -131,10 +131,11 @@ setup_temp_environment() {
     fi
   fi
   
+  # 权限 755 与 tempfile.sh 保持一致，允许 _apt 等系统用户遍历访问
   local current_mode
   current_mode=$(stat -c %a "${base_tmp_dir}" 2>/dev/null || echo "")
-  if [[ "$current_mode" != "700" ]]; then
-    if ! chmod 700 "${base_tmp_dir}"; then
+  if [[ "$current_mode" != "755" ]]; then
+    if ! chmod 755 "${base_tmp_dir}"; then
       echo "无法设置临时目录权限" >&2
       return 1
     fi

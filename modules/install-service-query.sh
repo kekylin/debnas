@@ -79,7 +79,7 @@ display_firewalld_fail2ban_info() {
     log_info "Firewalld 防火墙服务已安装，请确保已放行必要端口。"
   fi
   if [[ "$fail2ban_installed" == "yes" ]]; then
-    log_info "Fail2ban 服务已安装，连续登录失败 5 次将封禁访问 IP 1 小时。"
+    log_info "Fail2ban 服务已安装，登录失败达到阈值后将自动封禁访问 IP。"
   fi
 }
 

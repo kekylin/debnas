@@ -17,10 +17,23 @@ if ! check_dependencies "${REQUIRED_CMDS[@]}"; then
   exit "${ERROR_DEPENDENCY}"
 fi
 
-# 读取外网访问地址，移除协议部分
-read -p "Cockpit 外网访问地址（如 baidu.com 或 baidu.com:9090）：" domain
+# 读取外网访问地址，移除协议部分并验证输入
+read -r -p "Cockpit 外网访问地址（如 baidu.com 或 baidu.com:9090）：" domain
 config_file="/etc/cockpit/cockpit.conf"
-domain=$(echo "$domain" | sed -E 's#^https?://##')
+domain="${domain#http://}"
+domain="${domain#https://}"
+domain="${domain%%/*}"
+
+# 验证域名输入：非空且仅包含合法字符（字母、数字、点、连字符、冒号）
+if [[ -z "$domain" ]]; then
+  log_error "域名不能为空，请重新执行并输入有效地址。"
+  exit "${ERROR_PARAMETER}"
+fi
+if [[ ! "$domain" =~ ^[a-zA-Z0-9._:-]+$ ]]; then
+  log_error "域名格式无效：${domain}，仅允许字母、数字、点、连字符和冒号。"
+  exit "${ERROR_PARAMETER}"
+fi
+
 internal_ip=$(hostname -I | awk '{print $1}')
 log_info "配置 Cockpit 外网访问地址：$domain"
 

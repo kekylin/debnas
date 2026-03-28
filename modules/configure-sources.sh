@@ -31,18 +31,10 @@ fi
 
 CODENAME=$(get_system_codename)
 
-# 检测镜像站连通性
-# 参数：mirror_url - 镜像站 URL
-# 返回：0 表示可达，1 表示不可达
+# 检测 APT 镜像站连通性（基于 urls.sh 的 probe_url，追加 Release 路径验证）
 probe_mirror() {
   local mirror_url="$1"
-  local check_url="${mirror_url}/debian/dists/${CODENAME}/Release"
-  
-  if wget --spider --quiet --timeout="${PROBE_TIMEOUT}" --tries=1 "${check_url}" 2>/dev/null; then
-    return 0
-  else
-    return 1
-  fi
+  probe_url "${mirror_url}/debian/dists/${CODENAME}/Release"
 }
 
 # 选择可用镜像站
@@ -121,8 +113,13 @@ update_package_lists() {
     return 1
   fi
   
+  if [[ "${_DEBNAS_APT_UPDATED:-0}" -eq 1 ]]; then
+    log_info "已全局更新过软件包列表，跳过 apt update。"
+    return 0
+  fi
   log_info "执行 apt update 更新软件包列表"
   if apt update; then
+    export _DEBNAS_APT_UPDATED=1
     local mirror_name
     mirror_name=$(get_mirror_name "${mirror_url}")
     if [[ "${mirror_name}" == "${mirror_url}" ]]; then

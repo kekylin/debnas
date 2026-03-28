@@ -12,17 +12,9 @@ source "${SCRIPT_DIR}/lib/system/urls.sh"
 
 # ==================== 函数定义 ====================
 
-# 检测镜像站连通性
-# 参数：$1 - 镜像站 URL
-# 返回：0 表示可达，1 表示不可达
+# 检测镜像站连通性（基于 urls.sh 的 probe_url）
 probe_mirror() {
-  local mirror_url="$1"
-  
-  if curl -fsSL --head --max-time 5 --connect-timeout 5 -o /dev/null "${mirror_url}" 2>/dev/null; then
-    return 0
-  else
-    return 1
-  fi
+  probe_url "$1"
 }
 
 # 从 debian.sources 文件中提取镜像源基础 URL
@@ -117,6 +109,9 @@ get_docker_mirror() {
   fi
 }
 
+# 获取第一个常规用户（UID >= 1000，排除 nobody）
+first_user=$(get_first_regular_user)
+
 # ==================== 主执行逻辑 ====================
 
 if ! verify_system_support; then
@@ -124,8 +119,6 @@ if ! verify_system_support; then
 fi
 
 . /etc/os-release
-OS_NAME=$(echo "$NAME" | tr '[:upper:]' '[:lower:]')
-VERSION_CODENAME=$(echo "$VERSION_CODENAME")
 
 log_info "检测镜像源可用性..."
 DOCKER_MIRROR=$(get_docker_mirror)
@@ -139,7 +132,11 @@ fi
 log_info "开始安装 Docker CE..."
 
 log_info "更新软件包列表并安装依赖..."
-apt update
+if [[ "${_DEBNAS_APT_UPDATED:-0}" -eq 1 ]]; then
+  log_info "已全局更新过软件包列表，跳过 apt update。"
+else
+  apt update && export _DEBNAS_APT_UPDATED=1
+fi
 apt install -y ca-certificates curl
 
 install -m 0755 -d /etc/apt/keyrings
@@ -196,7 +193,7 @@ log_info "安装 Docker 组件..."
 apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 
 # 获取 UID 1000 的用户（通常是 Debian 系统安装时创建的第一个用户）
-first_user=$(awk -F: '$3==1000 && $1 != "nobody" {print $1; exit}' /etc/passwd)
+# first_user=$(awk -F: '$3==1000 && $1 != "nobody" {print $1; exit}' /etc/passwd)
 
 if [[ -n "$first_user" ]]; then
   log_info "将系统第一个用户（UID 1000）添加到 docker 组..."

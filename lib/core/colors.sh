@@ -5,7 +5,8 @@ set -euo pipefail
 IFS=$'\n\t'
 
 # 检查是否禁用颜色输出
-if [[ "${NO_COLOR:-0}" -eq 1 ]] || [[ ! -t 1 ]]; then
+# 日志统一输出到 stderr（fd 2），因此检测 fd 2 的终端属性
+if [[ "${NO_COLOR:-0}" -eq 1 ]] || [[ ! -t 2 ]]; then
   # 禁用颜色时的空字符串
   COLOR_RESET=""
   # 基础颜色（全部使用普通字体，非粗体）

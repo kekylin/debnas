@@ -98,3 +98,22 @@ get_docker_registry_mirrors() {
     echo "$mirror"
   done
 }
+
+# ==================== 网络探测函数 ====================
+
+# 探测 URL 连通性（通用函数）
+# 参数：$1 - 探测目标 URL
+# 返回：0 表示可达，1 表示不可达
+probe_url() {
+  local target_url="$1"
+
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL --head --max-time 5 --connect-timeout 5 \
+      -o /dev/null "${target_url}" 2>/dev/null
+  elif command -v wget >/dev/null 2>&1; then
+    wget --spider --quiet --timeout=5 --tries=1 \
+      "${target_url}" 2>/dev/null
+  else
+    return 1
+  fi
+}

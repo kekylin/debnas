@@ -38,7 +38,7 @@ configure_timeout_and_logging() {
     log_success "已创建 /var/log/history 目录并设置权限为 1733（sticky bit，所有用户可写，防止互删）。"
   else
     current_mode=$(stat -c "%a" /var/log/history)
-    if [ "$current_mode" -ne 1733 ]; then
+    if [[ "$current_mode" != "1733" ]]; then
       chmod 1733 /var/log/history
       chown root:root /var/log/history
       log_success "/var/log/history 目录权限已由 $current_mode 调整为 1733（sticky bit，所有用户可写，防止互删）。"
@@ -46,11 +46,14 @@ configure_timeout_and_logging() {
       log_info "/var/log/history 目录权限为 $current_mode，已满足要求，无需调整。"
     fi
   fi
-  if grep -q "TMOUT\|history" /etc/profile; then
+  # 使用唯一标识检测是否已配置，避免与系统默认 history 变量误判
+  local debnas_marker="# DebNAS 安全审计配置"
+  if grep -qF "${debnas_marker}" /etc/profile; then
     log_info "已配置超时和命令记录日志，跳过配置。"
   else
     cat << 'EOF' >> /etc/profile
 
+# DebNAS 安全审计配置
 # 超时自动退出（15分钟）
 TMOUT=900
 # 在历史命令中启用人类可读时间戳

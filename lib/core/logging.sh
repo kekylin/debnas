@@ -56,7 +56,7 @@ log_status() {
 
 # 业务状态日志函数（只输出业务状态，不输出日志级别）
 log_success() { should_log "INFO"  && log_status "[SUCCESS]" "$1" "$COLOR_GREEN"; }
-log_fail()    { should_log "ERROR" && log_status "[FAIL]"    "$1" "$COLOR_RED"; }
+log_fail()    { should_log "ERROR" && log_status "[FAIL]"    "$1" "$COLOR_RED"; }   # 与 log_error 等价，保留以兼容旧代码
 log_warning() { should_log "WARN"  && log_status "[WARNING]" "$1" "$COLOR_YELLOW"; }
 log_info()    { should_log "INFO"  && log_status "[INFO]"    "$1" "$COLOR_BLUE"; }
 log_action()  { should_log "INFO"  && log_status "[ACTION]"  "$1" "$COLOR_CYAN"; }

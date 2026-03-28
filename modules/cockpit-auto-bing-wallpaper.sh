@@ -10,10 +10,10 @@ if [[ "$(dirname "${BASH_SOURCE[0]}")" == "/etc/cockpit/branding" ]]; then
   SCRIPT_DIR="/etc/cockpit/branding"
   
   # 内置简化的日志函数
-  log_info() { echo -e "\033[1;34m[INFO]\033[0m $*"; }
-  log_success() { echo -e "\033[1;32m[SUCCESS]\033[0m $*"; }
-  log_error() { echo -e "\033[1;31m[ERROR]\033[0m $*" >&2; }
-  log_warning() { echo -e "\033[1;33m[WARNING]\033[0m $*"; }
+  log_info() { printf '\033[1;34m[INFO]\033[0m %s\n' "$*"; }
+  log_success() { printf '\033[1;32m[SUCCESS]\033[0m %s\n' "$*"; }
+  log_error() { printf '\033[1;31m[ERROR]\033[0m %s\n' "$*" >&2; }
+  log_warning() { printf '\033[1;33m[WARNING]\033[0m %s\n' "$*"; }
   
   # 内置简化的依赖检查
   check_dependencies() {
@@ -137,7 +137,7 @@ update_wallpaper() {
   
   if curl --fail --location --silent --show-error -o "${WALLPAPER_FILE}.tmp" "$full_url"; then
     mv -f "${WALLPAPER_FILE}.tmp" "$WALLPAPER_FILE"
-    echo -e "${bing_title}\n${bing_copyright}" > "$ISSUE_FILE"
+    printf '%s\n%s\n' "$bing_title" "$bing_copyright" > "$ISSUE_FILE"
     mark_initialized
     return 0
   else
