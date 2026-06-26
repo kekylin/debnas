@@ -161,8 +161,8 @@ execute_module() {
 
   log_action "正在执行模块：${display_name}"
 
-  # 通过 bash 子进程执行模块（模块保持独立性）
-  if bash "$module_path" "$@"; then
+  # 通过 bash 子进程执行模块（清除 bootstrap 标记，让模块重新加载库）
+  if (unset _DEBNAS_BOOTSTRAPPED; bash "$module_path" "$@"); then
     return 0
   else
     return 1
