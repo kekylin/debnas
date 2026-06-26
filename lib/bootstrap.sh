@@ -85,4 +85,4 @@ register_temp_cleanup
 
 # ==================== 完成标记 ====================
 
-export _DEBNAS_BOOTSTRAPPED=1
+_DEBNAS_BOOTSTRAPPED=1
