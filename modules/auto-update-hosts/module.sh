@@ -24,6 +24,11 @@ if [[ "${1:-}" == "auto_update_hosts" ]]; then
 fi
 
 # 加载子模块
+# 全局常量（供子模块使用）
+readonly HOSTS_FILE="/etc/hosts"
+readonly START_MARK="# DebNAS Hosts Start"
+readonly END_MARK="# DebNAS Hosts End"
+
 source "${MODULE_DIR}/dns-resolve.sh"
 source "${MODULE_DIR}/connectivity.sh"
 source "${MODULE_DIR}/hosts-manager.sh"
