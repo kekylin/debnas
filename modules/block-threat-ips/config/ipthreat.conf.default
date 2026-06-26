@@ -1,0 +1,28 @@
+# ==================== 常量定义 ====================
+REQUIRED_CMDS=(firewall-cmd ipset wget gzip awk sed grep sort head crontab sipcalc)
+
+DATA_DIR="/var/lib/firewalld-ipthreat"
+LOG_DIR="/var/log"
+CONFIG_FILE="${DATA_DIR}/ipthreat.conf"
+CRON_SCRIPT_PATH="${DATA_DIR}/firewalld_ipthreat.sh"
+LOG_FILE="/var/log/firewalld-ipthreat.log"
+
+DEFAULT_THREAT_LEVEL=50
+DEFAULT_UPDATE_CRON="0 0 * * *"
+ZONE="drop"
+IPSET_NAME_IPV4="ipthreat_block_ipv4"
+IPSET_NAME_IPV6="ipthreat_block_ipv6"
+
+# hash:net 类型支持 CIDR，MAX_IP_LIMIT 表示 CIDR 条目数限制（非单个 IP 数量）
+declare -i MAX_IP_LIMIT=65536
+# IP 范围格式限制：威胁情报列表主要使用 CIDR，IP 范围格式较少且通常较小
+declare -i MAX_RANGE_SIZE=256
+
+get_threat_list_url() {
+  local threat_level="${1:-${DEFAULT_THREAT_LEVEL}}"
+  printf "%s%s%s" \
+    "https://lists.ipthreat.net/file/ipthreat-lists/" \
+    "threat/threat-" \
+    "${threat_level}.txt.gz"
+}
+
