@@ -1,0 +1,125 @@
+#!/bin/bash
+# @module: auto-update-hosts
+# @name: 更新 Hosts 文件
+# @category: 系统工具
+# @depends: dig,ping
+# @depend_modules: configure-sources
+# @version: 2.0.0
+# @order: 73
+# @cron: true
+# @cron_schedule: 0 3 * * *
+# 功能：自动更新 /etc/hosts 文件（目录模块入口）
+
+set -euo pipefail
+IFS=$'\n\t'
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+MODULE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/lib/bootstrap.sh"
+
+# CRON_MODE 兼容
+CRON_MODE="${DEBNAS_CRON_MODE:-0}"
+if [[ "${1:-}" == "auto_update_hosts" ]]; then
+  CRON_MODE=1
+fi
+
+# 加载子模块
+source "${MODULE_DIR}/dns-resolve.sh"
+source "${MODULE_DIR}/connectivity.sh"
+source "${MODULE_DIR}/hosts-manager.sh"
+source "${MODULE_DIR}/cron.sh"
+
+declare -Ar DNS_IP_BY_NAME=(
+  ["AliDNS"]="223.5.5.5"
+  ["TencentDNS"]="119.29.29.29"
+  ["BaiduDNS"]="180.76.76.76"
+  ["DNS114"]="114.114.114.114"
+)
+
+declare -A DNS_NAMES=()
+DNS_SERVERS=()
+for dns_name in "${DNS_NAME_ORDER[@]}"; do
+  ip="${DNS_IP_BY_NAME[$dns_name]}"
+  DNS_SERVERS+=("$ip")
+  DNS_NAMES["$ip"]="$dns_name"
+done
+
+
+setup_temp_environment() {
+  local base_tmp_dir="/tmp/debnas"
+  
+  if [[ ! -d "$base_tmp_dir" ]]; then
+    if ! mkdir -p "${base_tmp_dir}"; then
+      echo "无法创建临时目录: ${base_tmp_dir}" >&2
+      return 1
+    fi
+  fi
+  
+  # 权限 755 与 tempfile.sh 保持一致，允许 _apt 等系统用户遍历访问
+  local current_mode
+  current_mode=$(stat -c %a "${base_tmp_dir}" 2>/dev/null || echo "")
+  if [[ "$current_mode" != "755" ]]; then
+    if ! chmod 755 "${base_tmp_dir}"; then
+      echo "无法设置临时目录权限" >&2
+      return 1
+    fi
+  fi
+  
+  export TMP_DIR="${base_tmp_dir}"
+}
+
+# 生成域名哈希值用于临时文件名
+# 参数：$1 - 域名
+# 返回：MD5 哈希值（32 字符）
+
+menu() {
+  while true; do
+    print_separator "-"
+    print_menu_item "1" "单次更新"
+    print_menu_item "2" "定时更新"
+    print_menu_item "3" "删除定时任务"
+    print_menu_item "4" "查询定时任务"
+    print_menu_item "0" "返回" "true"
+    print_separator "-"
+    print_prompt "请选择编号: "
+    read -r choice
+
+    case "$choice" in
+      1)
+        log_action "执行单次更新"
+        update_hosts
+        ;;
+      2)
+        log_action "创建定时更新任务"
+        create_cron_job
+        ;;
+      3)
+        log_action "删除定时任务"
+        remove_cron_job
+        ;;
+      4)
+        list_cron_jobs
+        ;;
+      0)
+        return 0
+        ;;
+      *)
+        log_fail "无效选择，请重新输入。"
+        ;;
+    esac
+  done
+}
+
+main() {
+  if [[ $CRON_MODE -eq 0 ]]; then
+    setup_temp_environment
+    check_required_dependencies
+    menu
+  else
+    setup_temp_environment
+    update_hosts
+    exit 0
+  fi
+}
+
+main "$@"
