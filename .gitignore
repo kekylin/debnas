@@ -16,7 +16,12 @@ Thumbs.db
 
 # 忽略开发环境和文档目录
 .cursor/
-.github/
+.github/*
+!.github/workflows/
+!.github/copilot-instructions.md
+!.github/instructions/
+!.github/ISSUE_TEMPLATE/
+!.github/PULL_REQUEST_TEMPLATE.md
 devdocs/
 docs/
 old-projects/

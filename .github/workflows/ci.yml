@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev, 'refactor/**']
+  pull_request:
+    branches: [main, dev]
+
+jobs:
+  shellcheck:
+    name: ShellCheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run ShellCheck
+        uses: ludeeus/action-shellcheck@master
+        with:
+          severity: error
+          scandir: '.'
+          additional_files: 'bin/debnas'
+        env:
+          SHELLCHECK_OPTS: -x
+
+  syntax:
+    name: Bash Syntax
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check bash -n on all .sh files
+        run: |
+          errors=0
+          while IFS= read -r f; do
+            if ! bash -n "$f" 2>/dev/null; then
+              echo "FAIL: $f"
+              errors=$((errors + 1))
+            fi
+          done < <(find . -name '*.sh' -not -path './.git/*' -type f)
+
+          # Also check bin/debnas (no .sh extension)
+          if ! bash -n bin/debnas 2>/dev/null; then
+            echo "FAIL: bin/debnas"
+            errors=$((errors + 1))
+          fi
+
+          if [ "$errors" -gt 0 ]; then
+            echo "$errors file(s) have syntax errors"
+            exit 1
+          fi
+          echo "All files pass syntax check"
+
+  bats-unit:
+    name: BATS Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install BATS
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq bats
+
+      - name: Run unit tests
+        run: bash tests/run.sh unit
