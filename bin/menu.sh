@@ -171,7 +171,7 @@ execute_compat_modules() {
     fi
 
     log_action "正在执行模块：\"$zh_desc\""
-    if ! bash "$mod_path"; then
+    if ! (unset _DEBNAS_BOOTSTRAPPED; bash "$mod_path"); then
       log_fail "模块 \"$zh_desc\" 执行失败，已中断"
       break
     fi
@@ -321,7 +321,7 @@ execute_auto_modules() {
     }
 
     log_action "正在执行模块：\"$display_name\""
-    if ! bash "$mod_path"; then
+    if ! (unset _DEBNAS_BOOTSTRAPPED; bash "$mod_path"); then
       log_fail "模块 \"$display_name\" 执行失败，已中断"
       break
     fi
