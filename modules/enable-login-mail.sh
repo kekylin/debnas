@@ -1,4 +1,11 @@
 #!/bin/bash
+# @module: enable-login-mail
+# @name: 启用登录通知
+# @category: 通知服务
+# @depends: exim4
+# @depend_modules: setup-mail-account
+# @version: 1.0.0
+# @order: 61
 # 功能：启用用户登录邮件通知（通过 PAM 脚本，登录时自动发送邮件）
 
 set -euo pipefail
@@ -6,9 +13,7 @@ IFS=$'\n\t'
 
 # 加载公共模块，确保依赖函数和常量可用
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-source "${SCRIPT_DIR}/lib/core/constants.sh"
-source "${SCRIPT_DIR}/lib/core/logging.sh"
-source "${SCRIPT_DIR}/lib/system/dependency.sh"
+source "${SCRIPT_DIR}/lib/bootstrap.sh"
 
 # 检查 exim4 依赖，确保邮件发送功能可用
 REQUIRED_CMDS=(exim4)

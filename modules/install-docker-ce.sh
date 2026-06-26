@@ -1,14 +1,18 @@
 #!/bin/bash
+# @module: install-docker-ce
+# @name: 安装 Docker
+# @category: 容器管理
+# @depends: apt,wget,curl,systemctl
+# @depend_modules: configure-sources
+# @version: 1.0.0
+# @order: 50
 # 功能：安装 Docker CE 社区版
 
 set -euo pipefail
 IFS=$'\n\t'
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-source "${SCRIPT_DIR}/lib/core/constants.sh"
-source "${SCRIPT_DIR}/lib/core/logging.sh"
-source "${SCRIPT_DIR}/lib/system/utils.sh"
-source "${SCRIPT_DIR}/lib/system/urls.sh"
+source "${SCRIPT_DIR}/lib/bootstrap.sh"
 
 # ==================== 函数定义 ====================
 

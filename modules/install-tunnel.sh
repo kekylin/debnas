@@ -1,4 +1,11 @@
 #!/bin/bash
+# @module: install-tunnel
+# @name: 安装 Tailscale
+# @category: 系统工具
+# @depends: curl,apt,systemctl
+# @depend_modules: configure-sources
+# @version: 1.0.0
+# @order: 74
 # 功能：安装并配置 Tailscale 内网穿透服务
 
 set -euo pipefail
@@ -6,10 +13,7 @@ IFS=$'\n\t'
 
 # 加载公共模块，确保依赖函数和常量可用
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-source "${SCRIPT_DIR}/lib/core/constants.sh"
-source "${SCRIPT_DIR}/lib/core/logging.sh"
-source "${SCRIPT_DIR}/lib/system/dependency.sh"
-source "${SCRIPT_DIR}/lib/system/utils.sh"
+source "${SCRIPT_DIR}/lib/bootstrap.sh"
 
 # 检查 curl、apt、systemctl 依赖，确保后续操作可用
 REQUIRED_CMDS=(curl apt systemctl)

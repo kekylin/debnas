@@ -1,14 +1,19 @@
 #!/bin/bash
+# @module: install-docker-apps
+# @name: 安装 Docker 应用
+# @category: 容器管理
+# @depends: docker
+# @depend_modules: install-docker-ce
+# @version: 1.0.0
+# @order: 52
 # 功能：交互式批量安装常用 Docker 容器应用（仅 compose 方式）
 
 set -euo pipefail
 IFS=$'\n\t'
 
 # 加载公共模块
-PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-source "${PROJECT_ROOT}/lib/core/constants.sh"
-source "${PROJECT_ROOT}/lib/core/logging.sh"
-source "${PROJECT_ROOT}/lib/system/dependency.sh"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "${SCRIPT_DIR}/lib/bootstrap.sh"
 
 # 容器配置文件
 CONTAINER_CONFIG="${PROJECT_ROOT}/config/containers.conf"

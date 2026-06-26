@@ -1,4 +1,10 @@
 #!/bin/bash
+# @module: install-service-query
+# @name: 查询服务状态
+# @category: 系统工具
+# @depends: systemctl,hostname,awk,dpkg
+# @version: 1.0.0
+# @order: 72
 # 功能：安装并配置服务状态查询工具
 
 set -euo pipefail
@@ -6,10 +12,7 @@ IFS=$'\n\t'
 
 # 加载公共模块，确保依赖函数和常量可用
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-source "${SCRIPT_DIR}/lib/core/constants.sh"
-source "${SCRIPT_DIR}/lib/core/logging.sh"
-source "${SCRIPT_DIR}/lib/system/dependency.sh"
-source "${SCRIPT_DIR}/lib/ui/styles.sh"
+source "${SCRIPT_DIR}/lib/bootstrap.sh"
 
 # 检查 systemctl、hostname、awk、dpkg 依赖，确保后续操作可用
 REQUIRED_CMDS=(systemctl hostname awk dpkg)

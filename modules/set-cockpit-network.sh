@@ -1,4 +1,11 @@
 #!/bin/bash
+# @module: set-cockpit-network
+# @name: 面板管理网络
+# @category: 管理面板
+# @depends: sed,systemctl
+# @depend_modules: install-cockpit
+# @version: 1.0.0
+# @order: 34
 # 功能：设置 Cockpit 管理网络
 
 set -euo pipefail
@@ -6,9 +13,7 @@ IFS=$'\n\t'
 
 # 加载公共模块，确保依赖函数和常量可用
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-source "${SCRIPT_DIR}/lib/core/constants.sh"
-source "${SCRIPT_DIR}/lib/core/logging.sh"
-source "${SCRIPT_DIR}/lib/system/dependency.sh"
+source "${SCRIPT_DIR}/lib/bootstrap.sh"
 
 # 检查 sed、systemctl 依赖，确保后续操作可用
 REQUIRED_CMDS=(sed systemctl)

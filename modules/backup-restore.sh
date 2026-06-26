@@ -1,4 +1,11 @@
 #!/bin/bash
+# @module: backup-restore
+# @name: 备份恢复
+# @category: 容器管理
+# @depends: docker,tar,rsync
+# @depend_modules: install-docker-ce
+# @version: 2.0.0
+# @order: 53
 # 功能：Docker 容器与数据卷的备份与恢复工具
 
 set -euo pipefail
@@ -6,11 +13,7 @@ IFS=$'\n\t'
 
 # 加载新项目公共库
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-source "${SCRIPT_DIR}/lib/core/constants.sh"
-source "${SCRIPT_DIR}/lib/core/logging.sh"
-source "${SCRIPT_DIR}/lib/system/dependency.sh"
-source "${SCRIPT_DIR}/lib/ui/menu.sh"
-source "${SCRIPT_DIR}/lib/ui/styles.sh"
+source "${SCRIPT_DIR}/lib/bootstrap.sh"
 
 # Docker 服务状态由全局变量维护，便于退出时恢复服务
 DOCKER_WAS_ACTIVE="inactive"

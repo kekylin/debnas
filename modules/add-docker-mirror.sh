@@ -1,4 +1,11 @@
 #!/bin/bash
+# @module: add-docker-mirror
+# @name: Docker 镜像加速
+# @category: 容器管理
+# @depends: docker
+# @depend_modules: install-docker-ce
+# @version: 1.0.0
+# @order: 51
 # 功能：为 Docker 配置国内镜像加速地址（多源，自动合并，自动重启）
 
 set -euo pipefail
@@ -6,10 +13,7 @@ IFS=$'\n\t'
 
 # 加载公共模块，确保依赖函数和常量可用
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-source "${SCRIPT_DIR}/lib/core/constants.sh"
-source "${SCRIPT_DIR}/lib/core/logging.sh"
-source "${SCRIPT_DIR}/lib/system/dependency.sh"
-source "${SCRIPT_DIR}/lib/system/urls.sh"
+source "${SCRIPT_DIR}/lib/bootstrap.sh"
 
 # 检查依赖，确保 Docker 已安装
 REQUIRED_CMDS=(docker)

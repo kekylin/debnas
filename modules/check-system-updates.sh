@@ -1,4 +1,13 @@
 #!/bin/bash
+# @module: check-system-updates
+# @name: 检查系统更新
+# @category: 系统工具
+# @depends: apt
+# @depend_modules: configure-sources
+# @version: 1.0.0
+# @order: 71
+# @cron: true
+# @cron_schedule: 0 6 * * *
 # 功能：系统更新检查与邮件通知（支持定时任务管理）
 
 set -euo pipefail
@@ -10,11 +19,7 @@ export LC_ALL="C.UTF-8"
 
 # 加载公共模块，确保依赖函数和常量可用
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-source "${SCRIPT_DIR}/lib/core/constants.sh"
-source "${SCRIPT_DIR}/lib/core/logging.sh"
-source "${SCRIPT_DIR}/lib/system/dependency.sh"
-source "${SCRIPT_DIR}/lib/system/utils.sh"
-source "${SCRIPT_DIR}/lib/ui/styles.sh"
+source "${SCRIPT_DIR}/lib/bootstrap.sh"
 
 # 检查依赖，确保必备命令已安装
 REQUIRED_CMDS=(apt grep awk mail systemctl)

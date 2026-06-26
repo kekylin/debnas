@@ -1,4 +1,10 @@
 #!/bin/bash
+# @module: acl-manager
+# @name: ACL 权限管理
+# @category: 系统工具
+# @depends: getfacl,setfacl
+# @version: 1.0.0
+# @order: 75
 # 功能：ACL权限管理工具（交互式菜单，支持批量、递归、用户/组/默认ACL等操作）
 
 set -euo pipefail
@@ -6,12 +12,7 @@ IFS=$'\n\t'
 
 # 加载公共库，确保依赖函数和常量可用
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-source "${SCRIPT_DIR}/lib/core/constants.sh"
-source "${SCRIPT_DIR}/lib/core/logging.sh"
-source "${SCRIPT_DIR}/lib/system/dependency.sh"
-source "${SCRIPT_DIR}/lib/system/tempfile.sh"
-source "${SCRIPT_DIR}/lib/ui/menu.sh"
-source "${SCRIPT_DIR}/lib/ui/styles.sh"
+source "${SCRIPT_DIR}/lib/bootstrap.sh"
 
 # 临时文件管理
 register_temp_cleanup

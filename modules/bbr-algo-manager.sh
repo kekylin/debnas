@@ -1,14 +1,17 @@
 #!/bin/bash
+# @module: bbr-algo-manager
+# @name: BBR 算法管理
+# @category: 系统工具
+# @depends: sysctl
+# @version: 1.0.0
+# @order: 76
 # BBR 拥塞控制算法管理工具
 
 set -euo pipefail
 IFS=$'\n\t'
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-source "${SCRIPT_DIR}/lib/core/constants.sh"
-source "${SCRIPT_DIR}/lib/core/logging.sh"
-source "${SCRIPT_DIR}/lib/system/utils.sh"
-source "${SCRIPT_DIR}/lib/ui/styles.sh"
+source "${SCRIPT_DIR}/lib/bootstrap.sh"
 
 readonly BBR_MODULE="tcp_bbr"
 readonly BBR_ALGO="bbr"

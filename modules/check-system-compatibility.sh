@@ -1,4 +1,9 @@
 #!/bin/bash
+# @module: check-system-compatibility
+# @name: 检查兼容性
+# @category: 系统工具
+# @version: 1.0.0
+# @order: 70
 # 功能：系统兼容性检查工具（检查系统是否满足项目脚本运行要求）
 
 set -euo pipefail
@@ -6,11 +11,7 @@ IFS=$'\n\t'
 
 # 加载公共模块，确保依赖函数和常量可用
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-source "${SCRIPT_DIR}/lib/core/constants.sh"
-source "${SCRIPT_DIR}/lib/core/logging.sh"
-source "${SCRIPT_DIR}/lib/system/dependency.sh"
-source "${SCRIPT_DIR}/lib/system/utils.sh"
-source "${SCRIPT_DIR}/lib/system/urls.sh"
+source "${SCRIPT_DIR}/lib/bootstrap.sh"
 
 # 检查依赖，确保必备命令已安装
 REQUIRED_CMDS=(awk grep df uname curl)

@@ -1,15 +1,17 @@
 #!/bin/bash
+# @module: configure-sources
+# @name: 配置软件源
+# @category: 基础系统
+# @depends: wget,apt
+# @version: 1.0.0
+# @order: 10
 # 功能：自动配置 Debian 软件源（DEB822 格式）
 
 set -euo pipefail
 IFS=$'\n\t'
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-source "${SCRIPT_DIR}/lib/core/constants.sh"
-source "${SCRIPT_DIR}/lib/core/logging.sh"
-source "${SCRIPT_DIR}/lib/system/dependency.sh"
-source "${SCRIPT_DIR}/lib/system/utils.sh"
-source "${SCRIPT_DIR}/lib/system/urls.sh"
+source "${SCRIPT_DIR}/lib/bootstrap.sh"
 
 readonly DEB822_PATH="/etc/apt/sources.list.d/debian.sources"
 readonly TRADITIONAL_PATH="/etc/apt/sources.list"

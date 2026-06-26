@@ -1,4 +1,11 @@
 #!/bin/bash
+# @module: install-vm-components
+# @name: 安装虚拟机组件
+# @category: 管理面板
+# @depends: apt,systemctl
+# @depend_modules: install-cockpit
+# @version: 1.0.0
+# @order: 31
 # 功能：安装虚拟机管理组件
 
 set -euo pipefail
@@ -6,10 +13,7 @@ IFS=$'\n\t'
 
 # 加载公共模块
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-source "${SCRIPT_DIR}/lib/core/constants.sh"
-source "${SCRIPT_DIR}/lib/core/logging.sh"
-source "${SCRIPT_DIR}/lib/system/utils.sh"
-source "${SCRIPT_DIR}/lib/system/apt-pinning.sh"
+source "${SCRIPT_DIR}/lib/bootstrap.sh"
 
 # 获取系统版本代号
 SYSTEM_CODENAME=$(get_system_codename)

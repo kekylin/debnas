@@ -1,12 +1,17 @@
 #!/bin/bash
+# @module: setup-homenas-secure
+# @name: 一键部署安全环境
+# @category: 一键部署
+# @depend_modules: configure-sources,install-basic-tools,install-cockpit,configure-security
+# @version: 1.0.0
+# @order: 81
 # 功能：一键配置 HomeNAS 安全版（批量自动化执行基础+安全+邮件等模块）
 
 set -euo pipefail
 IFS=$'\n\t'
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-source "${SCRIPT_DIR}/lib/core/constants.sh"
-source "${SCRIPT_DIR}/lib/core/logging.sh"
+source "${SCRIPT_DIR}/lib/bootstrap.sh"
 
 # 依次批量执行安全版所需模块，提升初始化与安全防护效率
 MODULES=(

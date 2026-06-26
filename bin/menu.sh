@@ -256,25 +256,156 @@ compat_menu_loop() {
   done
 }
 
-# ==================== 自动发现模式菜单（Phase 3 启用） ====================
+# ==================== 自动发现模式菜单 ====================
 
-# 显示自动发现模式的主菜单
-# 此函数在 Phase 3 模块元数据添加完毕后启用
-show_auto_main_menu() {
-  print_banner
+# 构建当前有效分类列表（只包含有模块的分类）
+declare -a ACTIVE_CATEGORIES=()
 
-  local cat_idx=1
+build_active_categories() {
+  ACTIVE_CATEGORIES=()
   for category in "${MENU_CATEGORY_ORDER[@]}"; do
     local -a modules
     mapfile -t modules < <(get_modules_by_category "$category" 2>/dev/null)
     if [[ ${#modules[@]} -gt 0 ]]; then
-      print_main_menu_item "$cat_idx" "$category"
-      ((cat_idx++))
+      ACTIVE_CATEGORIES+=("$category")
     fi
+  done
+}
+
+# 显示自动发现模式的主菜单
+show_auto_main_menu() {
+  print_banner
+
+  local i
+  for i in "${!ACTIVE_CATEGORIES[@]}"; do
+    print_main_menu_item "$((i+1))" "${ACTIVE_CATEGORIES[$i]}"
   done
 
   print_menu_item "0" "退出" "true"
   print_separator "="
+}
+
+# 显示自动发现模式的子菜单
+show_auto_sub_menu() {
+  local category="$1"
+  local -a modules
+  mapfile -t modules < <(get_modules_by_category "$category" 2>/dev/null)
+
+  print_submenu_title "$category"
+  local idx=1
+  for module_name in "${modules[@]}"; do
+    local display_name
+    display_name=$(get_module_field "$module_name" "name" "$module_name" 2>/dev/null) || display_name="$module_name"
+    print_menu_item "$idx" "$display_name"
+    ((idx++))
+  done
+  print_menu_item "0" "返回" "true"
+  print_separator "-"
+  print_multiselect_prompt
+}
+
+# 执行自动发现模式选择的模块
+execute_auto_modules() {
+  local category="$1"
+  shift
+  local -a selected_modules=("$@")
+
+  for module_name in "${selected_modules[@]}"; do
+    local display_name
+    display_name=$(get_module_field "$module_name" "name" "$module_name" 2>/dev/null) || display_name="$module_name"
+    local mod_path
+    mod_path=$(get_module_path "$module_name" 2>/dev/null) || {
+      log_fail "模块 \"$display_name\" 路径不存在，已跳过"
+      continue
+    }
+
+    log_action "正在执行模块：\"$display_name\""
+    if ! bash "$mod_path"; then
+      log_fail "模块 \"$display_name\" 执行失败，已中断"
+      break
+    fi
+    log_success "模块 \"$display_name\" 执行完成"
+  done
+}
+
+# 自动发现模式子菜单处理
+handle_auto_sub_menu() {
+  local category="$1"
+  local -a modules
+  mapfile -t modules < <(get_modules_by_category "$category" 2>/dev/null)
+
+  while true; do
+    show_auto_sub_menu "$category"
+    print_prompt "请选择编号: "
+    read -r sub_choices
+
+    [[ -z "$sub_choices" ]] && {
+      log_fail "输入为空，请重新输入"
+      continue
+    }
+
+    local -a choices_array
+    IFS=' ' read -ra choices_array <<< "$sub_choices"
+
+    # 验证输入
+    local valid=true
+    for choice in "${choices_array[@]}"; do
+      if ! [[ "$choice" =~ ^[0-9]+$ ]]; then
+        log_fail "仅支持数字编号"
+        valid=false
+        break
+      fi
+    done
+    [[ "$valid" == "false" ]] && continue
+
+    # 处理返回
+    [[ " $sub_choices " =~ " 0 " ]] && break
+
+    # 收集选择
+    local -a selected=()
+    for choice in "${choices_array[@]}"; do
+      if [[ "$choice" -ge 1 && "$choice" -le "${#modules[@]}" ]]; then
+        selected+=("${modules[$((choice-1))]}")
+      fi
+    done
+
+    if [[ ${#selected[@]} -eq 0 ]]; then
+      log_fail "无效选择，请重新输入"
+      continue
+    fi
+
+    execute_auto_modules "$category" "${selected[@]}"
+    break
+  done
+}
+
+# 自动发现模式主循环
+auto_menu_loop() {
+  build_active_categories
+
+  while true; do
+    show_auto_main_menu
+    print_prompt "请选择编号: "
+    read -r main_choice
+
+    if ! [[ "$main_choice" =~ ^[0-9]+$ ]]; then
+      log_fail "请输入数字编号"
+      continue
+    fi
+
+    if [[ "$main_choice" == "0" ]]; then
+      log_action "用户选择退出"
+      exit 0
+    fi
+
+    if [[ "$main_choice" -lt 1 || "$main_choice" -gt "${#ACTIVE_CATEGORIES[@]}" ]]; then
+      log_fail "无效选择"
+      continue
+    fi
+
+    local category="${ACTIVE_CATEGORIES[$((main_choice-1))]}"
+    handle_auto_sub_menu "$category"
+  done
 }
 
 # ==================== 环境设置 ====================
@@ -301,8 +432,9 @@ main() {
     exit "${ERROR_UNSUPPORTED_OS}"
   fi
 
-  # 当前使用兼容模式（Phase 3 后切换为自动发现模式）
-  compat_menu_loop
+  # 发现模块并使用自动发现模式
+  discover_modules 2>/dev/null
+  auto_menu_loop
 }
 
 main "$@"

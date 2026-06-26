@@ -1,4 +1,10 @@
 #!/bin/bash
+# @module: configure-security
+# @name: 基础安全配置
+# @category: 安全防护
+# @depends: sed,grep,systemctl,mkdir,chmod
+# @version: 1.0.0
+# @order: 40
 # 功能：配置基础系统安全防护（su限制、超时登出、操作日志等）
 
 set -euo pipefail
@@ -6,9 +12,7 @@ IFS=$'\n\t'
 
 # 加载公共模块，确保依赖函数和常量可用
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-source "${SCRIPT_DIR}/lib/core/constants.sh"
-source "${SCRIPT_DIR}/lib/core/logging.sh"
-source "${SCRIPT_DIR}/lib/system/dependency.sh"
+source "${SCRIPT_DIR}/lib/bootstrap.sh"
 
 # 检查依赖，确保必备命令已安装
 REQUIRED_CMDS=(sed grep systemctl mkdir chmod)

@@ -1,4 +1,13 @@
 #!/bin/bash
+# @module: block-threat-ips
+# @name: IP 封禁工具
+# @category: 安全防护
+# @depends: firewall-cmd,ipset,wget,gzip,awk,sed,grep,sort,comm,head,crontab,sipcalc
+# @depend_modules: install-firewall
+# @version: 2.0.0
+# @order: 43
+# @cron: true
+# @cron_schedule: 0 */6 * * *
 # Firewalld-IPThreat 自动化威胁情报更新系统
 
 set -euo pipefail

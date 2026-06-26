@@ -1,4 +1,11 @@
 #!/bin/bash
+# @module: install-cockpit
+# @name: 安装 Cockpit
+# @category: 管理面板
+# @depends: curl,apt,systemctl
+# @depend_modules: configure-sources,install-basic-tools
+# @version: 3.0.0
+# @order: 30
 # 功能：安装 Cockpit 及 45Drives 组件（支持 Debian 12/13）
 # 说明：Debian 12 通过官方仓库安装；Debian 13 通过本地 .deb 安装。
 
@@ -7,12 +14,7 @@ IFS=$'\n\t'
 
 # 加载公共模块
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-source "${SCRIPT_DIR}/lib/core/constants.sh"
-source "${SCRIPT_DIR}/lib/core/logging.sh"
-source "${SCRIPT_DIR}/lib/system/tempfile.sh"
-source "${SCRIPT_DIR}/lib/system/utils.sh"
-source "${SCRIPT_DIR}/lib/system/apt-pinning.sh"
-source "${SCRIPT_DIR}/lib/system/urls.sh"
+source "${SCRIPT_DIR}/lib/bootstrap.sh"
 
 BEST_GITHUB_PROXY_SELECTION_STATE=""
 BEST_GITHUB_PROXY=""

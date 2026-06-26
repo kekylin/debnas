@@ -1,4 +1,13 @@
 #!/bin/bash
+# @module: cockpit-auto-bing-wallpaper
+# @name: 面板必应壁纸
+# @category: 管理面板
+# @depends: wget,systemctl,crontab
+# @depend_modules: install-cockpit
+# @version: 1.0.0
+# @order: 35
+# @cron: true
+# @cron_schedule: 0 */6 * * *
 # Cockpit 登录页 必应每日壁纸自动管理脚本
 
 set -euo pipefail
