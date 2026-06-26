@@ -51,8 +51,8 @@ DebNAS — Debian NAS 自动化部署工具
 示例:
   debnas                               # 启动交互菜单
   debnas install configure-sources     # 配置软件源
-  debnas --debug install install-docker-ce   # 调试模式安装 Docker
-  debnas --dry-run install install-firewall  # 预览防火墙安装（不执行）
+  debnas --debug install docker              # 调试模式安装 Docker
+  debnas --dry-run install firewall          # 预览防火墙安装（不执行）
   debnas doctor                        # 运行系统诊断
   debnas cron list                     # 查看定时任务
 

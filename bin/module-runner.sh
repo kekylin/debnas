@@ -274,8 +274,9 @@ main() {
   local module_name="${args[0]}"
   local -a module_args=("${args[@]:1}")
 
-  # 发现并验证模块
+  # 发现模块并解析短名称
   discover_modules 2>/dev/null
+  module_name=$(resolve_module_name "$module_name") || true
   if ! module_exists "$module_name"; then
     log_error "模块不存在：${module_name}"
     echo ""

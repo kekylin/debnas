@@ -398,6 +398,39 @@ resolve_module_deps() {
   printf '%s\n' "${result[@]}"
 }
 
+# 将用户输入的短名称解析为完整模块名
+# 匹配规则：精确匹配 → install- 前缀 → configure- 前缀 → setup- 前缀
+# 示例：firewall → install-firewall, sources → configure-sources
+# 参数：$1 - 用户输入的模块名
+# 输出：解析后的完整模块名
+resolve_module_name() {
+  local input="${1:?resolve_module_name: 缺少模块名}"
+
+  if [[ "$_MODULES_DISCOVERED" -eq 0 ]]; then
+    discover_modules
+  fi
+
+  # 1. 精确匹配
+  if [[ -n "${_MODULE_REGISTRY["${input}.path"]:-}" ]]; then
+    echo "$input"
+    return 0
+  fi
+
+  # 2. 尝试常见前缀
+  local prefix
+  for prefix in install configure setup enable disable add; do
+    local candidate="${prefix}-${input}"
+    if [[ -n "${_MODULE_REGISTRY["${candidate}.path"]:-}" ]]; then
+      echo "$candidate"
+      return 0
+    fi
+  done
+
+  # 3. 未找到
+  echo "$input"
+  return 1
+}
+
 # 检查模块是否存在（已发现）
 # 参数：$1 - 模块名
 # 返回：0 存在，1 不存在
