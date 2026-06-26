@@ -7,7 +7,8 @@ set -euo pipefail
 IFS=$'\n\t'
 
 # 获取项目根目录
-_DEBNAS_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+_DEBNAS_SCRIPT="$(readlink -f "${BASH_SOURCE[0]}")"
+_DEBNAS_ROOT="$(cd "$(dirname "${_DEBNAS_SCRIPT}")/.." && pwd)"
 
 # 加载统一库
 source "${_DEBNAS_ROOT}/lib/bootstrap.sh"

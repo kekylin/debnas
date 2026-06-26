@@ -14,7 +14,8 @@ set -euo pipefail
 IFS=$'\n\t'
 
 # 获取项目根目录
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+_DEBNAS_SCRIPT="$(readlink -f "${BASH_SOURCE[0]}")"
+SCRIPT_DIR="$(cd "$(dirname "${_DEBNAS_SCRIPT}")/.." && pwd)"
 
 # 转发到新的 CLI 调度器（将 --tmpdir 等旧参数过滤掉）
 exec bash "${SCRIPT_DIR}/bin/debnas" menu "$@"
