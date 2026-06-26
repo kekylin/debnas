@@ -264,23 +264,20 @@ restart_cockpit() {
   fi
 }
 
-# 定时任务配置
+# 定时任务配置（使用统一 cron 框架）
 add_cron_job() {
-  local cron_expr="$1" tmp_cron script_identifier="cockpit-bing-wallpaper"
-  
-  create_script_copy
-  tmp_cron=$(create_temp_file "cron")
-  crontab -l 2>/dev/null | grep -v "$script_identifier" > "$tmp_cron" || true
-  echo "$cron_expr $SCRIPT_COPY --auto # $script_identifier" >> "$tmp_cron"
-  crontab "$tmp_cron"
-  rm -f "$tmp_cron"
-  
-  log_to_file log_success "定时任务已添加：$cron_expr"
+  local cron_expr="$1"
+
+  if cron_register "cockpit-auto-bing-wallpaper" "$cron_expr" 2>/dev/null; then
+    log_to_file log_success "定时任务已添加：$cron_expr"
+  else
+    log_to_file log_error "定时任务注册失败"
+    return 1
+  fi
 }
 
 disable_bing_wallpaper() {
-  local script_identifier="cockpit-bing-wallpaper"
-  crontab -l 2>/dev/null | grep -v "$script_identifier" | crontab - || true
+  cron_unregister "cockpit-auto-bing-wallpaper" 2>/dev/null || true
   rm -rf "$BRANDING_DIR"
   echo "基于Debian搭建 HomeNAS" > "$ISSUE_FILE"
   restart_cockpit
@@ -289,7 +286,11 @@ disable_bing_wallpaper() {
 
 show_cron_jobs() {
   log_info "当前定时任务："
-  crontab -l 2>/dev/null || echo "(无定时任务)"
+  if cron_is_registered "cockpit-auto-bing-wallpaper" 2>/dev/null; then
+    cron_list 2>/dev/null | grep "cockpit-auto-bing-wallpaper" || log_info "已注册（使用 debnas cron list 查看）"
+  else
+    echo "(无定时任务)"
+  fi
 }
 
 # 功能启用

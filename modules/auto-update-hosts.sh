@@ -13,24 +13,16 @@
 set -euo pipefail
 IFS=$'\n\t'
 
-# 确定运行模式：定时任务（auto_update_hosts）或交互模式
-CRON_MODE=0
+# 确定运行模式：cron 模式或交互模式
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "${SCRIPT_DIR}/lib/bootstrap.sh"
+
+# CRON_MODE 兼容：映射到框架的 DEBNAS_CRON_MODE
+CRON_MODE="${DEBNAS_CRON_MODE:-0}"
+
+# 兼容旧版参数（auto_update_hosts → cron 模式）
 if [[ "${1:-}" == "auto_update_hosts" ]]; then
   CRON_MODE=1
-fi
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-
-# 根据运行模式加载不同的库
-if [[ $CRON_MODE -eq 1 ]]; then
-  :
-else
-  source "${SCRIPT_DIR}/lib/core/constants.sh"
-  source "${SCRIPT_DIR}/lib/core/logging.sh"
-  source "${SCRIPT_DIR}/lib/system/dependency.sh"
-  source "${SCRIPT_DIR}/lib/system/utils.sh"
-  source "${SCRIPT_DIR}/lib/ui/menu.sh"
-  source "${SCRIPT_DIR}/lib/ui/styles.sh"
 fi
 
 # 全局配置
@@ -1032,41 +1024,24 @@ check_required_dependencies() {
 # 创建定时任务
 # 返回：0 成功，非 0 失败
 create_cron_job() {
-  local script_path
-  local cron_job
-
-  if [[ -n "${USER:-}" ]]; then
-    local user_home
-    user_home=$(getent passwd "$USER" 2>/dev/null | cut -d: -f6 || echo "$HOME")
-    script_path="${user_home}/.debnas_hosts_update.sh"
-  else
-    script_path="${HOME}/.debnas_hosts_update.sh"
-  fi
-
-  if crontab -l 2>/dev/null | grep -q "# DebNAS Hosts Update"; then
-    log_action "定时任务已存在，正在删除旧任务..."
-    crontab -l 2>/dev/null | grep -v "# DebNAS Hosts Update" | crontab - || true
-  fi
-
   if ! update_hosts; then
     log_fail "取消创建定时任务。"
     return 1
   fi
 
-  cp "$0" "$script_path"
-  chmod +x "$script_path"
-
-  cron_job="0 0,6,12,18 * * * /bin/bash $script_path auto_update_hosts # DebNAS Hosts Update"
-  (crontab -l 2>/dev/null; echo "$cron_job") | crontab -
-
-  log_success "定时任务已创建，每天0点、6点、12点和18点自动执行。"
-  log_success "hosts 自动更新相关配置已全部完成。"
+  # 使用统一 cron 框架注册定时任务
+  if cron_register "auto-update-hosts" "0 0,6,12,18 * * *" 2>/dev/null; then
+    log_success "定时任务已创建，每天0点、6点、12点和18点自动执行。"
+    log_success "hosts 自动更新相关配置已全部完成。"
+  else
+    log_fail "定时任务注册失败。"
+    return 1
+  fi
   return 0
 }
 
 remove_cron_job() {
-  if crontab -l 2>/dev/null | grep -q "# DebNAS Hosts Update"; then
-    crontab -l 2>/dev/null | grep -v "# DebNAS Hosts Update" | crontab - || true
+  if cron_unregister "auto-update-hosts" 2>/dev/null; then
     log_success "定时任务已删除。"
   else
     log_info "未找到定时任务。"
@@ -1075,8 +1050,8 @@ remove_cron_job() {
 
 list_cron_jobs() {
   log_info "定时任务如下："
-  if crontab -l 2>/dev/null | grep -q "# DebNAS Hosts Update"; then
-    crontab -l 2>/dev/null | grep "# DebNAS Hosts Update"
+  if cron_is_registered "auto-update-hosts" 2>/dev/null; then
+    cron_list 2>/dev/null | grep "auto-update-hosts" || log_info "已注册（使用 debnas cron list 查看）"
   else
     log_info "当前没有 hosts 更新定时任务。"
   fi

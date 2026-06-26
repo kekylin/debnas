@@ -854,20 +854,9 @@ enable_auto_update() {
   }
   chmod 644 "${CONFIG_FILE}" 2>/dev/null
 
-  cp -f "$0" "${CRON_SCRIPT_PATH}" || {
-    log_message "ERROR" "复制脚本失败：${CRON_SCRIPT_PATH}"
-    return 1
-  }
-  chmod 755 "${CRON_SCRIPT_PATH}" 2>/dev/null
-
-  local temp_cron
-  temp_cron=$(create_temp_file "cron")
-  crontab -l > "${temp_cron}" 2>/dev/null || true
-  sed -i '/# IPThreat Firewalld Update/d' "${temp_cron}"
-  printf "%s /bin/bash %s --cron # IPThreat Firewalld Update\n" \
-    "${cron_schedule}" "${CRON_SCRIPT_PATH}" >> "${temp_cron}"
-  if ! crontab "${temp_cron}"; then
-    log_message "ERROR" "设置 crontab 失败（请检查 cron 服务）"
+  # 使用统一 cron 框架注册定时任务（替代自行管理 crontab）
+  if ! cron_register "block-threat-ips" "${cron_schedule}" 2>/dev/null; then
+    log_message "ERROR" "设置定时任务失败（请检查 cron 服务）"
     return 1
   fi
   log_message "SUCCESS" \
@@ -880,14 +869,8 @@ enable_auto_update() {
 }
 
 disable_auto_update() {
-  local temp_cron
-  temp_cron=$(create_temp_file "cron")
-  crontab -l > "${temp_cron}" 2>/dev/null || true
-  sed -i '/# IPThreat Firewalld Update/d' "${temp_cron}"
-  if ! crontab "${temp_cron}"; then
-    log_message "ERROR" "移除 crontab 失败（请检查 cron 服务）"
-    exit "${ERROR_GENERAL}"
-  fi
+  # 使用统一 cron 框架移除定时任务（替代自行管理 crontab）
+  cron_unregister "block-threat-ips" 2>/dev/null || true
 
   remove_all_ips || {
     log_message "WARNING" "清理防火墙配置时出现警告，继续执行清理"
@@ -900,12 +883,10 @@ disable_auto_update() {
       exit "${ERROR_GENERAL}"
     }
   fi
+  # CRON_SCRIPT_PATH 清理（兼容旧版安装残留的文件）
   if [[ -f "${CRON_SCRIPT_PATH}" ]]; then
-    log_message "INFO" "删除脚本文件：${CRON_SCRIPT_PATH}"
-    rm -f "${CRON_SCRIPT_PATH}" || {
-      log_message "ERROR" "删除脚本文件失败：${CRON_SCRIPT_PATH}"
-      exit "${ERROR_GENERAL}"
-    }
+    log_message "INFO" "删除旧版脚本文件：${CRON_SCRIPT_PATH}"
+    rm -f "${CRON_SCRIPT_PATH}" 2>/dev/null || true
   fi
   if [[ -d "${DATA_DIR}" ]]; then
     if [[ -z "$(ls -A "${DATA_DIR}" 2>/dev/null)" ]]; then
@@ -920,15 +901,11 @@ disable_auto_update() {
 }
 
 view_cron_jobs() {
-  local cron_jobs
-  cron_jobs=$(crontab -l 2>/dev/null \
-    | grep '# IPThreat Firewalld Update' || true)
-  if [[ -z "${cron_jobs}" ]]; then
-    log_message "INFO" "未设置任何与 IPThreat Firewalld 相关的定时任务"
+  if cron_is_registered "block-threat-ips" 2>/dev/null; then
+    cron_list 2>/dev/null | grep "block-threat-ips" || \
+      log_message "INFO" "定时任务已注册（使用 debnas cron list 查看详情）"
   else
-    printf "%s\n" "${cron_jobs}" | while IFS= read -r line; do
-      log_message "INFO" "定时任务：${line}"
-    done
+    log_message "INFO" "未设置任何与 IPThreat Firewalld 相关的定时任务"
   fi
 }
 

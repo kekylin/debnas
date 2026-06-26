@@ -315,31 +315,37 @@ execute_update_check() {
   sleep 2
 }
 
-# 配置 cron 定时任务
+# 配置 cron 定时任务（使用统一 cron 框架）
 set_cron_task() {
   local schedule="$1" cron
-  local script_path=$(setup_script_file) || return 1
-  rm -f "$CRON_TASK_FILE" 2>/dev/null
   [[ "$schedule" == "daily" ]] && cron="0 0 * * *" || cron="0 0 * * 1"
-  echo "$cron root $script_path --check" > "$CRON_TASK_FILE"
-  chmod 644 "$CRON_TASK_FILE"
-  systemctl restart cron
-  [[ "$schedule" == "daily" ]] && log_success "已设置每日检测任务" || log_success "已设置每周检测任务"
-  sleep 1
+
+  # 清理旧版 cron.d 文件（兼容迁移）
+  rm -f "$CRON_TASK_FILE" 2>/dev/null || true
+
+  if cron_register "check-system-updates" "$cron" 2>/dev/null; then
+    [[ "$schedule" == "daily" ]] && log_success "已设置每日检测任务" || log_success "已设置每周检测任务"
+  else
+    log_error "设置定时任务失败"
+    return 1
+  fi
 }
 
-# 配置自定义 cron 定时任务
+# 配置自定义 cron 定时任务（使用统一 cron 框架）
 set_custom_cron_task() {
-  local script_path=$(setup_script_file) || return 1
   local cron
   read -p "请输入 cron 表达式（示例：0 0 * * * 表示每日00:00）： " cron
   validate_cron_expression "$cron" || return 1
-  rm -f "$CRON_TASK_FILE" 2>/dev/null
-  echo "$cron root $script_path --check" > "$CRON_TASK_FILE"
-  chmod 644 "$CRON_TASK_FILE"
-  systemctl restart cron
-  log_success "已设置自定义检测任务（${cron}）"
-  sleep 1
+
+  # 清理旧版 cron.d 文件（兼容迁移）
+  rm -f "$CRON_TASK_FILE" 2>/dev/null || true
+
+  if cron_register "check-system-updates" "$cron" 2>/dev/null; then
+    log_success "已设置自定义检测任务（${cron}）"
+  else
+    log_error "设置定时任务失败"
+    return 1
+  fi
 }
 
 # 列出当前 cron 定时任务
