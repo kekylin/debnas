@@ -1,0 +1,18 @@
+# docker_backup.conf 配置文件
+#
+# 此文件用于配置 Docker 备份脚本的行为。
+# 请确保配置文件格式正确，否则脚本将无法正常运行。
+# 所有路径必须是绝对路径（以 / 开头）。
+
+# BACKUP_DIRS: 需要备份的目录列表，以空格分隔。
+# 示例：BACKUP_DIRS="/var/lib/docker /etc/docker /opt/docker"
+BACKUP_DIRS="/var/lib/docker /etc/docker /opt/docker"
+
+# BACKUP_DEST: 备份文件存储的根路径。
+# 建议设置在系统盘以外的路径，如 /mnt/backup 或 /media/backup。
+# 示例：BACKUP_DEST="/mnt/backup"
+BACKUP_DEST=""
+
+# EXCLUDE_DIRS: 在备份时需要排除的目录列表，以空格分隔。
+# 示例：EXCLUDE_DIRS="/var/lib/docker/tmp /opt/docker/cache"
+EXCLUDE_DIRS="" 
