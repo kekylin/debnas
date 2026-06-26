@@ -252,7 +252,7 @@ main() {
         continue
       fi
       log_info "执行依赖模块：${dep}"
-      if ! bash "${_DEBNAS_ROOT}/bin/module-runner.sh" "$dep"; then
+      if ! (unset _DEBNAS_BOOTSTRAPPED; bash "${_DEBNAS_ROOT}/bin/module-runner.sh" "$dep"); then
         log_error "依赖模块 ${dep} 执行失败，当前模块已跳过"
         return 1
       fi
