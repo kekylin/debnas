@@ -16,7 +16,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${SCRIPT_DIR}/lib/bootstrap.sh"
 
 # 容器配置文件
-CONTAINER_CONFIG="${PROJECT_ROOT}/config/containers.conf"
+CONTAINER_CONFIG="${SCRIPT_DIR}/config/containers.conf"
 
 # 检查依赖
 REQUIRED_CMDS=(docker curl)
@@ -26,7 +26,7 @@ if ! check_dependencies "${REQUIRED_CMDS[@]}"; then
 fi
 
 # 检查 compose 目录
-COMPOSE_DIR="${PROJECT_ROOT}/docker-compose"
+COMPOSE_DIR="${SCRIPT_DIR}/docker-compose"
 if [[ ! -d "$COMPOSE_DIR" ]]; then
   log_error "compose 目录不存在：$COMPOSE_DIR。"
   exit "${ERROR_GENERAL}"
