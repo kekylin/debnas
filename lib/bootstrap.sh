@@ -65,6 +65,16 @@ if [[ "${DEBNAS_CRON_MODE:-0}" -eq 0 ]]; then
   source "${_DEBNAS_ROOT}/lib/ui/menu.sh"
 fi
 
+# ==================== i18n ====================
+
+_debnas_lang="${DEBNAS_LANG:-zh}"
+if [[ -f "${_DEBNAS_ROOT}/lib/i18n/${_debnas_lang}.sh" ]]; then
+  source "${_DEBNAS_ROOT}/lib/i18n/${_debnas_lang}.sh"
+else
+  source "${_DEBNAS_ROOT}/lib/i18n/zh.sh"
+fi
+unset _debnas_lang
+
 # ==================== Module Registry ====================
 
 source "${_DEBNAS_ROOT}/lib/system/module-registry.sh"

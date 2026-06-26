@@ -1,0 +1,42 @@
+#!/bin/bash
+# i18n: 中文消息（默认语言）
+
+# 菜单和分类
+MSG_CAT_BASIC="基础系统"
+MSG_CAT_PANEL="管理面板"
+MSG_CAT_SECURITY="安全防护"
+MSG_CAT_CONTAINER="容器管理"
+MSG_CAT_NOTIFY="通知服务"
+MSG_CAT_TOOLS="系统工具"
+MSG_CAT_DEPLOY="一键部署"
+
+# 通用消息
+MSG_EXIT="退出"
+MSG_BACK="返回"
+MSG_SELECT="请选择编号: "
+MSG_MULTISELECT="支持多选，空格分隔多个编号"
+MSG_INVALID_INPUT="请输入数字编号"
+MSG_INVALID_CHOICE="无效选择"
+MSG_CONFIRM="确认继续？[y/N]: "
+MSG_CANCELLED="已取消"
+
+# 状态消息
+MSG_INSTALLED="已安装"
+MSG_SKIPPED="已跳过"
+MSG_COMPLETED="执行完成"
+MSG_FAILED="执行失败"
+
+# 安装相关
+MSG_INSTALLING="正在安装"
+MSG_CONFIGURING="正在配置"
+MSG_DOWNLOADING="正在下载"
+MSG_CHECKING="正在检查"
+
+# Doctor 诊断
+MSG_DOCTOR_SYSTEM="系统兼容性"
+MSG_DOCTOR_DISK="磁盘空间"
+MSG_DOCTOR_APT="APT 软件源"
+MSG_DOCTOR_NETWORK="网络连通性"
+MSG_DOCTOR_STATUS="DebNAS 状态"
+MSG_DOCTOR_SERVICES="关键服务"
+MSG_DOCTOR_DONE="诊断完成"
