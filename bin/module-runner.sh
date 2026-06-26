@@ -171,10 +171,12 @@ main() {
   # 解析全局参数
   parse_global_args "$@"
 
-  # 获取剩余参数
+  # 获取剩余参数（临时恢复空格分隔）
   local -a args=()
   if [[ -n "${DEBNAS_REMAINING_ARGS:-}" ]]; then
-    read -ra args <<< "$DEBNAS_REMAINING_ARGS"
+    local _old_ifs="${IFS}"
+    IFS=' ' read -ra args <<< "$DEBNAS_REMAINING_ARGS"
+    IFS="${_old_ifs}"
   fi
 
   if [[ ${#args[@]} -eq 0 ]]; then
