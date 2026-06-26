@@ -166,9 +166,13 @@ parse_global_args() {
     esac
   done
 
-  # 将剩余参数存入全局变量供调用方使用（用空格连接，不受 IFS 影响）
+  # 将剩余参数序列化（printf %q 安全转义，保留引号边界）
   export DEBNAS_REMAINING_ARGS
-  DEBNAS_REMAINING_ARGS="$(IFS=' '; echo "${remaining_args[*]:-}")"
+  if [[ ${#remaining_args[@]} -gt 0 ]]; then
+    DEBNAS_REMAINING_ARGS="$(printf '%q ' "${remaining_args[@]}")"
+  else
+    DEBNAS_REMAINING_ARGS=""
+  fi
   return 0
 }
 

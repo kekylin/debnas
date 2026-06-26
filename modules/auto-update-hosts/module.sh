@@ -29,6 +29,9 @@ source "${MODULE_DIR}/connectivity.sh"
 source "${MODULE_DIR}/hosts-manager.sh"
 source "${MODULE_DIR}/cron.sh"
 
+# 导出函数供并行子 shell 使用（所有子模块加载完毕后统一导出）
+export -f resolve_domain get_ip_type test_https_connectivity test_tcp_connectivity test_ping_connectivity test_ip_connectivity 2>/dev/null || true
+
 declare -Ar DNS_IP_BY_NAME=(
   ["AliDNS"]="223.5.5.5"
   ["TencentDNS"]="119.29.29.29"

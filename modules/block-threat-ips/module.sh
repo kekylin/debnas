@@ -59,7 +59,7 @@ log_message() {
 # 交互模式：由 tempfile.sh 库统一管理（register_temp_cleanup / create_temp_file）
 # 定时任务模式：使用最小化自包含实现
 if [[ "${RUN_MODE}" == "cron" ]]; then
-  DEBNAS_TMP_BASE="${DEBNAS_TMP_BASE:-/tmp/debnas}"
+  # DEBNAS_TMP_BASE 已由 tempfile.sh (bootstrap) 定义为 readonly，直接使用
   declare -a _DEBNAS_TEMP_FILES=()
   declare -g _DEBNAS_NORMAL_EXIT=0
 

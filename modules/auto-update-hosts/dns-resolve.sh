@@ -249,5 +249,4 @@ resolve_domain() {
   fi
 }
 
-export -f resolve_domain get_ip_type test_https_connectivity test_tcp_connectivity test_ping_connectivity test_ip_connectivity
-
+# export -f 已移至 module.sh（所有子模块加载完毕后统一导出）
