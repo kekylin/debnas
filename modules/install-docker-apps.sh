@@ -13,7 +13,7 @@ IFS=$'\n\t'
 
 # 加载公共模块
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-source "${SCRIPT_DIR}/lib/bootstrap.sh"
+source "${SCRIPT_DIR}/lib/bootstrap-core.sh"
 
 # 容器配置文件
 CONTAINER_CONFIG="${SCRIPT_DIR}/config/containers.conf"
@@ -43,7 +43,7 @@ declare -a g_sorted_keys
 load_container_config() {
   if [[ ! -f "$CONTAINER_CONFIG" ]]; then
     log_error "容器配置文件不存在：$CONTAINER_CONFIG"
-    exit "${ERROR_GENERAL}"
+    return 1
   fi
   container_order=()
   # 使用 while read ... || [ -n "$key" ] 方式，确保最后一行无换行符也能被处理

@@ -11,7 +11,7 @@ set -euo pipefail
 IFS=$'\n\t'
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-source "${SCRIPT_DIR}/lib/bootstrap.sh"
+source "${SCRIPT_DIR}/lib/bootstrap-core.sh"
 
 # 依次批量执行安全版所需模块，提升初始化与安全防护效率
 MODULES=(

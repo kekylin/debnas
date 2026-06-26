@@ -13,7 +13,7 @@ IFS=$'\n\t'
 
 # 加载公共模块，确保依赖函数和常量可用
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-source "${SCRIPT_DIR}/lib/bootstrap.sh"
+source "${SCRIPT_DIR}/lib/bootstrap-core.sh"
 
 # 检查 exim4、update-exim4.conf、systemctl 依赖，确保后续操作可用
 REQUIRED_CMDS=(exim4 update-exim4.conf systemctl)
@@ -90,12 +90,12 @@ configure_smtp_auth() {
 restart_exim_service() {
   log_action "正在重启 Exim4 邮件服务..."
   if command -v systemctl >/dev/null 2>&1; then
-    systemctl restart exim4 && systemctl is-active --quiet exim4 || { log_error "Exim4 服务重启失败。"; exit "${ERROR_GENERAL}"; }
+    systemctl restart exim4 && systemctl is-active --quiet exim4 || { log_error "Exim4 服务重启失败。"; return 1; }
   elif command -v service >/dev/null 2>&1; then
-    service exim4 restart || { log_error "Exim4 服务重启失败。"; exit "${ERROR_GENERAL}"; }
+    service exim4 restart || { log_error "Exim4 服务重启失败。"; return 1; }
   else
     log_error "未找到可用的服务管理工具。"
-    exit "${ERROR_GENERAL}"
+    return 1
   fi
   log_success "Exim4 服务运行状态已更新。"
 }

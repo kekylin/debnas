@@ -13,7 +13,7 @@ IFS=$'\n\t'
 
 # 加载公共模块
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-source "${SCRIPT_DIR}/lib/bootstrap.sh"
+source "${SCRIPT_DIR}/lib/bootstrap-core.sh"
 
 # 获取系统版本代号
 SYSTEM_CODENAME=$(get_system_codename)

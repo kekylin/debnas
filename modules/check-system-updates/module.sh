@@ -38,7 +38,7 @@ CRON_TASK_FILE="/etc/cron.d/system-update-checker"
 
 main_menu() {
   if ! verify_system_support; then
-    exit "${ERROR_UNSUPPORTED_OS}"
+    return 1
   fi
   while true; do
     print_separator "-"

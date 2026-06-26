@@ -13,7 +13,7 @@ IFS=$'\n\t'
 
 # 加载公共模块，确保依赖函数和常量可用
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-source "${SCRIPT_DIR}/lib/bootstrap.sh"
+source "${SCRIPT_DIR}/lib/bootstrap-core.sh"
 
 # 检查依赖，确保 sed、systemctl 已安装
 REQUIRED_CMDS=(sed systemctl)

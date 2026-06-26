@@ -107,7 +107,7 @@ update_wallpaper() {
   # 获取 Bing API 数据
   if ! bing_json=$(curl --fail --silent --location "$BING_API_URL" 2>/dev/null); then
     [[ "$first_run" == "true" ]] && return 1
-    exit 0
+    return 1
   fi
 
   # 解析数据
@@ -117,7 +117,7 @@ update_wallpaper() {
 
   if [[ -z "$bing_url" ]]; then
     [[ "$first_run" == "true" ]] && return 1
-    exit 0
+    return 1
   fi
 
   # 下载壁纸
@@ -131,7 +131,7 @@ update_wallpaper() {
   else
     rm -f "${WALLPAPER_FILE}.tmp"
     [[ "$first_run" == "true" ]] && return 1
-    exit 0
+    return 1
   fi
 }
 

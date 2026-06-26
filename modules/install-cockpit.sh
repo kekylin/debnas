@@ -271,13 +271,13 @@ configure_45drives_repo() {
 	if ! command -v lsb_release >/dev/null; then
 		if ! apt install -y lsb-release; then
 			log_error "lsb-release 安装失败。"
-			exit "${ERROR_DEPENDENCY}"
+			return 1
 		fi
 	fi
 	if ! curl -sSL https://repo.45drives.com/setup | bash; then
 		if [ ! -f /etc/apt/sources.list.d/45drives.sources ]; then
 			log_error "45Drives 软件源配置失败。"
-			exit "${ERROR_GENERAL}"
+			return 1
 		fi
 	fi
 }
@@ -292,18 +292,18 @@ install_core_cockpit_packages() {
 	"bookworm")
 		if ! apt install -y cockpit pcp python3-pcp tuned; then
 			log_error "Cockpit 核心组件安装失败。"
-			exit "${ERROR_GENERAL}"
+			return 1
 		fi
 		;;
 	"trixie")
 		if ! apt install -y cockpit cockpit-files pcp python3-pcp tuned; then
 			log_error "Cockpit 核心组件安装失败（包含 cockpit-files）。"
-			exit "${ERROR_GENERAL}"
+			return 1
 		fi
 		;;
 	*)
 		log_error "不支持的 Debian 版本: ${system_codename}"
-		exit "${ERROR_UNSUPPORTED_OS}"
+		return 1
 		;;
 	esac
 }

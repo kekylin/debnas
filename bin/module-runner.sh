@@ -169,48 +169,18 @@ execute_module() {
   fi
 }
 
-# ==================== 主流程 ====================
+# ==================== Preflight 阶段 ====================
+# 执行所有预检查：权限、版本、依赖、幂等性、依赖模块
+# 返回：0=通过，1=失败，2=跳过（已安装/dry-run）
 
-main() {
-  # 解析全局参数
-  parse_global_args "$@"
+run_preflight() {
+  local module_name="$1"
 
-  # 获取剩余参数（eval 还原 printf %q 序列化的参数）
-  local -a args=()
-  if [[ -n "${DEBNAS_REMAINING_ARGS:-}" ]]; then
-    eval "args=($DEBNAS_REMAINING_ARGS)"
-  fi
-
-  if [[ ${#args[@]} -eq 0 ]]; then
-    log_error "未指定模块名"
-    echo "用法: module-runner.sh <模块名> [参数...]"
-    return 1
-  fi
-
-  local module_name="${args[0]}"
-  local -a module_args=("${args[@]:1}")
-
-  # 发现模块
-  discover_modules 2>/dev/null
-
-  # 检查模块是否存在
-  if ! module_exists "$module_name"; then
-    log_error "模块不存在：${module_name}"
-    echo ""
-    echo "可用模块："
-    get_module_list | sort | sed 's/^/  /'
-    return 1
-  fi
-
-  local display_name
-  display_name=$(get_module_field "$module_name" "name" "$module_name" 2>/dev/null) || display_name="$module_name"
-
-  # ── Preflight ──
   log_debug "开始 preflight 检查：${module_name}"
 
-  # dry-run 检查（最先，如果启用则打印计划并退出）
+  # dry-run
   if ! preflight_dry_run "$module_name"; then
-    return 0
+    return 2
   fi
 
   # root 权限
@@ -232,7 +202,7 @@ main() {
 
   # 幂等性（已安装则询问）
   if ! preflight_state "$module_name"; then
-    return 0
+    return 2
   fi
 
   # 依赖模块（递归执行）
@@ -243,12 +213,9 @@ main() {
     local -a exec_order
     mapfile -t exec_order < <(resolve_module_deps "$module_name" 2>/dev/null)
 
-    # 执行依赖模块（排除自身）
     local dep
     for dep in "${exec_order[@]}"; do
-      if [[ "$dep" == "$module_name" ]]; then
-        continue
-      fi
+      [[ "$dep" == "$module_name" ]] && continue
       log_info "执行依赖模块：${dep}"
       if ! (unset _DEBNAS_BOOTSTRAPPED; bash "${_DEBNAS_ROOT}/bin/module-runner.sh" "$dep"); then
         log_error "依赖模块 ${dep} 执行失败，当前模块已跳过"
@@ -257,20 +224,23 @@ main() {
     done
   fi
 
-  # ── 初始化日志 ──
-  log_to_file "$module_name" 2>/dev/null || true
+  return 0
+}
 
-  # ── Execute ──
-  local exit_code=0
-  if execute_module "$module_name" "${module_args[@]+"${module_args[@]}"}"; then
-    # ── Report: 成功 ──
+# ==================== Report 阶段 ====================
+# 记录模块执行结果到状态文件和日志
+
+run_report() {
+  local module_name="$1"
+  local display_name="$2"
+  local exit_code="$3"
+
+  if [[ "$exit_code" -eq 0 ]]; then
     local version
     version=$(get_module_field "$module_name" "version" "" 2>/dev/null) || version=""
     state_mark_success "$module_name" "$version"
     log_success "模块执行完成：${display_name}"
   else
-    exit_code=$?
-    # ── Report: 失败 ──
     state_mark_fail "$module_name" "exit_code_${exit_code}"
     log_error "模块执行失败：${display_name}"
     local log_file
@@ -280,8 +250,60 @@ main() {
     fi
   fi
 
-  # ── 停止文件日志 ──
   log_stop_file 2>/dev/null || true
+}
+
+# ==================== 主流程 ====================
+
+main() {
+  # 解析全局参数
+  parse_global_args "$@"
+
+  # 获取剩余参数（eval 还原 printf %q 序列化的参数）
+  local -a args=()
+  if [[ -n "${DEBNAS_REMAINING_ARGS:-}" ]]; then
+    eval "args=($DEBNAS_REMAINING_ARGS)"
+  fi
+
+  if [[ ${#args[@]} -eq 0 ]]; then
+    log_error "未指定模块名"
+    echo "用法: module-runner.sh <模块名> [参数...]"
+    return 1
+  fi
+
+  local module_name="${args[0]}"
+  local -a module_args=("${args[@]:1}")
+
+  # 发现并验证模块
+  discover_modules 2>/dev/null
+  if ! module_exists "$module_name"; then
+    log_error "模块不存在：${module_name}"
+    echo ""
+    echo "可用模块："
+    get_module_list | sort | sed 's/^/  /'
+    return 1
+  fi
+
+  local display_name
+  display_name=$(get_module_field "$module_name" "name" "$module_name" 2>/dev/null) || display_name="$module_name"
+
+  # ── Preflight ──
+  local preflight_rc=0
+  run_preflight "$module_name" || preflight_rc=$?
+  if [[ "$preflight_rc" -eq 1 ]]; then
+    return 1
+  elif [[ "$preflight_rc" -eq 2 ]]; then
+    return 0
+  fi
+
+  # ── Initialize + Execute ──
+  log_to_file "$module_name" 2>/dev/null || true
+
+  local exit_code=0
+  execute_module "$module_name" "${module_args[@]+"${module_args[@]}"}" || exit_code=$?
+
+  # ── Report ──
+  run_report "$module_name" "$display_name" "$exit_code"
 
   return "$exit_code"
 }
