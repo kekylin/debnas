@@ -1,9 +1,9 @@
 #!/bin/bash
-# @module: install-cockpit
+# @module: cockpit
 # @name: 安装 Cockpit
 # @category: 管理面板
 # @depends: curl,apt,systemctl
-# @depend_modules: configure-sources,install-basic-tools
+# @depend_modules: sources,basic-tools
 # @version: 3.0.0
 # @order: 30
 # 功能：安装 Cockpit 及 45Drives 组件（支持 Debian 12/13）
@@ -18,7 +18,7 @@ source "${SCRIPT_DIR}/lib/bootstrap.sh"
 
 # ==================== 幂等性检查 ====================
 if systemctl list-unit-files cockpit.service &>/dev/null && systemctl is-enabled cockpit.service &>/dev/null; then
-  if state_is_installed "install-cockpit" 2>/dev/null; then
+  if state_is_installed "cockpit" 2>/dev/null; then
     log_info "Cockpit 已安装并启用，跳过"
     exit 0
   fi
@@ -401,7 +401,7 @@ main() {
 	log_success "Cockpit 管理面板安装完成"
 
 	# ==================== 记录状态 ====================
-	state_mark_success "install-cockpit"
+	state_mark_success "cockpit"
 }
 
 main "$@"

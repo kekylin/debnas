@@ -3,7 +3,7 @@
 # @name: 备份恢复
 # @category: 容器管理
 # @depends: docker,tar,rsync
-# @depend_modules: install-docker-ce
+# @depend_modules: docker-ce
 # @version: 2.0.0
 # @order: 53
 # 功能：Docker 容器与数据卷的备份与恢复工具（目录模块入口）

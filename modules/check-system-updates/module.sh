@@ -3,7 +3,7 @@
 # @name: 检查系统更新
 # @category: 系统工具
 # @depends: apt
-# @depend_modules: configure-sources
+# @depend_modules: sources
 # @version: 1.0.0
 # @order: 71
 # @cron: true

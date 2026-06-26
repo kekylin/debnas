@@ -1,5 +1,5 @@
 #!/bin/bash
-# @module: install-service-query
+# @module: service-query
 # @name: 查询服务状态
 # @category: 系统工具
 # @depends: systemctl,hostname,awk,dpkg

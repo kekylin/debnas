@@ -1,9 +1,9 @@
 #!/bin/bash
-# @module: install-tunnel
+# @module: tunnel
 # @name: 安装 Tailscale
 # @category: 系统工具
 # @depends: curl,apt,systemctl
-# @depend_modules: configure-sources
+# @depend_modules: sources
 # @version: 1.0.0
 # @order: 74
 # 功能：安装并配置 Tailscale 内网穿透服务

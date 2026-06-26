@@ -1,7 +1,7 @@
 #!/bin/bash
 # 功能：交互菜单系统
 # 说明：使用 discover_modules() 自动发现模块并生成菜单
-# 兼容：保留与 bin/main.sh 一致的交互体验
+# 交互菜单入口
 
 set -euo pipefail
 IFS=$'\n\t'

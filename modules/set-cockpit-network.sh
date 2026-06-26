@@ -3,7 +3,7 @@
 # @name: 面板管理网络
 # @category: 管理面板
 # @depends: sed,systemctl
-# @depend_modules: install-cockpit
+# @depend_modules: cockpit
 # @version: 1.0.0
 # @order: 34
 # 功能：设置 Cockpit 管理网络

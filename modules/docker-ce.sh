@@ -1,9 +1,9 @@
 #!/bin/bash
-# @module: install-docker-ce
+# @module: docker-ce
 # @name: 安装 Docker
 # @category: 容器管理
 # @depends: apt,wget,curl,systemctl
-# @depend_modules: configure-sources
+# @depend_modules: sources
 # @version: 1.0.0
 # @order: 50
 # 功能：安装 Docker CE 社区版
@@ -16,7 +16,7 @@ source "${SCRIPT_DIR}/lib/bootstrap.sh"
 
 # ==================== 幂等性检查 ====================
 if command -v docker &>/dev/null; then
-  if state_is_installed "install-docker-ce" 2>/dev/null; then
+  if state_is_installed "docker-ce" 2>/dev/null; then
     docker_version=$(docker --version 2>/dev/null | grep -oP '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
     log_info "Docker 已安装（版本: ${docker_version:-未知}），跳过"
     exit 0
@@ -230,4 +230,4 @@ else
 fi
 
 # ==================== 记录状态 ====================
-state_mark_success "install-docker-ce" "$(docker --version 2>/dev/null | grep -oP '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+state_mark_success "docker-ce" "$(docker --version 2>/dev/null | grep -oP '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"

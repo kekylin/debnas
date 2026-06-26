@@ -3,7 +3,7 @@
 # @name: 启用登录通知
 # @category: 通知服务
 # @depends: exim4
-# @depend_modules: setup-mail-account
+# @depend_modules: mail-account
 # @version: 1.0.0
 # @order: 61
 # 功能：启用用户登录邮件通知（通过 PAM 脚本，登录时自动发送邮件）

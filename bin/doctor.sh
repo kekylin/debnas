@@ -74,7 +74,7 @@ check_apt_sources() {
     printf "  %-20s %s\n" "镜像地址:" "${mirror:-未配置}"
   else
     printf "  %-20s %s\n" "软件源:" "❌ 未配置"
-    echo "  → 建议执行: debnas install configure-sources"
+    echo "  → 建议执行: debnas install sources"
   fi
 
   echo ""

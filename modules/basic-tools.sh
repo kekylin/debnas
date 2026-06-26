@@ -1,9 +1,9 @@
 #!/bin/bash
-# @module: install-basic-tools
+# @module: basic-tools
 # @name: 安装基础工具
 # @category: 基础系统
 # @depends: apt,awk
-# @depend_modules: configure-sources
+# @depend_modules: sources
 # @version: 1.0.0
 # @order: 11
 # 功能：安装必备软件包（如 curl、wget、sudo 等）

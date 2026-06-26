@@ -1,8 +1,8 @@
 #!/bin/bash
-# @module: setup-homenas-secure
+# @module: homenas-secure
 # @name: 一键部署安全环境
 # @category: 一键部署
-# @depend_modules: configure-sources,install-basic-tools,install-cockpit,configure-security
+# @depend_modules: sources,basic-tools,cockpit,security
 # @version: 1.0.0
 # @order: 81
 # 功能：一键配置 HomeNAS 安全版（批量自动化执行基础+安全+邮件等模块）
@@ -15,18 +15,18 @@ source "${SCRIPT_DIR}/lib/bootstrap-core.sh"
 
 # 依次批量执行安全版所需模块，提升初始化与安全防护效率
 MODULES=(
-  "configure-sources|配置软件源"
-  "install-basic-tools|安装必备软件"
-  "install-cockpit|安装 Cockpit 面板"
+  "sources|配置软件源"
+  "basic-tools|安装必备软件"
+  "cockpit|安装 Cockpit 面板"
   "set-cockpit-network|设置 Cockpit 网络访问"
-  "setup-mail-account|设置发送邮件账户"
+  "mail-account|设置发送邮件账户"
   "enable-login-mail|启用登录邮件通知"
-  "configure-security|配置基础安全防护"
-  "install-firewall|安装防火墙服务"
-  "install-fail2ban|安装 fail2ban 自动封锁"
-  "install-docker-ce|安装 Docker"
+  "security|配置基础安全防护"
+  "firewall|安装防火墙服务"
+  "fail2ban|安装 fail2ban 自动封锁"
+  "docker-ce|安装 Docker"
   "add-docker-mirror|添加 Docker 镜像加速"
-  "install-service-query|安装服务查询工具"
+  "service-query|安装服务查询工具"
 )
 
 for mod_desc in "${MODULES[@]}"; do

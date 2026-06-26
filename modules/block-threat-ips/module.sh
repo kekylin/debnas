@@ -3,7 +3,7 @@
 # @name: IP 封禁工具
 # @category: 安全防护
 # @depends: firewall-cmd,ipset,wget,gzip,awk,sed,grep,sort,comm,head,crontab,sipcalc
-# @depend_modules: install-firewall
+# @depend_modules: firewall
 # @version: 2.0.0
 # @order: 43
 # @cron: true

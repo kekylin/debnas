@@ -3,7 +3,7 @@
 # @name: 面板必应壁纸
 # @category: 管理面板
 # @depends: wget,systemctl,crontab
-# @depend_modules: install-cockpit
+# @depend_modules: cockpit
 # @version: 1.0.0
 # @order: 35
 # @cron: true

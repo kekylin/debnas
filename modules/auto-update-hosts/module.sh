@@ -3,7 +3,7 @@
 # @name: 更新 Hosts 文件
 # @category: 系统工具
 # @depends: dig,ping
-# @depend_modules: configure-sources
+# @depend_modules: sources
 # @version: 2.0.0
 # @order: 73
 # @cron: true

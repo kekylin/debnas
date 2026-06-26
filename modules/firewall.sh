@@ -1,9 +1,9 @@
 #!/bin/bash
-# @module: install-firewall
+# @module: firewall
 # @name: 安装 Firewalld
 # @category: 安全防护
 # @depends: apt,systemctl
-# @depend_modules: configure-sources
+# @depend_modules: sources
 # @version: 1.0.0
 # @order: 41
 # 功能：安装 firewalld 防火墙服务
@@ -18,7 +18,7 @@ source "${SCRIPT_DIR}/lib/bootstrap.sh"
 # ==================== 幂等性检查 ====================
 if command -v firewall-cmd &>/dev/null; then
   if firewall-cmd --state &>/dev/null; then
-    if state_is_installed "install-firewall" 2>/dev/null; then
+    if state_is_installed "firewall" 2>/dev/null; then
       log_info "Firewalld 已安装并运行，跳过"
       exit 0
     fi
@@ -93,4 +93,4 @@ else
 fi
 
 # ==================== 记录状态 ====================
-state_mark_success "install-firewall"
+state_mark_success "firewall"

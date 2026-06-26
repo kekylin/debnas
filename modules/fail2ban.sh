@@ -1,9 +1,9 @@
 #!/bin/bash
-# @module: install-fail2ban
+# @module: fail2ban
 # @name: 安装 Fail2ban
 # @category: 安全防护
 # @depends: apt,systemctl
-# @depend_modules: configure-sources,install-firewall
+# @depend_modules: sources,firewall
 # @version: 1.0.0
 # @order: 42
 # 功能：安装并配置 fail2ban 自动封锁服务
@@ -18,7 +18,7 @@ source "${SCRIPT_DIR}/lib/bootstrap.sh"
 # ==================== 幂等性检查 ====================
 if command -v fail2ban-client &>/dev/null; then
   if systemctl is-active fail2ban &>/dev/null; then
-    if state_is_installed "install-fail2ban" 2>/dev/null; then
+    if state_is_installed "fail2ban" 2>/dev/null; then
       log_info "Fail2ban 已安装并运行，跳过"
       exit 0
     fi
@@ -169,7 +169,7 @@ main() {
   start_fail2ban
 
   # ==================== 记录状态 ====================
-  state_mark_success "install-fail2ban"
+  state_mark_success "fail2ban"
 }
 
 main 

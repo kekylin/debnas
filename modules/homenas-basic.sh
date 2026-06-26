@@ -1,8 +1,8 @@
 #!/bin/bash
-# @module: setup-homenas-basic
+# @module: homenas-basic
 # @name: 一键部署基础环境
 # @category: 一键部署
-# @depend_modules: configure-sources,install-basic-tools,install-cockpit
+# @depend_modules: sources,basic-tools,cockpit
 # @version: 1.0.0
 # @order: 80
 # 功能：一键配置 HomeNAS 基础版（批量自动化执行常用初始化模块）
@@ -15,13 +15,13 @@ source "${SCRIPT_DIR}/lib/bootstrap-core.sh"
 
 # 依次批量执行基础版所需模块，提升初始化效率
 MODULES=(
-  "configure-sources|配置软件源"
-  "install-basic-tools|安装必备软件"
-  "install-cockpit|安装 Cockpit 面板"
+  "sources|配置软件源"
+  "basic-tools|安装必备软件"
+  "cockpit|安装 Cockpit 面板"
   "set-cockpit-network|设置 Cockpit 网络访问"
-  "install-docker-ce|安装 Docker"
+  "docker-ce|安装 Docker"
   "add-docker-mirror|添加 Docker 镜像加速"
-  "install-service-query|安装服务查询工具"
+  "service-query|安装服务查询工具"
 )
 
 for mod_desc in "${MODULES[@]}"; do

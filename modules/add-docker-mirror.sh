@@ -3,7 +3,7 @@
 # @name: Docker 镜像加速
 # @category: 容器管理
 # @depends: docker
-# @depend_modules: install-docker-ce
+# @depend_modules: docker-ce
 # @version: 1.0.0
 # @order: 51
 # 功能：为 Docker 配置国内镜像加速地址（多源，自动合并，自动重启）

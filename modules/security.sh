@@ -1,5 +1,5 @@
 #!/bin/bash
-# @module: configure-security
+# @module: security
 # @name: 基础安全配置
 # @category: 安全防护
 # @depends: sed,grep,systemctl,mkdir,chmod
@@ -16,7 +16,7 @@ source "${SCRIPT_DIR}/lib/bootstrap.sh"
 
 # ==================== 幂等性检查 ====================
 if [[ -f "/etc/profile.d/debnas-security.sh" ]]; then
-  if state_is_installed "configure-security" 2>/dev/null; then
+  if state_is_installed "security" 2>/dev/null; then
     log_info "系统安全配置已应用，跳过"
     exit 0
   fi
@@ -95,7 +95,7 @@ main() {
   log_success "系统安全防护配置完成。"
 
   # ==================== 记录状态 ====================
-  state_mark_success "configure-security"
+  state_mark_success "security"
   return 0
 }
 

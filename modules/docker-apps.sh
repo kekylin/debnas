@@ -1,9 +1,9 @@
 #!/bin/bash
-# @module: install-docker-apps
+# @module: docker-apps
 # @name: 安装 Docker 应用
 # @category: 容器管理
 # @depends: docker
-# @depend_modules: install-docker-ce
+# @depend_modules: docker-ce
 # @version: 1.0.0
 # @order: 52
 # 功能：交互式批量安装常用 Docker 容器应用（仅 compose 方式）

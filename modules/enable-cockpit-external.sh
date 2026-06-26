@@ -3,7 +3,7 @@
 # @name: 启用外网访问
 # @category: 管理面板
 # @depends: hostname,awk,sed,systemctl
-# @depend_modules: install-cockpit
+# @depend_modules: cockpit
 # @version: 1.0.0
 # @order: 32
 # 功能：启用 Cockpit 外网访问

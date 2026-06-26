@@ -1,9 +1,9 @@
 #!/bin/bash
-# @module: setup-mail-account
+# @module: mail-account
 # @name: 配置邮件账户
 # @category: 通知服务
 # @depends: exim4,update-exim4.conf,systemctl
-# @depend_modules: configure-sources
+# @depend_modules: sources
 # @version: 1.0.0
 # @order: 60
 # 功能：设置发送邮件账户

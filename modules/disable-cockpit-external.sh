@@ -3,7 +3,7 @@
 # @name: 禁用外网访问
 # @category: 管理面板
 # @depends: sed,systemctl
-# @depend_modules: install-cockpit
+# @depend_modules: cockpit
 # @version: 1.0.0
 # @order: 33
 # 功能：禁用 Cockpit 外网访问
