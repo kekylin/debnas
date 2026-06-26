@@ -136,7 +136,7 @@ check_debnas_status() {
       local result
       result=$(grep "^last_result=" "$state_file" 2>/dev/null | cut -d= -f2-)
       if [[ "$result" == "success" ]]; then
-        ((installed_count++))
+        installed_count=$(( installed_count + 1 ))
         installed_modules+=("$mod_name")
       fi
     done
