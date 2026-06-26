@@ -1,0 +1,12 @@
+# DebNAS 仓库压缩包 SHA256 校验和
+# install.sh 使用此文件验证下载完整性
+#
+# 更新方法：
+#   1. 打包仓库: tar -czf debnas.tar.gz --exclude='.git' .
+#   2. 计算校验和: sha256sum debnas.tar.gz
+#   3. 将输出粘贴到下方（替换占位符）
+#
+# 格式: <sha256hash>  <filename>
+# 注意: 发布新版本时需同步更新此文件和 install.sh 中的 EXPECTED_SHA256
+
+0000000000000000000000000000000000000000000000000000000000000000  debnas.tar.gz

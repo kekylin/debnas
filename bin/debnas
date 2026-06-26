@@ -1,0 +1,332 @@
+#!/bin/bash
+# 功能：DebNAS CLI 调度器
+# 说明：解析全局参数，路由到对应子命令（menu/install/update/uninstall/doctor/cron）
+#
+# 用法：
+#   debnas                           # 启动交互菜单（默认）
+#   debnas menu                      # 启动交互菜单
+#   debnas install <模块名>          # 安装指定模块
+#   debnas update                    # 更新 DebNAS
+#   debnas uninstall                 # 卸载 DebNAS
+#   debnas doctor                    # 系统诊断
+#   debnas cron add|remove|list      # 管理定时任务
+#   debnas --help                    # 显示帮助
+#   debnas --version                 # 显示版本
+
+set -euo pipefail
+IFS=$'\n\t'
+
+# 获取项目根目录
+_DEBNAS_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# 加载统一库
+source "${_DEBNAS_ROOT}/lib/bootstrap.sh"
+
+# ==================== 子命令路由 ====================
+
+# 子命令：menu（交互菜单）
+cmd_menu() {
+  # 清除 bootstrap 标记，让 menu.sh 能重新加载库
+  unset _DEBNAS_BOOTSTRAPPED
+  exec bash "${_DEBNAS_ROOT}/bin/menu.sh" "$@"
+}
+
+# 子命令：install <模块名>
+cmd_install() {
+  if [[ $# -eq 0 ]]; then
+    log_error "install 子命令需要指定模块名"
+    echo "用法: debnas install <模块名>"
+    echo "示例: debnas install configure-sources"
+    echo ""
+    echo "可用模块："
+    discover_modules 2>/dev/null
+    get_module_list | sort | while read -r mod; do
+      local name
+      name=$(get_module_field "$mod" "name" "$mod" 2>/dev/null)
+      echo "  ${mod} - ${name}"
+    done
+    return 1
+  fi
+
+  local module_name="$1"
+  shift
+
+  unset _DEBNAS_BOOTSTRAPPED
+  exec bash "${_DEBNAS_ROOT}/bin/module-runner.sh" "$module_name" "$@"
+}
+
+# 子命令：update
+cmd_update() {
+  log_info "正在检查更新..."
+
+  # 读取已配置的 region
+  local region
+  region=$(config_read "global" "region" "" 2>/dev/null) || region=""
+
+  if [[ -z "$region" ]]; then
+    region="${DEBNAS_REGION:-cn}"
+    log_warning "未找到 region 配置，使用默认值: ${region}"
+  fi
+
+  # 根据 region 选择下载源
+  local download_url
+  if [[ "$region" == "cn" ]]; then
+    download_url="https://gitee.com/kekylin/debnas/repository/archive/main.tar.gz"
+  else
+    download_url="https://github.com/kekylin/debnas/archive/refs/heads/main.tar.gz"
+  fi
+
+  log_info "从 ${region} 源下载更新..."
+
+  # 下载
+  local tmp_dir="/tmp/debnas/update"
+  mkdir -p "$tmp_dir"
+  local tarball="${tmp_dir}/debnas-update.tar.gz"
+
+  if ! wget -qO "$tarball" "$download_url" 2>&1; then
+    log_error "下载失败，请检查网络连接"
+    rm -rf "$tmp_dir"
+    return 1
+  fi
+
+  # TODO: checksum 校验（Phase 2.5 checksum.sha256 就绪后启用）
+  # local expected_checksum
+  # expected_checksum=$(cat "${_DEBNAS_ROOT}/checksum.sha256" 2>/dev/null | awk '{print $1}')
+  # ...
+
+  # 解压到临时目录
+  local extract_dir="${tmp_dir}/extract"
+  mkdir -p "$extract_dir"
+  if ! tar -xzf "$tarball" -C "$extract_dir" --strip-components=1 2>&1; then
+    log_error "解压失败"
+    rm -rf "$tmp_dir"
+    return 1
+  fi
+
+  # 覆盖 /opt/debnas/（保留配置和状态）
+  local install_dir="/opt/debnas"
+  if [[ -d "$install_dir" ]]; then
+    # 覆盖代码文件（保留运行时目录）
+    cp -rf "$extract_dir"/bin "$install_dir/" 2>/dev/null || true
+    cp -rf "$extract_dir"/lib "$install_dir/" 2>/dev/null || true
+    cp -rf "$extract_dir"/modules "$install_dir/" 2>/dev/null || true
+  fi
+
+  # 清理
+  rm -rf "$tmp_dir"
+
+  log_success "DebNAS 更新完成"
+  return 0
+}
+
+# 子命令：uninstall
+cmd_uninstall() {
+  log_warning "此操作将移除 DebNAS 所有脚本文件、配置和日志。"
+  log_warning "不会恢复已安装的软件包或已修改的系统配置。"
+
+  if [[ "${DEBNAS_FORCE_YES:-0}" -ne 1 ]]; then
+    read -rp "确认继续？[y/N]: " confirm
+    if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
+      log_info "已取消卸载"
+      return 0
+    fi
+  fi
+
+  # [1] 移除全局命令
+  rm -f /usr/local/bin/debnas 2>/dev/null && log_info "已移除全局命令: /usr/local/bin/debnas"
+
+  # [2] 移除脚本代码
+  rm -rf /opt/debnas 2>/dev/null && log_info "已移除脚本目录: /opt/debnas/"
+
+  # [3] 移除 cron 定时任务
+  local current_crontab
+  current_crontab=$(crontab -l 2>/dev/null || true)
+  if echo "$current_crontab" | grep -q "DEBNAS-CRON" 2>/dev/null; then
+    echo "$current_crontab" | grep -v "DEBNAS-CRON" | crontab - 2>/dev/null || crontab -r 2>/dev/null || true
+    log_info "已移除 DebNAS 定时任务"
+  fi
+
+  # [4] 移除配置目录
+  rm -rf /etc/debnas 2>/dev/null && log_info "已移除配置目录: /etc/debnas/"
+
+  # [5] 移除日志目录
+  rm -rf /var/log/debnas 2>/dev/null && log_info "已移除日志目录: /var/log/debnas/"
+
+  # [6] 移除状态目录
+  rm -rf /var/lib/debnas 2>/dev/null && log_info "已移除状态目录: /var/lib/debnas/"
+
+  # [7] 移除临时文件
+  rm -rf /tmp/debnas 2>/dev/null && log_info "已移除临时目录: /tmp/debnas/"
+
+  log_success "DebNAS 已卸载"
+  log_info "已安装的软件包和系统配置未被修改。如需恢复系统，请手动操作。"
+  return 0
+}
+
+# 子命令：doctor
+cmd_doctor() {
+  log_info "开始系统诊断..."
+  echo ""
+
+  # [1] 系统兼容性
+  echo "── 系统兼容性 ──"
+  local os_name os_version os_codename arch
+  os_name=$(get_system_name 2>/dev/null || echo "未知")
+  os_version=$(get_system_version 2>/dev/null || echo "未知")
+  os_codename=$(get_system_codename 2>/dev/null || echo "未知")
+  arch=$(get_system_architecture 2>/dev/null || echo "未知")
+
+  printf "  %-20s %s %s (%s)\n" "操作系统:" "$os_name" "$os_version" "$os_codename"
+  printf "  %-20s %s\n" "CPU 架构:" "$arch"
+
+  if verify_system_support 2>/dev/null; then
+    printf "  %-20s %s\n" "系统兼容性:" "✅ 支持"
+  else
+    printf "  %-20s %s\n" "系统兼容性:" "❌ 不支持"
+  fi
+  echo ""
+
+  # [2] DebNAS 状态
+  echo "── DebNAS 状态 ──"
+  printf "  %-20s %s\n" "版本:" "${DEBNAS_VERSION:-未知}"
+  printf "  %-20s %s\n" "安装目录:" "${_DEBNAS_ROOT}"
+
+  local installed_count=0
+  if [[ -d "/var/lib/debnas/state" ]]; then
+    installed_count=$(find /var/lib/debnas/state -name "*.state" 2>/dev/null | wc -l)
+  fi
+  printf "  %-20s %s 个\n" "已安装模块:" "$installed_count"
+
+  local region
+  region=$(config_read "global" "region" "未配置" 2>/dev/null) || region="未配置"
+  printf "  %-20s %s\n" "Region:" "$region"
+  echo ""
+
+  # [3] 网络连通性
+  echo "── 网络连通性 ──"
+  local targets=("https://deb.debian.org" "https://mirrors.tuna.tsinghua.edu.cn" "https://github.com")
+  local target
+  for target in "${targets[@]}"; do
+    if probe_url "$target" 2>/dev/null; then
+      printf "  %-40s %s\n" "$target" "✅ 可达"
+    else
+      printf "  %-40s %s\n" "$target" "❌ 不可达"
+    fi
+  done
+  echo ""
+
+  # [4] 磁盘空间
+  echo "── 磁盘空间 ──"
+  df -h / /opt /var 2>/dev/null | awk 'NR==1 || /^\/dev/' | sed 's/^/  /'
+  echo ""
+
+  log_success "诊断完成"
+  return 0
+}
+
+# 子命令：cron
+cmd_cron() {
+  local subcmd="${1:-}"
+  shift || true
+
+  case "$subcmd" in
+    add)
+      if [[ $# -eq 0 ]]; then
+        log_error "用法: debnas cron add <模块名> [cron 表达式]"
+        return 1
+      fi
+      local module_name="$1"
+      local schedule="${2:-}"
+
+      # 从模块元数据读取默认 schedule
+      if [[ -z "$schedule" ]]; then
+        discover_modules 2>/dev/null
+        schedule=$(get_module_field "$module_name" "cron_schedule" "" 2>/dev/null) || schedule=""
+      fi
+
+      if [[ -z "$schedule" ]]; then
+        log_error "模块 ${module_name} 未声明 cron_schedule，请手动指定"
+        log_error "用法: debnas cron add ${module_name} \"0 */6 * * *\""
+        return 1
+      fi
+
+      cron_register "$module_name" "$schedule"
+      ;;
+
+    remove)
+      if [[ $# -eq 0 ]]; then
+        log_error "用法: debnas cron remove <模块名>"
+        return 1
+      fi
+      cron_unregister "$1"
+      ;;
+
+    list)
+      cron_list
+      ;;
+
+    "")
+      log_error "cron 子命令需要指定操作"
+      echo "用法: debnas cron add|remove|list"
+      return 1
+      ;;
+
+    *)
+      log_error "未知的 cron 操作: ${subcmd}"
+      echo "支持的操作: add, remove, list"
+      return 1
+      ;;
+  esac
+}
+
+# ==================== 主路由 ====================
+
+main() {
+  # 解析全局参数
+  parse_global_args "$@"
+
+  # 获取剩余参数
+  local -a args=()
+  if [[ -n "${DEBNAS_REMAINING_ARGS:-}" ]]; then
+    read -ra args <<< "$DEBNAS_REMAINING_ARGS"
+  fi
+
+  # 提取子命令
+  local subcmd="${args[0]:-}"
+  local -a subcmd_args=("${args[@]:1}")
+
+  case "$subcmd" in
+    ""|menu)
+      cmd_menu "${subcmd_args[@]+"${subcmd_args[@]}"}"
+      ;;
+
+    install)
+      cmd_install "${subcmd_args[@]+"${subcmd_args[@]}"}"
+      ;;
+
+    update)
+      cmd_update "${subcmd_args[@]+"${subcmd_args[@]}"}"
+      ;;
+
+    uninstall)
+      cmd_uninstall "${subcmd_args[@]+"${subcmd_args[@]}"}"
+      ;;
+
+    doctor)
+      cmd_doctor "${subcmd_args[@]+"${subcmd_args[@]}"}"
+      ;;
+
+    cron)
+      cmd_cron "${subcmd_args[@]+"${subcmd_args[@]}"}"
+      ;;
+
+    *)
+      log_error "未知子命令: ${subcmd}"
+      print_usage
+      echo "使用 --help 查看完整帮助"
+      return 1
+      ;;
+  esac
+}
+
+main "$@"

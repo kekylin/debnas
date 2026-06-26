@@ -1,74 +1,433 @@
 #!/usr/bin/env bash
-# 功能：DebNAS 安装自举脚本（整仓库 zip 包下载并解压，所有文件仅存于 /tmp/debnas，无持久化）
+# install.sh — DebNAS 自包含引导脚本
+# 无需 git，仅需 wget（Debian 最小化安装自带）
+#
+# 用法:
+#   # 国内用户
+#   wget https://gitee.com/kekylin/debnas/raw/main/install.sh && bash install.sh --region cn
+#
+#   # 国际用户
+#   wget https://github.com/kekylin/debnas/raw/main/install.sh && bash install.sh --region global
+#
+#   # 卸载
+#   bash install.sh --uninstall
 
 set -e
 
-usage() {
-  echo "用法: bash <(wget -qO- https://raw.githubusercontent.com/kekylin/debnas/main/install.sh) -s 平台@分支"
-  echo "示例: -s github@main 或 -s gitee@dev"
-  exit 1
+# ==================== 常量 ====================
+
+readonly DEBNAS_INSTALL_DIR="/opt/debnas"
+readonly DEBNAS_BIN="/usr/local/bin/debnas"
+readonly DEBNAS_CONF_DIR="/etc/debnas"
+readonly DEBNAS_LOG_DIR="/var/log/debnas"
+readonly DEBNAS_STATE_DIR="/var/lib/debnas/state"
+readonly DEBNAS_TMP_DIR="/tmp/debnas"
+
+readonly REPO_CN_URL="https://gitee.com/kekylin/debnas/repository/archive/main.tar.gz"
+readonly REPO_GLOBAL_URL="https://github.com/kekylin/debnas/archive/refs/heads/main.tar.gz"
+
+# SHA256 校验和（更新版本时同步更新此值）
+# 如果为空则跳过校验（开发阶段）
+readonly EXPECTED_SHA256=""
+
+# ==================== 输出函数 ====================
+
+_msg() { printf "[%s] %s\n" "$1" "$2" >&2; }
+_info()    { _msg "INFO" "$1"; }
+_success() { _msg "SUCCESS" "$1"; }
+_warn()    { _msg "WARNING" "$1"; }
+_fail()    { _msg "FAIL" "$1"; }
+_action()  { _msg "ACTION" "$1"; }
+
+# ==================== 参数解析 ====================
+
+REGION=""
+UNINSTALL_MODE=0
+FORCE_YES=0
+
+parse_args() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --region)
+        shift
+        if [[ $# -eq 0 ]]; then
+          _fail "--region 需要参数 (cn 或 global)"
+          exit 1
+        fi
+        case "$1" in
+          cn|global) REGION="$1" ;;
+          *)
+            _fail "--region 参数无效: '$1'（仅支持 cn 或 global）"
+            exit 1
+            ;;
+        esac
+        ;;
+      --uninstall)
+        UNINSTALL_MODE=1
+        ;;
+      --yes|-y)
+        FORCE_YES=1
+        ;;
+      --help|-h)
+        print_help
+        exit 0
+        ;;
+      *)
+        _fail "未知参数: $1"
+        print_usage
+        exit 1
+        ;;
+    esac
+    shift
+  done
 }
 
-# 解析参数
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    -s)
-      shift
-      if [[ "$1" =~ ^(github|gitee)@([a-zA-Z0-9_-]+)$ ]]; then
-        PLATFORM="${BASH_REMATCH[1]}"
-        BRANCH="${BASH_REMATCH[2]}"
-      else
-        echo "[FAIL] -s 参数格式错误，应为 平台@分支，如 github@main"
-        usage
+print_usage() {
+  echo "用法: bash install.sh --region cn|global [--yes]"
+  echo "      bash install.sh --uninstall"
+}
+
+print_help() {
+  cat <<'EOF'
+DebNAS — Debian NAS 自动化部署工具
+
+安装:
+  bash install.sh --region cn       # 国内用户（使用 Gitee 下载）
+  bash install.sh --region global   # 国际用户（使用 GitHub 下载）
+  bash install.sh --region cn --yes # 自动确认所有提示
+
+卸载:
+  bash install.sh --uninstall       # 移除 DebNAS 脚本和配置
+
+说明:
+  · --region 参数必填，指定网络环境
+  · 安装到 /opt/debnas/，全局命令 /usr/local/bin/debnas
+  · 首次安装会自动配置 APT 软件源
+  · 重复运行会检测已安装状态并提供更新选项
+EOF
+}
+
+# ==================== 卸载流程 ====================
+
+do_uninstall() {
+  _warn "此操作将移除 DebNAS 所有脚本文件、配置和日志。"
+  _warn "不会恢复已安装的软件包或已修改的系统配置。"
+
+  if [[ "$FORCE_YES" -ne 1 ]]; then
+    read -rp "确认继续？[y/N]: " confirm
+    if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
+      _info "已取消卸载"
+      exit 0
+    fi
+  fi
+
+  _action "正在卸载 DebNAS..."
+
+  # 移除全局命令
+  if [[ -f "$DEBNAS_BIN" ]]; then
+    rm -f "$DEBNAS_BIN"
+    _info "已移除全局命令: ${DEBNAS_BIN}"
+  fi
+
+  # 移除脚本代码
+  if [[ -d "$DEBNAS_INSTALL_DIR" ]]; then
+    rm -rf "$DEBNAS_INSTALL_DIR"
+    _info "已移除脚本目录: ${DEBNAS_INSTALL_DIR}/"
+  fi
+
+  # 移除 cron 定时任务
+  local current_crontab
+  current_crontab=$(crontab -l 2>/dev/null || true)
+  if echo "$current_crontab" | grep -q "DEBNAS-CRON" 2>/dev/null; then
+    echo "$current_crontab" | grep -v "DEBNAS-CRON" | crontab - 2>/dev/null || crontab -r 2>/dev/null || true
+    _info "已移除 DebNAS 定时任务"
+  fi
+
+  # 移除配置目录
+  if [[ -d "$DEBNAS_CONF_DIR" ]]; then
+    rm -rf "$DEBNAS_CONF_DIR"
+    _info "已移除配置目录: ${DEBNAS_CONF_DIR}/"
+  fi
+
+  # 移除日志目录
+  if [[ -d "$DEBNAS_LOG_DIR" ]]; then
+    rm -rf "$DEBNAS_LOG_DIR"
+    _info "已移除日志目录: ${DEBNAS_LOG_DIR}/"
+  fi
+
+  # 移除状态目录
+  if [[ -d "$DEBNAS_STATE_DIR" ]]; then
+    rm -rf "$DEBNAS_STATE_DIR"
+    _info "已移除状态目录: ${DEBNAS_STATE_DIR}/"
+  fi
+
+  # 移除临时文件
+  if [[ -d "$DEBNAS_TMP_DIR" ]]; then
+    rm -rf "$DEBNAS_TMP_DIR"
+    _info "已移除临时目录: ${DEBNAS_TMP_DIR}/"
+  fi
+
+  _success "DebNAS 已卸载"
+  _info "已安装的软件包和系统配置未被修改。如需恢复系统，请手动操作。"
+}
+
+# ==================== 安装流程 ====================
+
+# 检查 root 权限
+check_root() {
+  if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
+    _fail "此脚本需要 root 权限运行。请使用 sudo 或以 root 身份执行。"
+    exit 1
+  fi
+}
+
+# 校验 region 参数
+check_region() {
+  if [[ -z "$REGION" ]]; then
+    _fail "必须指定 --region 参数"
+    echo ""
+    print_usage
+    echo ""
+    echo "示例:"
+    echo "  bash install.sh --region cn       # 国内用户"
+    echo "  bash install.sh --region global   # 国际用户"
+    exit 1
+  fi
+}
+
+# 下载仓库压缩包
+download_repo() {
+  local download_url
+  if [[ "$REGION" == "cn" ]]; then
+    download_url="$REPO_CN_URL"
+    _info "使用国内下载源（Gitee）"
+  else
+    download_url="$REPO_GLOBAL_URL"
+    _info "使用国际下载源（GitHub）"
+  fi
+
+  local tmpdir
+  tmpdir=$(mktemp -d "${DEBNAS_TMP_DIR}/install.XXXXXX")
+  chmod 755 "$tmpdir"
+
+  local tarball="${tmpdir}/debnas.tar.gz"
+
+  _action "正在下载仓库压缩包..."
+  if ! wget -q --show-progress -O "$tarball" "$download_url" 2>&1; then
+    _fail "仓库下载失败: ${download_url}"
+    rm -rf "$tmpdir"
+    exit 1
+  fi
+
+  # SHA256 校验
+  if [[ -n "$EXPECTED_SHA256" ]]; then
+    _action "校验文件完整性..."
+    local actual_sha256
+    actual_sha256=$(sha256sum "$tarball" | awk '{print $1}')
+    if [[ "$actual_sha256" != "$EXPECTED_SHA256" ]]; then
+      _fail "SHA256 校验失败！文件可能被篡改"
+      _fail "  期望: ${EXPECTED_SHA256}"
+      _fail "  实际: ${actual_sha256}"
+      rm -rf "$tmpdir"
+      exit 1
+    fi
+    _success "SHA256 校验通过"
+  fi
+
+  echo "$tmpdir"
+}
+
+# 解压到安装目录
+extract_repo() {
+  local tmpdir="$1"
+  local tarball="${tmpdir}/debnas.tar.gz"
+  local extract_dir="${tmpdir}/extract"
+
+  mkdir -p "$extract_dir"
+  _action "正在解压仓库..."
+  if ! tar -xzf "$tarball" -C "$extract_dir" --strip-components=1 2>&1; then
+    _fail "解压失败"
+    rm -rf "$tmpdir"
+    exit 1
+  fi
+
+  # 创建安装目录
+  mkdir -p "$DEBNAS_INSTALL_DIR"
+
+  # 复制文件到安装目录
+  _action "正在安装到 ${DEBNAS_INSTALL_DIR}..."
+  cp -rf "$extract_dir"/bin "$DEBNAS_INSTALL_DIR/" 2>/dev/null || true
+  cp -rf "$extract_dir"/lib "$DEBNAS_INSTALL_DIR/" 2>/dev/null || true
+  cp -rf "$extract_dir"/modules "$DEBNAS_INSTALL_DIR/" 2>/dev/null || true
+  cp -rf "$extract_dir"/config "$DEBNAS_INSTALL_DIR/" 2>/dev/null || true
+  cp -f "$extract_dir"/install.sh "$DEBNAS_INSTALL_DIR/" 2>/dev/null || true
+  cp -f "$extract_dir"/README.md "$DEBNAS_INSTALL_DIR/" 2>/dev/null || true
+  cp -f "$extract_dir"/LICENSE "$DEBNAS_INSTALL_DIR/" 2>/dev/null || true
+
+  # 设置权限
+  chmod +x "$DEBNAS_INSTALL_DIR/bin/"* 2>/dev/null || true
+  chmod +x "$DEBNAS_INSTALL_DIR/lib/"*.sh 2>/dev/null || true
+
+  _success "文件安装完成"
+}
+
+# 安装全局命令
+install_debnas_bin() {
+  cat > "$DEBNAS_BIN" <<WRAPPER
+#!/bin/bash
+# DebNAS 全局命令入口（由 install.sh 生成）
+exec bash ${DEBNAS_INSTALL_DIR}/bin/debnas "\$@"
+WRAPPER
+  chmod +x "$DEBNAS_BIN"
+  _success "全局命令已安装: ${DEBNAS_BIN}"
+}
+
+# 创建运行时目录
+create_runtime_dirs() {
+  mkdir -p "$DEBNAS_CONF_DIR/conf.d" "$DEBNAS_LOG_DIR" "$DEBNAS_STATE_DIR"
+  chmod 755 "$DEBNAS_CONF_DIR" "$DEBNAS_LOG_DIR" "$DEBNAS_STATE_DIR"
+  chmod 755 "$DEBNAS_CONF_DIR/conf.d"
+  _info "运行时目录已就绪"
+}
+
+# 写入全局配置
+write_config() {
+  local conf_file="${DEBNAS_CONF_DIR}/debnas.conf"
+
+  # 首次安装：创建新配置
+  if [[ ! -f "$conf_file" ]]; then
+    cat > "$conf_file" <<EOF
+# DebNAS 全局配置
+# 创建时间: $(date '+%Y-%m-%d %H:%M:%S')
+region=${REGION}
+lang=zh
+log_level=INFO
+EOF
+    _success "全局配置已写入: ${conf_file}"
+  else
+    # 更新模式：仅更新 region（如果未设置）
+    if ! grep -q "^region=" "$conf_file" 2>/dev/null; then
+      echo "region=${REGION}" >> "$conf_file"
+    fi
+    _info "已保留现有配置"
+  fi
+}
+
+# 配置 APT 软件源（首次安装时）
+configure_apt_sources() {
+  local configure_sources_script="${DEBNAS_INSTALL_DIR}/modules/configure-sources.sh"
+
+  if [[ -f "$configure_sources_script" ]]; then
+    _action "正在配置 APT 软件源..."
+    if bash "$configure_sources_script"; then
+      _success "APT 软件源配置完成"
+    else
+      _warn "APT 软件源配置未完成，可稍后通过 debnas install configure-sources 手动配置"
+    fi
+  fi
+}
+
+# 检测已安装状态
+check_existing_install() {
+  if [[ -d "$DEBNAS_INSTALL_DIR" ]] && [[ -f "${DEBNAS_INSTALL_DIR}/bin/debnas" ]]; then
+    _info "检测到 DebNAS 已安装"
+
+    if [[ "$FORCE_YES" -eq 1 ]]; then
+      _info "--yes 模式：自动执行覆盖更新"
+      return 0
+    fi
+
+    echo ""
+    echo "  [1] 覆盖更新（保留配置和状态）"
+    echo "  [2] 退出"
+    echo ""
+    read -rp "请选择 [1/2]: " choice
+    case "$choice" in
+      1) _info "执行覆盖更新..." ;;
+      *) _info "已取消"; exit 0 ;;
+    esac
+  fi
+}
+
+# ==================== 主流程 ====================
+
+main() {
+  parse_args "$@"
+
+  # 卸载模式
+  if [[ "$UNINSTALL_MODE" -eq 1 ]]; then
+    check_root
+    do_uninstall
+    exit 0
+  fi
+
+  # 安装模式
+  check_root
+  check_region
+
+  echo ""
+  echo "============================================"
+  echo "  DebNAS 安装程序"
+  echo "  网络环境: ${REGION}"
+  echo "============================================"
+  echo ""
+
+  # 检测已安装
+  check_existing_install
+
+  # 创建临时目录
+  mkdir -p "$DEBNAS_TMP_DIR"
+  chmod 755 "$DEBNAS_TMP_DIR"
+
+  # 下载
+  local tmpdir
+  tmpdir=$(download_repo)
+
+  # 解压安装
+  extract_repo "$tmpdir"
+
+  # 安装全局命令
+  install_debnas_bin
+
+  # 创建运行时目录
+  create_runtime_dirs
+
+  # 写入配置
+  write_config
+
+  # 清理临时文件
+  rm -rf "$tmpdir"
+  _info "临时文件已清理"
+
+  echo ""
+  _success "DebNAS 安装完成！"
+  echo ""
+  echo "  使用方法："
+  echo "    debnas           # 启动交互菜单"
+  echo "    debnas --help    # 查看所有命令"
+  echo ""
+
+  # 首次安装：配置 APT 源
+  if [[ -f "${DEBNAS_INSTALL_DIR}/modules/configure-sources.sh" ]]; then
+    if [[ "$FORCE_YES" -eq 1 ]]; then
+      configure_apt_sources
+    else
+      read -rp "是否现在配置 APT 软件源？[Y/n]: " apt_choice
+      if [[ "$apt_choice" != "n" && "$apt_choice" != "N" ]]; then
+        configure_apt_sources
       fi
-      ;;
-    *)
-      echo "[FAIL] 未知参数: $1"
-      usage
-      ;;
-  esac
-  shift
- done
+    fi
+  fi
 
-if [[ -z "${PLATFORM:-}" || -z "${BRANCH:-}" ]]; then
-  echo "[FAIL] 必须指定 -s 平台@分支 参数"
-  usage
-fi
+  # 询问是否启动菜单
+  if [[ "$FORCE_YES" -ne 1 ]]; then
+    read -rp "是否启动交互菜单？[Y/n]: " menu_choice
+    if [[ "$menu_choice" != "n" && "$menu_choice" != "N" ]]; then
+      exec bash "${DEBNAS_INSTALL_DIR}/bin/debnas" menu
+    fi
+  else
+    exec bash "${DEBNAS_INSTALL_DIR}/bin/debnas" menu
+  fi
+}
 
-# 检查 root 权限（在下载前检查，避免浪费资源）
-if [[ $EUID -ne 0 ]]; then
-  echo "[FAIL] 脚本需要以 root 权限运行。请切换到 root 用户后重试。"
-  exit 1
-fi
-
-# 设置下载链接和解压后子目录名
-if [[ "$PLATFORM" == "gitee" ]]; then
-  TAR_URL="https://gitee.com/kekylin/debnas/repository/archive/$BRANCH.tar.gz"
-TAR_SUBDIR="debnas-$BRANCH"
-elif [[ "$PLATFORM" == "github" ]]; then
-  TAR_URL="https://github.com/kekylin/debnas/archive/refs/heads/$BRANCH.tar.gz"
-TAR_SUBDIR="debnas-$BRANCH"
-else
-  echo "[FAIL] 不支持的平台: $PLATFORM"
-  exit 2
-fi
-
-# 创建唯一临时根目录
-DEBNAS_TMP_BASE="/tmp/debnas"
-mkdir -p "$DEBNAS_TMP_BASE"
-chmod 755 "$DEBNAS_TMP_BASE"
-TMPROOT=$(mktemp -d "${DEBNAS_TMP_BASE}/install.XXXXXX")
-chmod 755 "$TMPROOT"
-
-# 下载并解压仓库
-TARFILE="$TMPROOT/repo.tar.gz"
-echo "[ACTION] 正在下载仓库压缩包..."
-wget -qO "$TARFILE" "$TAR_URL" || { echo "[FAIL] 仓库下载失败"; exit 1; }
-echo "[ACTION] 正在解压仓库..."
-tar -xzf "$TARFILE" -C "$TMPROOT" || { echo "[FAIL] 解压失败"; exit 1; }
-
-# 进入解压目录并执行主脚本
-cd "$TMPROOT/$TAR_SUBDIR"
-echo "[SUCCESS] 所有依赖文件已解压到 $TMPROOT/$TAR_SUBDIR！"
-
-exec bash bin/main.sh -s "$PLATFORM@$BRANCH" --tmpdir "$TMPROOT" 
+main "$@"
