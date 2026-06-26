@@ -67,15 +67,19 @@ preflight_dependencies() {
   fi
 
   log_info "检测到缺失依赖：${missing_cmds[*]}，尝试自动安装..."
-  install_missing_dependencies "${missing_cmds[@]}"
+  install_missing_dependencies "${missing_cmds[@]}" || true
 
-  # 再次检查
+  # 再次检查（安装失败只警告，不阻断 — 模块自身会处理缺失依赖）
+  local -a still_missing=()
   for cmd in "${missing_cmds[@]}"; do
     if ! command -v "$cmd" &>/dev/null; then
-      log_error "依赖安装失败：${cmd}"
-      return 1
+      still_missing+=("$cmd")
     fi
   done
+
+  if [[ ${#still_missing[@]} -gt 0 ]]; then
+    log_warning "以下依赖仍缺失：${still_missing[*]}（模块将自行处理）"
+  fi
 }
 
 # Preflight: 幂等性检查

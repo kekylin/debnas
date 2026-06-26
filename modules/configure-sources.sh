@@ -27,13 +27,14 @@ readonly DEB822_PATH="/etc/apt/sources.list.d/debian.sources"
 readonly TRADITIONAL_PATH="/etc/apt/sources.list"
 readonly PROBE_TIMEOUT=5
 
-REQUIRED_CMDS=(wget apt)
-if ! check_dependencies "${REQUIRED_CMDS[@]}"; then
-  log_info "检测到依赖缺失，执行自动安装"
-  install_missing_dependencies "${REQUIRED_CMDS[@]}"
-  if ! check_dependencies "${REQUIRED_CMDS[@]}"; then
-    log_error "依赖安装失败，请手动安装：${REQUIRED_CMDS[*]}"
-    exit "${ERROR_DEPENDENCY}"
+# wget 用于镜像站连通性探测；如果不可用则跳过探测，使用默认镜像
+_HAS_PROBE_TOOL=1
+if ! command -v wget &>/dev/null && ! command -v curl &>/dev/null; then
+  log_info "wget/curl 不可用，尝试安装..."
+  install_missing_dependencies wget 2>/dev/null || true
+  if ! command -v wget &>/dev/null && ! command -v curl &>/dev/null; then
+    log_warning "wget/curl 无法安装，将跳过镜像站探测，直接使用默认镜像"
+    _HAS_PROBE_TOOL=0
   fi
 fi
 
@@ -53,25 +54,31 @@ probe_mirror() {
 # 返回：选定的镜像站 URL
 detect_best_mirror() {
   local selected_mirror=""
-  
+
+  # 无探测工具时，直接使用第一个国内镜像（不探测）
+  if [[ "${_HAS_PROBE_TOOL}" -eq 0 ]]; then
+    log_info "跳过镜像站探测，使用默认国内镜像"
+    echo "${APT_MIRRORS[0]}"
+    return 0
+  fi
+
   for mirror in "${APT_MIRRORS[@]}"; do
     if probe_mirror "${mirror}"; then
       selected_mirror="${mirror}"
       break
     fi
   done
-  
+
   if [[ -z "${selected_mirror}" ]]; then
     log_warning "未检测到可用的国内镜像站，使用官方镜像站"
     if probe_mirror "${APT_OFFICIAL_MIRROR}"; then
       selected_mirror="${APT_OFFICIAL_MIRROR}"
     else
       log_warning "官方镜像站连接失败，网络可能异常"
-      # 即使探测失败，也使用官方镜像站作为回退配置（网络可能在后续恢复）
       selected_mirror="${APT_OFFICIAL_MIRROR}"
     fi
   fi
-  
+
   echo "${selected_mirror}"
 }
 
@@ -114,11 +121,12 @@ EOF
 update_package_lists() {
   local mirror_url="$1"
   local is_offline=false
-  
-  if ! probe_mirror "${mirror_url}"; then
+
+  # 有探测工具时才进行连通性检查
+  if [[ "${_HAS_PROBE_TOOL}" -eq 1 ]] && ! probe_mirror "${mirror_url}"; then
     is_offline=true
   fi
-  
+
   if [[ "${is_offline}" == "true" ]]; then
     log_warning "软件源已配置为官方地址，但当前网络检测失败"
     log_warning "请检查网络连接、DNS 配置或网关设置。网络恢复后执行 'apt update' 验证"
