@@ -15,6 +15,16 @@ IFS=$'\n\t'
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${SCRIPT_DIR}/lib/bootstrap.sh"
 
+# ==================== 幂等性检查 ====================
+if command -v firewall-cmd &>/dev/null; then
+  if firewall-cmd --state &>/dev/null; then
+    if state_is_installed "install-firewall" 2>/dev/null; then
+      log_info "Firewalld 已安装并运行，跳过"
+      exit 0
+    fi
+  fi
+fi
+
 # 检查 apt、systemctl 依赖，确保后续操作可用
 REQUIRED_CMDS=(apt systemctl)
 if ! check_dependencies "${REQUIRED_CMDS[@]}"; then
@@ -81,3 +91,6 @@ else
     sed -i '/<forward\/>/i \  <service name="cockpit"/>' "$CONFIG_FILE"
   fi
 fi
+
+# ==================== 记录状态 ====================
+state_mark_success "install-firewall"

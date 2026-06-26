@@ -16,6 +16,14 @@ IFS=$'\n\t'
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${SCRIPT_DIR}/lib/bootstrap.sh"
 
+# ==================== 幂等性检查 ====================
+if systemctl list-unit-files cockpit.service &>/dev/null && systemctl is-enabled cockpit.service &>/dev/null; then
+  if state_is_installed "install-cockpit" 2>/dev/null; then
+    log_info "Cockpit 已安装并启用，跳过"
+    exit 0
+  fi
+fi
+
 BEST_GITHUB_PROXY_SELECTION_STATE=""
 BEST_GITHUB_PROXY=""
 BEST_GITHUB_PROXY_LATENCY=""
@@ -391,6 +399,9 @@ main() {
 	fi
 
 	log_success "Cockpit 管理面板安装完成"
+
+	# ==================== 记录状态 ====================
+	state_mark_success "install-cockpit"
 }
 
 main "$@"

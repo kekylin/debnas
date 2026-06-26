@@ -15,6 +15,16 @@ IFS=$'\n\t'
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${SCRIPT_DIR}/lib/bootstrap.sh"
 
+# ==================== 幂等性检查 ====================
+if command -v fail2ban-client &>/dev/null; then
+  if systemctl is-active fail2ban &>/dev/null; then
+    if state_is_installed "install-fail2ban" 2>/dev/null; then
+      log_info "Fail2ban 已安装并运行，跳过"
+      exit 0
+    fi
+  fi
+fi
+
 # 检查 apt、systemctl 依赖，确保后续操作可用
 REQUIRED_CMDS=(apt systemctl)
 if ! check_dependencies "${REQUIRED_CMDS[@]}"; then
@@ -157,6 +167,9 @@ main() {
   configure_mail_whois
   configure_pam_generic
   start_fail2ban
+
+  # ==================== 记录状态 ====================
+  state_mark_success "install-fail2ban"
 }
 
 main 

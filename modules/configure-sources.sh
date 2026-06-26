@@ -13,6 +13,16 @@ IFS=$'\n\t'
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${SCRIPT_DIR}/lib/bootstrap.sh"
 
+# ==================== 幂等性检查 ====================
+if [[ -f "/etc/apt/sources.list.d/debian.sources" ]]; then
+  if grep -q "^URIs:" /etc/apt/sources.list.d/debian.sources 2>/dev/null; then
+    if state_is_installed "configure-sources" 2>/dev/null; then
+      log_info "APT 软件源已配置，跳过（如需重新配置，请先删除 /etc/apt/sources.list.d/debian.sources）"
+      exit 0
+    fi
+  fi
+fi
+
 readonly DEB822_PATH="/etc/apt/sources.list.d/debian.sources"
 readonly TRADITIONAL_PATH="/etc/apt/sources.list"
 readonly PROBE_TIMEOUT=5
@@ -150,5 +160,8 @@ main() {
   write_deb822_config "${selected_mirror}"
   update_package_lists "${selected_mirror}"
 }
+
+# ==================== 记录状态 ====================
+state_mark_success "configure-sources"
 
 main

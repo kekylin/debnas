@@ -14,6 +14,15 @@ IFS=$'\n\t'
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${SCRIPT_DIR}/lib/bootstrap.sh"
 
+# ==================== 幂等性检查 ====================
+if command -v docker &>/dev/null; then
+  if state_is_installed "install-docker-ce" 2>/dev/null; then
+    docker_version=$(docker --version 2>/dev/null | grep -oP '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+    log_info "Docker 已安装（版本: ${docker_version:-未知}），跳过"
+    exit 0
+  fi
+fi
+
 # ==================== 函数定义 ====================
 
 # 检测镜像站连通性（基于 urls.sh 的 probe_url）
@@ -219,3 +228,6 @@ else
     log_success "Docker 安装完成，服务已启动并设置为开机自启"
   fi
 fi
+
+# ==================== 记录状态 ====================
+state_mark_success "install-docker-ce" "$(docker --version 2>/dev/null | grep -oP '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"

@@ -165,63 +165,8 @@ cmd_uninstall() {
 
 # 子命令：doctor
 cmd_doctor() {
-  log_info "开始系统诊断..."
-  echo ""
-
-  # [1] 系统兼容性
-  echo "── 系统兼容性 ──"
-  local os_name os_version os_codename arch
-  os_name=$(get_system_name 2>/dev/null || echo "未知")
-  os_version=$(get_system_version 2>/dev/null || echo "未知")
-  os_codename=$(get_system_codename 2>/dev/null || echo "未知")
-  arch=$(get_system_architecture 2>/dev/null || echo "未知")
-
-  printf "  %-20s %s %s (%s)\n" "操作系统:" "$os_name" "$os_version" "$os_codename"
-  printf "  %-20s %s\n" "CPU 架构:" "$arch"
-
-  if verify_system_support 2>/dev/null; then
-    printf "  %-20s %s\n" "系统兼容性:" "✅ 支持"
-  else
-    printf "  %-20s %s\n" "系统兼容性:" "❌ 不支持"
-  fi
-  echo ""
-
-  # [2] DebNAS 状态
-  echo "── DebNAS 状态 ──"
-  printf "  %-20s %s\n" "版本:" "${DEBNAS_VERSION:-未知}"
-  printf "  %-20s %s\n" "安装目录:" "${_DEBNAS_ROOT}"
-
-  local installed_count=0
-  if [[ -d "/var/lib/debnas/state" ]]; then
-    installed_count=$(find /var/lib/debnas/state -name "*.state" 2>/dev/null | wc -l)
-  fi
-  printf "  %-20s %s 个\n" "已安装模块:" "$installed_count"
-
-  local region
-  region=$(config_read "global" "region" "未配置" 2>/dev/null) || region="未配置"
-  printf "  %-20s %s\n" "Region:" "$region"
-  echo ""
-
-  # [3] 网络连通性
-  echo "── 网络连通性 ──"
-  local targets=("https://deb.debian.org" "https://mirrors.tuna.tsinghua.edu.cn" "https://github.com")
-  local target
-  for target in "${targets[@]}"; do
-    if probe_url "$target" 2>/dev/null; then
-      printf "  %-40s %s\n" "$target" "✅ 可达"
-    else
-      printf "  %-40s %s\n" "$target" "❌ 不可达"
-    fi
-  done
-  echo ""
-
-  # [4] 磁盘空间
-  echo "── 磁盘空间 ──"
-  df -h / /opt /var 2>/dev/null | awk 'NR==1 || /^\/dev/' | sed 's/^/  /'
-  echo ""
-
-  log_success "诊断完成"
-  return 0
+  unset _DEBNAS_BOOTSTRAPPED
+  exec bash "${_DEBNAS_ROOT}/bin/doctor.sh" "$@"
 }
 
 # 子命令：cron

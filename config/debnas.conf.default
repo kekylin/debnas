@@ -1,0 +1,18 @@
+# DebNAS 全局默认配置
+# 此文件为默认模板，运行时配置存储在 /etc/debnas/debnas.conf
+# 安装时由 install.sh 复制到运行时目录
+
+# 网络环境: cn（国内镜像）或 global（国际镜像）
+region=cn
+
+# 界面语言: zh（中文）或 en（英文）
+lang=zh
+
+# 日志级别: DEBUG, INFO, WARN, ERROR, FATAL
+log_level=INFO
+
+# 是否启用文件日志（0=禁用，1=启用）
+file_logging=1
+
+# APT 安装时是否跳过推荐包（0=安装推荐包，1=不安装）
+apt_no_recommends=1
