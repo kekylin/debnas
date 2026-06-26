@@ -414,11 +414,10 @@ auto_menu_loop() {
 # 设置临时目录和信号处理
 setup_environment() {
   init_temp_dir
-  local tmp_dir
-  tmp_dir=$(mktemp -d "${DEBNAS_TMP_BASE}/menu.XXXXXX")
-  chmod 755 "$tmp_dir"
-  trap 'log_warning "用户中断操作"; rm -rf "$tmp_dir"; exit 1' INT
-  trap 'rm -rf "$tmp_dir"' EXIT
+  _MENU_TMP_DIR=$(mktemp -d "${DEBNAS_TMP_BASE}/menu.XXXXXX")
+  chmod 755 "$_MENU_TMP_DIR"
+  trap 'log_warning "用户中断操作"; rm -rf "$_MENU_TMP_DIR"; exit 1' INT
+  trap 'rm -rf "$_MENU_TMP_DIR"' EXIT
 }
 
 # ==================== 主入口 ====================
