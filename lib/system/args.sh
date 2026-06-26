@@ -166,9 +166,9 @@ parse_global_args() {
     esac
   done
 
-  # 将剩余参数存入全局数组供调用方使用
+  # 将剩余参数存入全局变量供调用方使用（用空格连接，不受 IFS 影响）
   export DEBNAS_REMAINING_ARGS
-  DEBNAS_REMAINING_ARGS="${remaining_args[*]:-}"
+  DEBNAS_REMAINING_ARGS="$(IFS=' '; echo "${remaining_args[*]:-}")"
   return 0
 }
 
