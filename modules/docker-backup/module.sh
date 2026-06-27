@@ -1,6 +1,6 @@
 #!/bin/bash
-# @module: backup-restore
-# @name: 备份恢复
+# @module: docker-backup
+# @name: Docker 备份恢复
 # @category: 容器管理
 # @depends: docker,tar,rsync
 # @depend_modules: docker-ce
@@ -27,7 +27,9 @@ cleanup_on_exit() {
 }
 
 handle_interrupt() {
-  log_info "脚本中断，正在清理..."
+  log_warning "脚本中断，Docker 服务保持停止状态以便检查数据完整性。"
+  log_warning "请手动检查数据后执行: systemctl start docker"
+  DOCKER_WAS_ACTIVE="inactive"
   exit 1
 }
 
@@ -46,8 +48,8 @@ if ! check_dependencies "${REQUIRED_CMDS[@]}"; then
   fi
 fi
 
-# 默认配置文件路径
-readonly DEFAULT_CONFIG_FILE="${SCRIPT_DIR}/config/docker_backup.conf"
+# 默认配置文件路径（模块内配置文件）
+readonly DEFAULT_CONFIG_FILE="${MODULE_DIR}/config/docker_backup.conf.default"
 # 备份配置运行时变量，需先初始化以兼容 set -u
 declare -a SOURCE_DIRS=()
 declare -a EXCLUDED_DIRS=()
@@ -81,7 +83,7 @@ normalize_config_value() {
   local raw_value="$1"
   local value
   value="$(trim_whitespace "$raw_value")"
-  value="${value//[! -~]/}"
+  value="${value//[$'\x00'-$'\x1f'$'\x7f']/}"
 
   if [[ "$value" =~ ^\"(.*)\"$ ]]; then
     value="${BASH_REMATCH[1]}"
@@ -158,7 +160,7 @@ prompt_absolute_path() {
   local input_path=""
 
   while true; do
-    log_info "$prompt_message" >&2
+    log_info "$prompt_message"
     read -r -e -p "" input_path
     input_path="$(trim_whitespace "$input_path")"
     if [[ -n "$input_path" && "$input_path" =~ ^/ ]]; then
@@ -621,19 +623,24 @@ main_menu() {
     fi
     
     case $choice in
-    1)
+      1)
         load_backup_config
-      perform_backup
-      ;;
-    2)
-        perform_restore  # 移除 load_backup_config
+        perform_backup
+        ;;
+      2)
+        perform_restore
         ;;
       3)
-          BACKUP_DEST="$(prompt_absolute_path "请输入备份文件存储路径（例如 /mnt/backup）：")"
-          local available_backups=()
-          set +e
-          mapfile -t available_backups < <(get_available_backup_dirs "$BACKUP_DEST")
+        BACKUP_DEST="$(prompt_absolute_path "请输入备份文件存储路径（例如 /mnt/backup）：")"
+        local available_backups=()
+        set +e
+        mapfile -t available_backups < <(get_available_backup_dirs "$BACKUP_DEST")
+        set -e
+        if [[ ${#available_backups[@]} -eq 0 ]]; then
+          log_info "暂无备份记录"
+        else
           echo "备份列表:"
+          local idx=1
           for backup_dir in "${available_backups[@]}"; do
             if [[ -d "$backup_dir" ]]; then
               local display_name
@@ -642,10 +649,11 @@ main_menu() {
               backup_date=$(stat -c %y "$backup_dir" | cut -d'.' -f1)
               local backup_size
               backup_size=$(du -sh "$backup_dir" 2>/dev/null | cut -f1)
-              echo "  $display_name (创建于 $backup_date, 大小: $backup_size)"
+              echo "  ${idx}. $display_name (创建于 $backup_date, 大小: $backup_size)"
+              ((idx++))
             fi
           done
-          set -e
+        fi
         ;;
       0) log_action "返回"; return 0 ;;
       *) log_error "无效的操作选项，请重新选择。" ;;
@@ -653,19 +661,19 @@ main_menu() {
   done
 }
 
-  main() {
-    case "${1:-}" in
-      "--backup")
-        load_backup_config
-        perform_backup
-        ;;
-      "--restore")
-        perform_restore
-        ;;
-      *)
-        main_menu
-        ;;
-    esac
-  }
+main() {
+  case "${1:-}" in
+    "--backup")
+      load_backup_config
+      perform_backup
+      ;;
+    "--restore")
+      perform_restore
+      ;;
+    *)
+      main_menu
+      ;;
+  esac
+}
 
-  main "$@"
+main "$@"

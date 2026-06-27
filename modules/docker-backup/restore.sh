@@ -1,5 +1,5 @@
 #!/bin/bash
-# backup-restore: 恢复逻辑模块
+# docker-backup: 恢复逻辑模块
 set -euo pipefail
 IFS=$'\n\t'
 restore_single_source_dir() {
@@ -45,7 +45,9 @@ perform_restore() {
   log_info "开始执行 Docker 恢复..."
   BACKUP_DEST="$(prompt_absolute_path "请输入备份文件存储路径（例如 /mnt/backup）：")"
 
-  echo -e "请选择恢复模式:\n1. 完全恢复（覆盖现有数据）\n2. 增量恢复（保留现有数据）"
+  log_info "请选择恢复模式:"
+  log_info "  1. 完全恢复（覆盖现有数据）"
+  log_info "  2. 增量恢复（保留现有数据）"
   read -r -p "请选择 (1/2): " restore_mode_choice
   local restore_mode=""
   case "$restore_mode_choice" in

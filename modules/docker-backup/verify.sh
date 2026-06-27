@@ -1,5 +1,5 @@
 #!/bin/bash
-# backup-restore: 完整性校验模块
+# docker-backup: 完整性校验模块
 set -euo pipefail
 IFS=$'\n\t'
 get_rsync_exclude_pattern() {
@@ -8,9 +8,10 @@ get_rsync_exclude_pattern() {
   local normalized_source="${source_dir%/}"
   local normalized_exclude="${exclude_dir%/}"
 
+  # M1 fix: 排除目录与源目录相同是配置错误
   if [[ "$normalized_exclude" == "$normalized_source" ]]; then
-    echo "/"
-    return 0
+    log_error "排除目录与源目录相同，跳过此排除规则: $exclude_dir"
+    return 1
   fi
 
   if [[ "$normalized_exclude" == "$normalized_source"/* ]]; then
@@ -43,14 +44,15 @@ get_dir_stats() {
   fi
 }
 
+# L4 fix: 使用 awk -v 变量传递，避免注入风险
 format_file_size() {
   local size_kb="$1"
   if [[ $size_kb -lt 1024 ]]; then
     echo "${size_kb}KB"
   elif [[ $size_kb -lt $((1024 * 1024)) ]]; then
-    echo "$(awk "BEGIN {printf \"%.2f\", $size_kb / 1024}")MB"
+    echo "$(awk -v s="$size_kb" 'BEGIN {printf "%.2f", s / 1024}')MB"
   else
-    echo "$(awk "BEGIN {printf \"%.2f\", $size_kb / 1024 / 1024}")GB"
+    echo "$(awk -v s="$size_kb" 'BEGIN {printf "%.2f", s / 1024 / 1024}')GB"
   fi
 }
 
@@ -65,7 +67,7 @@ get_total_files() {
   echo "$total"
 }
 
-# 工具函数，显示进度条
+# L5 fix: 使用 printf 字符串重复替代 50 次循环
 show_progress() {
   local current="$1"
   local total="$2"
@@ -75,39 +77,31 @@ show_progress() {
   fi
   local progress=$((current * width / total))
   local percent=$((current * 100 / total))
-  printf "\r进度: [" >&2
-  for ((i = 0; i < width; i++)); do
-    if [[ $i -lt $progress ]]; then
-      printf "#" >&2
-    else
-      printf " " >&2
-    fi
-  done
-  printf "] %d%%" "$percent" >&2
+  local filled
+  filled=$(printf '#%.0s' $(seq 1 "$progress" 2>/dev/null) 2>/dev/null) || filled=""
+  local empty
+  empty=$(printf ' %.0s' $(seq 1 $((width - progress)) 2>/dev/null) 2>/dev/null) || empty=""
+  printf "\r进度: [%s%s] %d%%" "$filled" "$empty" "$percent" >&2
   if [[ $current -eq $total ]]; then
     printf "\n" >&2
   fi
 }
 
-# 工具函数，处理 rsync 进度输出
+# M3 fix: 进度标签改为字节百分比（不再伪装为文件数）
 process_rsync_progress() {
   local total_files="$1"
-  local processed_files=0
   local last_update=0
   local current_time
   local last_progress=0
 
   while IFS= read -r line; do
-    # 提取已传输的字节数和百分比
     if [[ $line =~ ([0-9]+)% ]]; then
       local percent="${BASH_REMATCH[1]}"
       current_time=$(date +%s)
-      # 每秒最多更新一次进度条
       if ((current_time - last_update >= 1)); then
-        # 只有当进度发生变化时才显示
         if ((percent > last_progress)); then
-          processed_files=$((total_files * percent / 100))
-          show_progress "$processed_files" "$total_files"
+          # 显示字节传输百分比，不再映射为文件数
+          printf "\r传输进度: %d%%" "$percent" >&2
           last_progress=$percent
         fi
         last_update=$current_time
@@ -128,4 +122,3 @@ run_rsync_with_progress() {
   set -e
   return "$rsync_status"
 }
-

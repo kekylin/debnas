@@ -1,5 +1,5 @@
 #!/bin/bash
-# backup-restore: 备份逻辑模块
+# docker-backup: 备份逻辑模块
 set -euo pipefail
 IFS=$'\n\t'
 prepare_backup_target() {
@@ -22,7 +22,7 @@ prepare_backup_target() {
     return 1
   fi
 
-  printf "%s\n" "$backup_path"
+  _BACKUP_RESULT_PATH="$backup_path"
 }
 
 # 备份单个源目录
@@ -35,6 +35,12 @@ backup_single_source_dir() {
 
   if [[ ! -d "$source_dir" ]]; then
     log_warning "目录不存在，已跳过: $source_dir"
+    return 2
+  fi
+
+  # M4: 检查源目录是否为空（防止 --delete 清空备份）
+  if [[ -z "$(ls -A "$source_dir" 2>/dev/null)" ]]; then
+    log_warning "源目录为空，已跳过: $source_dir"
     return 2
   fi
 
@@ -54,8 +60,9 @@ backup_single_source_dir() {
   backup_source_dir=$(get_backup_source_dir "$backup_path" "$source_dir")
   mkdir -p "$backup_source_dir"
 
+  # C1 fix: 移除 --delete，改用不删除备份中已有文件的模式
   if run_rsync_with_progress "$total_source_files" \
-    env LC_ALL=C rsync -ah --info=progress2 --no-i-r --stats --delete "${exclude_args[@]}" \
+    env LC_ALL=C rsync -ah --info=progress2 --no-i-r --stats "${exclude_args[@]}" \
     "$source_dir/" "$backup_source_dir/"; then
     show_progress "$total_source_files" "$total_source_files"
     local dir_stats
@@ -64,7 +71,7 @@ backup_single_source_dir() {
     dir_size=$(echo "$dir_stats" | cut -d' ' -f1)
     local dir_files
     dir_files=$(echo "$dir_stats" | cut -d' ' -f2)
-    printf "%s\n" "$dir_size $dir_files"
+    _BACKUP_RESULT_STATS="$dir_size $dir_files"
     return 0
   fi
 
@@ -76,14 +83,17 @@ perform_backup() {
   log_action "开始执行 Docker 备份..."
   local start_time
   start_time=$(date +%s)
-  local backup_path
-  backup_path=$(prepare_backup_target) || return 1
+
+  # C3 fix: 使用全局变量而非 stdout 捕获路径
+  prepare_backup_target || return 1
+  local backup_path="$_BACKUP_RESULT_PATH"
 
   prepare_docker_service_for_data_operation
 
   local total_files=0
   local total_size=0
   local successful_dirs=0
+  local skipped_dirs=0
 
   log_info "正在统计文件数量..."
   local total_source_files
@@ -92,10 +102,9 @@ perform_backup() {
 
   local source_dir
   for source_dir in "${SOURCE_DIRS[@]}"; do
-    local backup_result
-    if backup_result=$(backup_single_source_dir "$source_dir" "$backup_path" "$total_source_files" EXCLUDED_DIRS); then
-      local dir_size="${backup_result%% *}"
-      local dir_files="${backup_result##* }"
+    if backup_single_source_dir "$source_dir" "$backup_path" "$total_source_files" EXCLUDED_DIRS; then
+      local dir_size="${_BACKUP_RESULT_STATS%% *}"
+      local dir_files="${_BACKUP_RESULT_STATS##* }"
       total_size=$((total_size + dir_size))
       total_files=$((total_files + dir_files))
       successful_dirs=$((successful_dirs + 1))
@@ -104,9 +113,16 @@ perform_backup() {
       local backup_status=$?
       if [[ $backup_status -eq 1 ]]; then
         printf "\r%s\n" "$(log_fail "目录 $source_dir 备份失败。")"
+      elif [[ $backup_status -eq 2 ]]; then
+        skipped_dirs=$((skipped_dirs + 1))
       fi
     fi
   done
+
+  # H5 fix: 报告跳过的目录
+  if [[ $skipped_dirs -gt 0 ]]; then
+    log_warning "共跳过 $skipped_dirs 个目录（不存在或为空）"
+  fi
 
   if [[ $successful_dirs -eq 0 ]]; then
     log_error "没有找到任何有效的源目录，备份操作已取消。"
@@ -121,7 +137,7 @@ perform_backup() {
   generate_operation_log "$backup_log_file" "$start_time" "$end_time" "backup" \
     "$backup_path"
   log_success "Docker 备份完成: $backup_path"
-  log_info "备份统计: ${total_files} 文件, $(format_file_size "$total_size")"
+  log_info "备份统计: ${total_files} 文件, $(format_file_size "$total_size")（成功 ${successful_dirs}/${#SOURCE_DIRS[@]} 目录）"
 }
 
-# 执行恢复，支持完全恢复和增量恢复
+
