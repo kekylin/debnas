@@ -45,15 +45,19 @@ su -
 ### 3、运行脚本
 建议在执行前阅读[脚本介绍](https://kekylin.github.io/debnas-docs/guide/script-introduction/)，了解脚本模块与执行选项。下面运行脚本命令（二选一）  
 
-Github地址
-  ```shell
-bash <(wget -qO- https://raw.githubusercontent.com/kekylin/debnas/main/install.sh) -s github@main
-  ```
 Gitee地址（国内用户推荐）
   ```shell
-bash <(wget -qO- https://gitee.com/kekylin/debnas/raw/main/install.sh) -s gitee@main
+wget https://gitee.com/kekylin/debnas/raw/main/install.sh && bash install.sh --region cn
   ```
-- `-s` 参数格式：平台@分支名，如 `-s github@main`、`-s gitee@dev`
+Github地址
+  ```shell
+wget https://github.com/kekylin/debnas/raw/main/install.sh && bash install.sh
+  ```
+- 项目在 Gitee 和 GitHub 同步维护，通过任一地址下载脚本均可使用
+- 不指定 `--region` 默认使用国际源（GitHub 优先，Gitee 备用）
+- 指定 `--region cn` 使用国内源（Gitee 优先，GitHub 备用）
+- 下载时两个地址互为备用，任一失效自动切换
+- 安装完成后自动启动交互菜单
 
 ### 4、登陆使用
 > **脚本执行完毕后，SSH 控制台将输出 Cockpit 与 Docker 管理平台地址，请按提示登录访问。**

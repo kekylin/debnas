@@ -41,7 +41,7 @@ _action()  { _msg "ACTION" "$1"; }
 
 # ==================== 参数解析 ====================
 
-REGION=""
+REGION="global"
 UNINSTALL_MODE=0
 FORCE_YES=0
 
@@ -83,7 +83,7 @@ parse_args() {
 }
 
 print_usage() {
-  echo "用法: bash install.sh --region cn|global [--yes]"
+  echo "用法: bash install.sh [--region cn|global] [--yes]"
   echo "      bash install.sh --uninstall"
 }
 
@@ -92,18 +92,18 @@ print_help() {
 DebNAS — Debian NAS 自动化部署工具
 
 安装:
-  bash install.sh --region cn       # 国内用户（使用 Gitee 下载）
-  bash install.sh --region global   # 国际用户（使用 GitHub 下载）
-  bash install.sh --region cn --yes # 自动确认所有提示
+  bash install.sh                   # 默认国际源（GitHub/Gitee 自动降级）
+  bash install.sh --region cn       # 国内用户优先 Gitee
+  bash install.sh --yes             # 自动确认所有提示
 
 卸载:
   bash install.sh --uninstall       # 移除 DebNAS 脚本和配置
 
 说明:
-  · --region 参数必填，指定网络环境
+  · --region 可选，默认 global（国际源），cn 使用国内镜像
+  · Gitee 和 GitHub 互为备用，任一地址失效自动切换
   · 安装到 /opt/debnas/，全局命令 /usr/local/bin/debnas
-  · 首次安装会自动配置 APT 软件源
-  · 重复运行会检测已安装状态并提供更新选项
+  · 安装完成后自动启动交互菜单
 EOF
 }
 
@@ -181,29 +181,17 @@ check_root() {
   fi
 }
 
-# 校验 region 参数
-check_region() {
-  if [[ -z "$REGION" ]]; then
-    _fail "必须指定 --region 参数"
-    echo ""
-    print_usage
-    echo ""
-    echo "示例:"
-    echo "  bash install.sh --region cn       # 国内用户"
-    echo "  bash install.sh --region global   # 国际用户"
-    exit 1
-  fi
-}
-
-# 下载仓库压缩包
+# 下载仓库压缩包（自动降级：主源失败自动切换备用源）
 download_repo() {
-  local download_url
+  local primary_url fallback_url
   if [[ "$REGION" == "cn" ]]; then
-    download_url="$REPO_CN_URL"
-    _info "使用国内下载源（Gitee）"
+    primary_url="$REPO_CN_URL"
+    fallback_url="$REPO_GLOBAL_URL"
+    _info "下载源: Gitee（国内），备用: GitHub"
   else
-    download_url="$REPO_GLOBAL_URL"
-    _info "使用国际下载源（GitHub）"
+    primary_url="$REPO_GLOBAL_URL"
+    fallback_url="$REPO_CN_URL"
+    _info "下载源: GitHub（国际），备用: Gitee"
   fi
 
   local tmpdir
@@ -213,10 +201,13 @@ download_repo() {
   local tarball="${tmpdir}/debnas.tar.gz"
 
   _action "正在下载仓库压缩包..."
-  if ! wget -q --show-progress -O "$tarball" "$download_url" 2>&1; then
-    _fail "仓库下载失败: ${download_url}"
-    rm -rf "$tmpdir"
-    exit 1
+  if ! wget -q --show-progress -O "$tarball" "$primary_url" 2>&1; then
+    _warn "主下载源失败，尝试备用源..."
+    if ! wget -q --show-progress -O "$tarball" "$fallback_url" 2>&1; then
+      _fail "所有下载源均失败"
+      rm -rf "$tmpdir"
+      exit 1
+    fi
   fi
 
   # SHA256 校验
@@ -313,16 +304,16 @@ EOF
   fi
 }
 
-# 配置 APT 软件源（首次安装时）
+# 配置 APT 软件源（用户通过菜单或命令自行配置）
 configure_apt_sources() {
-  local configure_sources_script="${DEBNAS_INSTALL_DIR}/modules/configure-sources.sh"
+  local sources_script="${DEBNAS_INSTALL_DIR}/modules/sources.sh"
 
-  if [[ -f "$configure_sources_script" ]]; then
+  if [[ -f "$sources_script" ]]; then
     _action "正在配置 APT 软件源..."
-    if bash "$configure_sources_script"; then
+    if bash "$sources_script"; then
       _success "APT 软件源配置完成"
     else
-      _warn "APT 软件源配置未完成，可稍后通过 debnas install configure-sources 手动配置"
+      _warn "APT 软件源配置未完成，可稍后通过 debnas install sources 手动配置"
     fi
   fi
 }
@@ -363,7 +354,6 @@ main() {
 
   # 安装模式
   check_root
-  check_region
 
   echo ""
   echo "============================================"
@@ -407,27 +397,8 @@ main() {
   echo "    debnas --help    # 查看所有命令"
   echo ""
 
-  # 首次安装：配置 APT 源
-  if [[ -f "${DEBNAS_INSTALL_DIR}/modules/configure-sources.sh" ]]; then
-    if [[ "$FORCE_YES" -eq 1 ]]; then
-      configure_apt_sources
-    else
-      read -rp "是否现在配置 APT 软件源？[Y/n]: " apt_choice
-      if [[ "$apt_choice" != "n" && "$apt_choice" != "N" ]]; then
-        configure_apt_sources
-      fi
-    fi
-  fi
-
-  # 询问是否启动菜单
-  if [[ "$FORCE_YES" -ne 1 ]]; then
-    read -rp "是否启动交互菜单？[Y/n]: " menu_choice
-    if [[ "$menu_choice" != "n" && "$menu_choice" != "N" ]]; then
-      exec bash "${DEBNAS_INSTALL_DIR}/bin/debnas" menu
-    fi
-  else
-    exec bash "${DEBNAS_INSTALL_DIR}/bin/debnas" menu
-  fi
+  # 自动启动交互菜单
+  exec bash "${DEBNAS_INSTALL_DIR}/bin/debnas" menu
 }
 
 main "$@"
