@@ -15,9 +15,6 @@ IFS=$'\n\t'
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${SCRIPT_DIR}/lib/bootstrap-core.sh"
 
-# 容器配置文件
-CONTAINER_CONFIG="${SCRIPT_DIR}/config/containers.conf"
-
 # 检查依赖
 REQUIRED_CMDS=(docker curl)
 if ! check_dependencies "${REQUIRED_CMDS[@]}"; then
@@ -32,27 +29,20 @@ if [[ ! -d "$COMPOSE_DIR" ]]; then
   exit "${ERROR_GENERAL}"
 fi
 
-# 读取容器配置
-declare -A container_desc
-declare -A container_compose
-declare -a container_order
+# 容器定义（内联，扩展时在此添加新条目）
+declare -A container_desc=(
+  ["portainer"]="Portainer"
+)
+declare -A container_compose=(
+  ["portainer"]="portainer.yaml"
+)
+declare -a container_order=("portainer")
 
-# 全局菜单映射（避免 export+eval 传递关联数组）
+# 全局菜单映射
 declare -A g_index_to_key
 declare -a g_sorted_keys
 load_container_config() {
-  if [[ ! -f "$CONTAINER_CONFIG" ]]; then
-    log_error "容器配置文件不存在：$CONTAINER_CONFIG"
-    return 1
-  fi
-  container_order=()
-  # 使用 while read ... || [ -n "$key" ] 方式，确保最后一行无换行符也能被处理
-  while IFS='|' read -r key yaml || [ -n "$key" ]; do
-    [[ -z "$key" || "$key" =~ ^# ]] && continue
-    container_desc["$key"]="${key^}"
-    container_compose["$key"]="$yaml"
-    container_order+=("$key")
-  done < "$CONTAINER_CONFIG"
+  : # 容器已内联定义，无需加载外部文件
 }
 
 # 显示容器应用菜单（按容器名称字母顺序）
