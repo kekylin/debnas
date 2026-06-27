@@ -26,7 +26,7 @@ if ! check_dependencies "${REQUIRED_CMDS[@]}"; then
 fi
 
 # 检查 compose 目录
-COMPOSE_DIR="${SCRIPT_DIR}/docker-compose"
+COMPOSE_DIR="${SCRIPT_DIR}/compose"
 if [[ ! -d "$COMPOSE_DIR" ]]; then
   log_error "compose 目录不存在：$COMPOSE_DIR。"
   exit "${ERROR_GENERAL}"

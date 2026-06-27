@@ -56,7 +56,6 @@ check_system_services() {
 check_docker_containers() {
   local host_ip="$1"
   declare -A docker_containers=(
-    ["dockge"]="http://${host_ip}:5001"
     ["portainer"]="https://${host_ip}:9443"
   )
 
