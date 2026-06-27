@@ -1,5 +1,5 @@
 #!/bin/bash
-# auto-update-hosts: 多 DNS 并行解析模块
+# hosts-sync: 多 DNS 并行解析模块
 set -euo pipefail
 IFS=$'\n\t'
 get_domain_hash() {

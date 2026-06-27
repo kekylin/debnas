@@ -1,5 +1,5 @@
 #!/bin/bash
-# block-threat-ips: Firewalld 集成模块
+# threat-ips: Firewalld 集成模块
 
 set -euo pipefail
 IFS=$'\n\t'

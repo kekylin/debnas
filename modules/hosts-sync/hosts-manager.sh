@@ -1,5 +1,5 @@
 #!/bin/bash
-# auto-update-hosts: /etc/hosts 读写模块
+# hosts-sync: /etc/hosts 读写模块
 set -euo pipefail
 IFS=$'\n\t'
 print_host_entry() {

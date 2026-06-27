@@ -1,5 +1,5 @@
 #!/bin/bash
-# auto-update-hosts: 三级连通性检测模块
+# hosts-sync: 三级连通性检测模块
 set -euo pipefail
 IFS=$'\n\t'
 test_https_connectivity() {

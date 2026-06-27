@@ -18,9 +18,9 @@ MODULES=(
   "sources|配置软件源"
   "basic-tools|安装必备软件"
   "cockpit|安装 Cockpit 面板"
-  "set-cockpit-network|设置 Cockpit 网络访问"
+  "cockpit-net|设置 Cockpit 网络访问"
   "docker-ce|安装 Docker"
-  "add-docker-mirror|添加 Docker 镜像加速"
+  "docker-mirror|添加 Docker 镜像加速"
   "service-query|安装服务查询工具"
 )
 

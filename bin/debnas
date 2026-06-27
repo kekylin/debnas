@@ -246,7 +246,7 @@ main() {
       cmd_menu "${subcmd_args[@]+"${subcmd_args[@]}"}"
       ;;
 
-    install)
+    install|run)
       cmd_install "${subcmd_args[@]+"${subcmd_args[@]}"}"
       ;;
 

@@ -1,5 +1,5 @@
 #!/bin/bash
-# check-system-updates: 定时检查逻辑
+# sys-patches: 定时检查逻辑
 set -euo pipefail
 IFS=$'\n\t'
 setup_script_file() {
@@ -159,7 +159,7 @@ set_cron_task() {
   # 清理旧版 cron.d 文件（兼容迁移）
   rm -f "$CRON_TASK_FILE" 2>/dev/null || true
 
-  if cron_register "check-system-updates" "$cron" 2>/dev/null; then
+  if cron_register "sys-patches" "$cron" 2>/dev/null; then
     [[ "$schedule" == "daily" ]] && log_success "已设置每日检测任务" || log_success "已设置每周检测任务"
   else
     log_error "设置定时任务失败"
@@ -176,7 +176,7 @@ set_custom_cron_task() {
   # 清理旧版 cron.d 文件（兼容迁移）
   rm -f "$CRON_TASK_FILE" 2>/dev/null || true
 
-  if cron_register "check-system-updates" "$cron" 2>/dev/null; then
+  if cron_register "sys-patches" "$cron" 2>/dev/null; then
     log_success "已设置自定义检测任务（${cron}）"
   else
     log_error "设置定时任务失败"

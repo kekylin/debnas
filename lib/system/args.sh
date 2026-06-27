@@ -33,7 +33,8 @@ DebNAS — Debian NAS 自动化部署工具
 
 子命令:
   menu                 启动交互菜单（无参数时的默认命令）
-  install <模块>       安装指定模块
+  install <模块>       安装模块（安装软件包或写入系统配置）
+  run <模块>           执行模块（一次性操作、查询、开关切换）
   update               更新 DebNAS 到最新版本（保留配置和状态）
   uninstall            卸载 DebNAS
   doctor               系统状态诊断
@@ -50,9 +51,11 @@ DebNAS — Debian NAS 自动化部署工具
 
 示例:
   debnas                               # 启动交互菜单
-  debnas install sources     # 配置软件源
-  debnas --debug install docker              # 调试模式安装 Docker
-  debnas --dry-run install firewall          # 预览防火墙安装（不执行）
+  debnas install sources               # 配置软件源
+  debnas install cockpit               # 安装 Cockpit 面板
+  debnas install docker-ce             # 安装 Docker
+  debnas run wallpaper                 # 执行壁纸更新
+  debnas run sys-check                 # 执行系统检查
   debnas doctor                        # 运行系统诊断
   debnas cron list                     # 查看定时任务
 

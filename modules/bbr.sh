@@ -1,5 +1,5 @@
 #!/bin/bash
-# @module: bbr-algo-manager
+# @module: bbr
 # @name: BBR 算法管理
 # @category: 系统工具
 # @depends: sysctl

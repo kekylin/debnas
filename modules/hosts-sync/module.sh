@@ -1,5 +1,5 @@
 #!/bin/bash
-# @module: auto-update-hosts
+# @module: hosts-sync
 # @name: 更新 Hosts 文件
 # @category: 系统工具
 # @depends: dig,ping

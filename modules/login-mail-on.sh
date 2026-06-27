@@ -1,5 +1,5 @@
 #!/bin/bash
-# @module: enable-login-mail
+# @module: login-mail-on
 # @name: 启用登录通知
 # @category: 通知服务
 # @depends: exim4

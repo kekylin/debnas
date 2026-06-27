@@ -18,14 +18,14 @@ MODULES=(
   "sources|配置软件源"
   "basic-tools|安装必备软件"
   "cockpit|安装 Cockpit 面板"
-  "set-cockpit-network|设置 Cockpit 网络访问"
+  "cockpit-net|设置 Cockpit 网络访问"
   "mail-account|设置发送邮件账户"
-  "enable-login-mail|启用登录邮件通知"
+  "login-mail-on|启用登录邮件通知"
   "security|配置基础安全防护"
   "firewall|安装防火墙服务"
   "fail2ban|安装 fail2ban 自动封锁"
   "docker-ce|安装 Docker"
-  "add-docker-mirror|添加 Docker 镜像加速"
+  "docker-mirror|添加 Docker 镜像加速"
   "service-query|安装服务查询工具"
 )
 

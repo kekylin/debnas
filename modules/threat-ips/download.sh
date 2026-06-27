@@ -1,5 +1,5 @@
 #!/bin/bash
-# block-threat-ips: 威胁列表下载与解析模块
+# threat-ips: 威胁列表下载与解析模块
 
 set -euo pipefail
 IFS=$'\n\t'

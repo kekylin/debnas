@@ -1,5 +1,5 @@
 #!/bin/bash
-# @module: add-docker-mirror
+# @module: docker-mirror
 # @name: Docker 镜像加速
 # @category: 容器管理
 # @depends: docker

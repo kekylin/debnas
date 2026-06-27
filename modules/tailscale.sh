@@ -1,5 +1,5 @@
 #!/bin/bash
-# @module: tunnel
+# @module: tailscale
 # @name: 安装 Tailscale
 # @category: 系统工具
 # @depends: curl,apt,systemctl

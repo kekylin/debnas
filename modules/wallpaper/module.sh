@@ -1,5 +1,5 @@
 #!/bin/bash
-# @module: cockpit-auto-bing-wallpaper
+# @module: wallpaper
 # @name: 面板必应壁纸
 # @category: 管理面板
 # @depends: wget,systemctl,crontab
@@ -242,7 +242,7 @@ restart_cockpit() {
 # ==================== Cron 管理 ====================
 add_cron_job() {
   local cron_expr="$1"
-  if cron_register "cockpit-auto-bing-wallpaper" "$cron_expr" 2>/dev/null; then
+  if cron_register "wallpaper" "$cron_expr" 2>/dev/null; then
     log_to_file log_success "定时任务已添加：$cron_expr"
   else
     log_to_file log_error "定时任务注册失败"
@@ -252,8 +252,8 @@ add_cron_job() {
 
 show_cron_jobs() {
   log_info "当前定时任务："
-  if cron_is_registered "cockpit-auto-bing-wallpaper" 2>/dev/null; then
-    cron_list 2>/dev/null | grep "cockpit-auto-bing-wallpaper" || log_info "已注册（使用 debnas cron list 查看）"
+  if cron_is_registered "wallpaper" 2>/dev/null; then
+    cron_list 2>/dev/null | grep "wallpaper" || log_info "已注册（使用 debnas cron list 查看）"
   else
     echo "(无定时任务)"
   fi
@@ -287,7 +287,7 @@ enable_bing_wallpaper() {
 }
 
 disable_bing_wallpaper() {
-  cron_unregister "cockpit-auto-bing-wallpaper" 2>/dev/null || true
+  cron_unregister "wallpaper" 2>/dev/null || true
   rm -rf "$BRANDING_DIR"
   echo "基于Debian搭建 HomeNAS" > "$ISSUE_FILE"
   restart_cockpit

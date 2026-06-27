@@ -1,5 +1,5 @@
 #!/bin/bash
-# @module: set-cockpit-network
+# @module: cockpit-net
 # @name: 面板管理网络
 # @category: 管理面板
 # @depends: sed,systemctl

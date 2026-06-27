@@ -1,5 +1,5 @@
 #!/bin/bash
-# block-threat-ips: 定时更新逻辑模块
+# threat-ips: 定时更新逻辑模块
 
 set -euo pipefail
 IFS=$'\n\t'
@@ -63,7 +63,7 @@ enable_auto_update() {
   chmod 644 "${CONFIG_FILE}" 2>/dev/null
 
   # 使用统一 cron 框架注册定时任务（替代自行管理 crontab）
-  if ! cron_register "block-threat-ips" "${cron_schedule}" 2>/dev/null; then
+  if ! cron_register "threat-ips" "${cron_schedule}" 2>/dev/null; then
     log_message "ERROR" "设置定时任务失败（请检查 cron 服务）"
     return 1
   fi
@@ -78,7 +78,7 @@ enable_auto_update() {
 
 disable_auto_update() {
   # 使用统一 cron 框架移除定时任务（替代自行管理 crontab）
-  cron_unregister "block-threat-ips" 2>/dev/null || true
+  cron_unregister "threat-ips" 2>/dev/null || true
 
   remove_all_ips || {
     log_message "WARNING" "清理防火墙配置时出现警告，继续执行清理"
@@ -109,8 +109,8 @@ disable_auto_update() {
 }
 
 view_cron_jobs() {
-  if cron_is_registered "block-threat-ips" 2>/dev/null; then
-    cron_list 2>/dev/null | grep "block-threat-ips" || \
+  if cron_is_registered "threat-ips" 2>/dev/null; then
+    cron_list 2>/dev/null | grep "threat-ips" || \
       log_message "INFO" "定时任务已注册（使用 debnas cron list 查看详情）"
   else
     log_message "INFO" "未设置任何与 IPThreat Firewalld 相关的定时任务"

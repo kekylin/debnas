@@ -99,11 +99,18 @@ _parse_single_file() {
 
       case "$key" in
         module)
+          local old_name="$module_name"
           module_name="$value"
+          # 清除以文件名为键的旧条目（防止 module.sh 残留 "module" 幽灵条目）
+          if [[ "$old_name" != "$module_name" ]]; then
+            local suffix
+            for suffix in module name category description depends depend_modules version debian_min order path type cron cron_schedule; do
+              unset "_MODULE_REGISTRY[${old_name}.${suffix}]"
+            done
+          fi
           _MODULE_REGISTRY["${module_name}.module"]="$module_name"
           _MODULE_REGISTRY["${module_name}.path"]="$file_path"
           _MODULE_REGISTRY["${module_name}.type"]="file"
-          # 如果重新映射了名字，清除旧默认值
           _MODULE_REGISTRY["${module_name}.name"]="$module_name"
           _MODULE_REGISTRY["${module_name}.category"]="未分类"
           _MODULE_REGISTRY["${module_name}.description"]=""

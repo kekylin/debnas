@@ -1,5 +1,5 @@
 #!/bin/bash
-# @module: check-system-updates
+# @module: sys-patches
 # @name: 检查系统更新
 # @category: 系统工具
 # @depends: apt

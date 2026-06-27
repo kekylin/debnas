@@ -1,5 +1,5 @@
 #!/bin/bash
-# @module: disable-login-mail
+# @module: login-mail-off
 # @name: 禁用登录通知
 # @category: 通知服务
 # @version: 1.0.0

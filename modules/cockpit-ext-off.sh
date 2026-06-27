@@ -1,5 +1,5 @@
 #!/bin/bash
-# @module: disable-cockpit-external
+# @module: cockpit-ext-off
 # @name: 禁用外网访问
 # @category: 管理面板
 # @depends: sed,systemctl

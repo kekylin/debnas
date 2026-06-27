@@ -1,5 +1,5 @@
 #!/bin/bash
-# @module: check-system-compatibility
+# @module: sys-check
 # @name: 检查兼容性
 # @category: 系统工具
 # @version: 1.0.0

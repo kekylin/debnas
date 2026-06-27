@@ -1,5 +1,5 @@
 #!/bin/bash
-# @module: enable-cockpit-external
+# @module: cockpit-ext-on
 # @name: 启用外网访问
 # @category: 管理面板
 # @depends: hostname,awk,sed,systemctl

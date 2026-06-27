@@ -1,5 +1,5 @@
 #!/bin/bash
-# @module: block-threat-ips
+# @module: threat-ips
 # @name: IP 封禁工具
 # @category: 安全防护
 # @depends: firewall-cmd,ipset,wget,gzip,awk,sed,grep,sort,comm,head,crontab,sipcalc

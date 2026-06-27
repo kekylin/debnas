@@ -1,5 +1,5 @@
 #!/bin/bash
-# block-threat-ips: IPSet 管理模块
+# threat-ips: IPSet 管理模块
 
 set -euo pipefail
 IFS=$'\n\t'
