@@ -19,7 +19,7 @@ download_threat_list() {
   download_url=$(get_threat_list_url "${threat_level}")
   log_message "INFO" "下载威胁等级 ${threat_level} 的 IP 列表"
 
-  if ! wget -q "${download_url}" -O "${temp_gz}"; then
+  if ! wget -q --timeout=60 "${download_url}" -O "${temp_gz}"; then
     log_message "ERROR" \
       "下载威胁 IP 列表失败（威胁等级：${threat_level}）"
     return 1

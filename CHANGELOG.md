@@ -36,8 +36,7 @@
 - 新增 `docs/TROUBLESHOOTING.md` 故障排除指南（10 个分类，40+ 常见问题）
 - 新增 3 个 BATS 单元测试文件（cron/tempfile/utils），覆盖率从 9 个文件提升至 12 个
 - 修复 `tests/run.sh` 缺少 `--recursive` 标志导致子目录测试未被发现
-- 新增 `--quiet` 全局参数（静默模式，仅显示 ERROR 及以上）
-- 新增 `--xtrace` 全局参数（命令追踪，开启 `set -x`）
+- 新增日志等级标签（4 级：INFO/WARN/ERROR/FATAL），全部直接输出不做阈值过滤
 
 ### Changed
 - 项目结构从单体脚本重构为模块化架构（`modules/` + `lib/` + `bin/`）
@@ -50,10 +49,15 @@
 - 删除全部 28 处模块内冗余 `state_mark_success` 调用
 - 重构日志等级系统：消除 `CURRENT_LOG_LEVEL` 快照变量，`should_log` 直接从 `LOG_LEVEL` 环境变量读取（消除双重状态）
 - 9 处幂等跳过说明从 `log_debug` 升级为 `log_info`（"服务已在运行"、"配置未变更"等）
+- 删除日志过滤模式：移除 `LOG_LEVEL` 变量、`should_log` 门控、`set_log_level`/`get_log_level` 函数，4 级日志全部直接输出
+- 8 处内部 `log_debug` 升级为 `log_info`/`log_action`（依赖解析、安装进度），其余 18 处内部细节删除
 
 ### Removed
+- 删除 `--debug` 和 `--quiet` CLI 全局参数
+- 删除 `--xtrace` 执行跟踪模式
 - 删除 `docker-backup` 模块（高风险恢复操作，含 18 个已知 Bug）
 - 删除 `dockge` 应用（简化为 Portainer 单方案）
+- 删除 DEBUG 日志等级和 `log_debug` 函数
 
 ### Fixed
 - 修复 `bootstrap.sh` 重复加载导致 `_DEBNAS_BOOTSTRAPPED` 变量泄漏
@@ -77,7 +81,20 @@
 - 清理 threat-ips cron 模式下重复的 tempfile 函数定义（统一使用 lib/system/tempfile.sh）
 - 修复配置文件 `log_level=` 不生效的问题（`CURRENT_LOG_LEVEL` 初始化早于配置读取，导致快照不同步）
 - 修复 `log_fatal` 仅打印消息不退出程序的问题
+- 统一 `systemctl` 直接调用 → `service_ensure`（bbr/wallpaper/docker-mirror/firewall 共 5 处，P1-1）
+- 统一 `tee` 写入 → `write_file_if_changed` 幂等文件写入（docker-ce/tailscale 共 3 处，P1-2）
+- 补充 `wget`/`curl` 超时参数，防止网络不可达时脚本卡死（installer/threat-ips/cockpit-45drives/wallpaper 共 6 处，P1-3）
+- 补全模块依赖声明 `login-mail-on/off` → `mail-account`，防止依赖链断裂（P1-4）
+- 重构 `docker-ce.sh` 内联逻辑为 5 个独立函数（install_prerequisites/download_gpg/write_source/install_packages/add_user），提升可读性和可测试性（P2-1）/
+- 清理 `threat-ips` 模块：`log_message` 改用全局日志通道 + 移除重复章节标题 + 简化 init 函数（P2-2）
+- 简化 `hosts-sync` 临时目录管理，复用 `tempfile.sh` 的 `init_temp_dir`（P2-3）
+- 修正 `acl-manager.sh` 旧项目名残留 `homenas` → `debnas`（P2-4）
 - 修复 3 处残缺/模糊的 `log_debug` 消息（cron.sh、cockpit-net.sh、state.sh）
+- 补全 `service-query.sh` 和 `vm-components.sh` 模块依赖声明 `@depend_modules: cockpit`，防止依赖链断裂（P1-5/P1-6）
+- 统一 `acl-manager.sh` 和 `docker-ce.sh` 直接 `apt install` 调用为 `apt_install_packages`/`apt_install_safe`，去掉 `2>/dev/null || true` 吞错（P2-5/P2-6）
+- 统一 `service-query.sh` 直接 `systemctl start` 调用为 `service_ensure`，去掉 `|| true` 吞错（P2-7）
+- 清理 4 处旧项目名 `HomeNAS` 残留（cockpit.sh ×2、wallpaper/module.sh ×2），统一为 `DebNAS`（P2-8）
+- 统一 `wallpaper/module.sh` 中 2 处 `echo >`/`printf >` 直接文件写入为 `write_file_if_changed` 幂等写入（P2-9）
 
 ---
 

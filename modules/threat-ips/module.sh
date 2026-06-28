@@ -29,9 +29,9 @@ source "${MODULE_DIR}/firewall.sh"
 source "${MODULE_DIR}/cron.sh"
 
 # ==================== 日志输出模块 ====================
+# 统一通过 lib/core/logging.sh 输出，文件日志由 log_to_file 统一管理
 log_message() {
   local level="${1}" message="${2}"
-  local timestamp
 
   case "${level}" in
     SUCCESS) log_success "${message}" ;;
@@ -41,14 +41,9 @@ log_message() {
     FATAL)   log_fatal "${message}" ;;
     *)       log_info "${message}" ;;
   esac
-
-  timestamp=$(date '+%Y-%m-%d %H:%M:%S')
-  printf "[%s] [%s] %s\n" "${timestamp}" "${level}" "${message}" \
-    >> "${LOG_FILE}" 2>/dev/null || true
 }
 
 
-# ==================== IP 解析处理模块 ====================
 # ==================== IP 解析处理模块 ====================
 # 清理输入：移除注释和空白字符
 normalize_ip_input() {
@@ -185,7 +180,6 @@ parse_ip_range() {
 
 
 # ==================== 核心功能 ====================
-# ==================== 核心功能 ====================
 check_services() {
   local missing=0
   if ! systemctl is-active firewalld &>/dev/null; then
@@ -203,7 +197,6 @@ check_services() {
 
 
 # ==================== 初始化函数 ====================
-# ==================== 初始化函数 ====================
 init_data_dir() {
   if [[ ! -d "${DATA_DIR}" ]]; then
     log_message "INFO" "创建数据目录：${DATA_DIR}"
@@ -216,38 +209,14 @@ init_data_dir() {
 }
 
 init_manual() {
-  if [[ ! -d "${LOG_DIR}" ]]; then
-    log_message "INFO" "创建日志目录：${LOG_DIR}"
-    mkdir -p "${LOG_DIR}" || {
-      log_message "ERROR" "创建日志目录失败：${LOG_DIR}"
-      exit "${ERROR_GENERAL}"
-    }
-    chmod 755 "${LOG_DIR}"
-  fi
-  if [[ ! -f "${LOG_FILE}" ]]; then
-    log_message "INFO" "创建日志文件：${LOG_FILE}"
-    touch "${LOG_FILE}" || {
-      log_message "ERROR" "创建日志文件失败：${LOG_FILE}"
-      exit "${ERROR_GENERAL}"
-    }
-    chmod 644 "${LOG_FILE}"
-  fi
-  if [[ ! -w "${LOG_FILE}" ]]; then
-    log_message "ERROR" "日志文件不可写：${LOG_FILE}（请检查权限）"
-    exit "${ERROR_GENERAL}"
-  fi
+  # 文件日志由 lib/core/logging.sh 统一管理（main() 中调用 log_to_file）
+  log_to_file "threat-ips" 2>/dev/null || true
   THREAT_LEVEL=${DEFAULT_THREAT_LEVEL}
 }
 
 init_cron() {
-  if [[ ! -f "${LOG_FILE}" ]]; then
-    log_message "ERROR" "日志文件不存在：${LOG_FILE}"
-    exit "${ERROR_GENERAL}"
-  fi
-  if [[ ! -w "${LOG_FILE}" ]]; then
-    log_message "ERROR" "日志文件不可写：${LOG_FILE}（请检查权限）"
-    exit "${ERROR_GENERAL}"
-  fi
+  # 文件日志由 lib/core/logging.sh 统一管理（main() 中调用 log_to_file）
+  log_to_file "threat-ips" 2>/dev/null || true
 
   init_data_dir
 
@@ -368,7 +337,6 @@ show_menu() {
 }
 
 
-# ==================== 主函数 ====================
 # ==================== 主函数 ====================
 main() {
   register_temp_cleanup

@@ -108,7 +108,6 @@ cron_unregister() {
 
   # 检查是否存在该模块的条目
   if ! echo "$current_crontab" | grep -q "${marker}" 2>/dev/null; then
-    log_debug "未找到 cron 条目：${module_name}，跳过注销"
     return 0
   fi
 

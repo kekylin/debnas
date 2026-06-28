@@ -338,6 +338,5 @@ write_file_if_changed() {
   # 写入文件
   echo "$new_content" > "$file"
   chmod "$file_perm" "$file"
-  log_debug "配置文件已写入：$file"
   return 0
 }

@@ -12,7 +12,6 @@ IFS=$'\n\t'
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${SCRIPT_DIR}/lib/bootstrap.sh"
-main() {
 
 # ==================== 函数定义 ====================
 
@@ -113,106 +112,129 @@ get_docker_mirror() {
   fi
 }
 
-# 获取第一个常规用户（UID >= 1000，排除 nobody）
-first_user=$(get_first_regular_user)
+# 安装 Docker 前置依赖（ca-certificates + keyring 目录）
+install_docker_prerequisites() {
+  log_info "安装依赖..."
+  apt_install_packages ca-certificates curl
+  install -m 0755 -d /etc/apt/keyrings
+}
 
-# ==================== 主执行逻辑 ====================
+# 下载 Docker GPG 签名密钥（含 3 次重试）
+# 参数：$1 - Docker 镜像源 URL
+download_docker_gpg_key() {
+  local docker_mirror="$1"
 
-if ! verify_system_support; then
-  exit "${ERROR_UNSUPPORTED_OS}"
-fi
+  log_info "获取 GPG 密钥..."
 
-. /etc/os-release
+  local gpg_downloaded=0
+  local max_retries=3
+  local retry_count=0
 
-log_info "检测镜像源"
-DOCKER_MIRROR=$(get_docker_mirror)
-mirror_status=$?
-
-if [[ $mirror_status -ne 0 ]] || [[ -z "$DOCKER_MIRROR" ]]; then
-  log_fail "无法获取 Docker 源"
-  exit "${ERROR_DEPENDENCY}"
-fi
-
-log_info "安装 Docker CE..."
-
-log_info "安装依赖..."
-apt_install_packages ca-certificates curl
-
-install -m 0755 -d /etc/apt/keyrings
-log_info "获取 GPG 密钥..."
-
-gpg_downloaded=0
-max_retries=3
-retry_count=0
-
-while [[ $retry_count -lt $max_retries ]]; do
-  if curl -fsSL --max-time 30 --connect-timeout 10 "${DOCKER_MIRROR}/gpg" -o /etc/apt/keyrings/docker.asc 2>/dev/null; then
-    if [[ -s /etc/apt/keyrings/docker.asc ]] && grep -q "BEGIN PGP PUBLIC KEY BLOCK" /etc/apt/keyrings/docker.asc 2>/dev/null; then
-      gpg_downloaded=1
-      break
-    else
-      rm -f /etc/apt/keyrings/docker.asc
+  while [[ $retry_count -lt $max_retries ]]; do
+    if curl -fsSL --max-time 30 --connect-timeout 10 "${docker_mirror}/gpg" -o /etc/apt/keyrings/docker.asc 2>/dev/null; then
+      if [[ -s /etc/apt/keyrings/docker.asc ]] && grep -q "BEGIN PGP PUBLIC KEY BLOCK" /etc/apt/keyrings/docker.asc 2>/dev/null; then
+        gpg_downloaded=1
+        break
+      else
+        rm -f /etc/apt/keyrings/docker.asc
+      fi
     fi
+    ((retry_count++))
+    if [[ $retry_count -lt $max_retries ]]; then
+      log_warning "GPG 密钥下载失败，重试中 ($retry_count/$max_retries)"
+      sleep 2
+    fi
+  done
+
+  if [[ $gpg_downloaded -eq 0 ]]; then
+    log_fail "GPG 密钥下载失败"
+    exit "${ERROR_DEPENDENCY}"
   fi
-  ((retry_count++))
-  if [[ $retry_count -lt $max_retries ]]; then
-    log_warning "GPG 密钥下载失败，重试中 ($retry_count/$max_retries)"
-    sleep 2
+
+  chmod a+r /etc/apt/keyrings/docker.asc
+}
+
+# 写入 Docker APT 软件源（DEB822 格式，幂等）
+# 参数：$1 - Docker 镜像源 URL
+write_docker_apt_source() {
+  local docker_mirror="$1"
+
+  log_info "写入 Docker 源..."
+
+  # 备份旧格式文件（sources.list 格式）
+  local old_docker_list="/etc/apt/sources.list.d/docker.list"
+  if [[ -f "$old_docker_list" ]]; then
+    log_info "旧源文件已备份"
+    mv "$old_docker_list" "${old_docker_list}.bak"
   fi
-done
 
-if [[ $gpg_downloaded -eq 0 ]]; then
-  log_fail "GPG 密钥下载失败"
-  exit "${ERROR_DEPENDENCY}"
-fi
+  # 使用 DEB822 格式写入软件源配置（幂等：内容未变则跳过）
+  local codename
+  codename=$(. /etc/os-release && echo "$VERSION_CODENAME")
+  local docker_sources_content="Types: deb"$'\n'"URIs: ${docker_mirror}"$'\n'"Suites: ${codename}"$'\n'"Components: stable"$'\n'"Signed-By: /etc/apt/keyrings/docker.asc"
+  write_file_if_changed "/etc/apt/sources.list.d/docker.sources" "$docker_sources_content"
 
-chmod a+r /etc/apt/keyrings/docker.asc
-
-log_info "写入 Docker 源..."
-
-# 备份旧格式文件（sources.list 格式）
-readonly OLD_DOCKER_LIST="/etc/apt/sources.list.d/docker.list"
-if [[ -f "$OLD_DOCKER_LIST" ]]; then
-  log_info "旧源文件已备份"
-  mv "$OLD_DOCKER_LIST" "${OLD_DOCKER_LIST}.bak"
-fi
-
-# 使用 DEB822 格式写入软件源配置
-tee /etc/apt/sources.list.d/docker.sources > /dev/null <<EOF
-Types: deb
-URIs: ${DOCKER_MIRROR}
-Suites: $(. /etc/os-release && echo "$VERSION_CODENAME")
-Components: stable
-Signed-By: /etc/apt/keyrings/docker.asc
-EOF
-
-apt_update_safe
-
-log_info "安装 Docker 组件..."
-if command -v docker &>/dev/null; then
-  log_info "$(docker --version)"
-  # 已安装，尝试升级
   apt_update_safe
-  apt install -y --only-upgrade docker-ce docker-ce-cli containerd.io 2>/dev/null || true
-else
-  # 全新安装
-  apt_install_packages docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-fi
+}
 
-service_ensure docker started
-service_ensure docker enabled
+# 安装 Docker 软件包（已装则升级，未装则全新安装）
+install_docker_packages() {
+  log_info "安装 Docker 组件..."
+  if command -v docker &>/dev/null; then
+    log_info "$(docker --version)"
+    # 已安装，尝试升级
+    apt_update_safe
+    apt_install_safe docker-ce docker-ce-cli containerd.io
+  else
+    # 全新安装
+    apt_install_packages docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+  fi
+}
 
-if [[ -n "$first_user" ]]; then
-  log_info "添加用户到 docker 组..."
-  usermod -aG docker "$first_user"
-  log_success "Docker CE 就绪"
-else
-  log_info "无普通用户，跳过 docker 组"
-  log_success "Docker CE 就绪"
-fi
+# 将第一个常规用户添加到 docker 组
+# 参数：$1 - 用户名（空则跳过）
+add_user_to_docker_group() {
+  local first_user="$1"
 
-log_info "Docker $(docker --version 2>/dev/null | grep -oP '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+  if [[ -n "$first_user" ]]; then
+    log_info "添加用户到 docker 组..."
+    usermod -aG docker "$first_user"
+    log_success "Docker CE 就绪"
+  else
+    log_info "无普通用户，跳过 docker 组"
+    log_success "Docker CE 就绪"
+  fi
+}
 
+# ==================== 主入口 ====================
+
+main() {
+  if ! verify_system_support; then
+    exit "${ERROR_UNSUPPORTED_OS}"
+  fi
+
+  . /etc/os-release
+
+  log_info "检测镜像源"
+  local DOCKER_MIRROR
+  DOCKER_MIRROR=$(get_docker_mirror) || {
+    log_fail "无法获取 Docker 源"
+    exit "${ERROR_DEPENDENCY}"
+  }
+
+  local first_user
+  first_user=$(get_first_regular_user)
+
+  log_info "安装 Docker CE..."
+  install_docker_prerequisites
+  download_docker_gpg_key "$DOCKER_MIRROR"
+  write_docker_apt_source "$DOCKER_MIRROR"
+  install_docker_packages
+  service_ensure docker started
+  service_ensure docker enabled
+  add_user_to_docker_group "$first_user"
+
+  log_info "Docker $(docker --version 2>/dev/null | grep -oP '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
 }
 
 main "$@"

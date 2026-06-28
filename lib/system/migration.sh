@@ -68,13 +68,13 @@ migration_run() {
   # 首次安装或版本未知：仅记录版本，不执行迁移
   if [[ -z "$installed_version" ]]; then
     _save_version "$current_version"
-    log_debug "首次记录版本：${current_version}"
+    :
     return 0
   fi
 
   # 版本未变化：跳过
   if ! _version_changed "$installed_version" "$current_version"; then
-    log_debug "版本未变化：${current_version}"
+    :
     return 0
   fi
 

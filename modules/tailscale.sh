@@ -39,10 +39,23 @@ log_info "安装 Tailscale..."
 
 # 添加 Tailscale 的包签名密钥和存储库，确保软件源可信
 log_info "配置 Tailscale 源..."
-curl -fsSL "https://pkgs.tailscale.com/stable/debian/${CODENAME}.noarmor.gpg" \
-  | tee /usr/share/keyrings/tailscale-archive-keyring.gpg >/dev/null
-curl -fsSL "https://pkgs.tailscale.com/stable/debian/${CODENAME}.tailscale-keyring.list" \
-  | tee /etc/apt/sources.list.d/tailscale.list
+# GPG 密钥：下载到临时文件后比较写入（幂等）
+local keyring_tmp
+keyring_tmp=$(tempfile_create "tailscale-keyring" ".gpg")
+curl -fsSL --max-time 30 --connect-timeout 10 \
+  "https://pkgs.tailscale.com/stable/debian/${CODENAME}.noarmor.gpg" -o "$keyring_tmp"
+if [[ -f /usr/share/keyrings/tailscale-archive-keyring.gpg ]] \
+  && cmp -s "$keyring_tmp" /usr/share/keyrings/tailscale-archive-keyring.gpg 2>/dev/null; then
+  log_info "Tailscale GPG 密钥未变更，跳过"
+else
+  mv "$keyring_tmp" /usr/share/keyrings/tailscale-archive-keyring.gpg
+  chmod 644 /usr/share/keyrings/tailscale-archive-keyring.gpg
+fi
+# APT 源列表：幂等写入
+local list_content
+list_content=$(curl -fsSL --max-time 30 --connect-timeout 10 \
+  "https://pkgs.tailscale.com/stable/debian/${CODENAME}.tailscale-keyring.list")
+write_file_if_changed "/etc/apt/sources.list.d/tailscale.list" "$list_content"
 
 # 安装 Tailscale
 log_info "安装 Tailscale 组件..."

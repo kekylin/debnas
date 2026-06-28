@@ -102,7 +102,6 @@ state_set() {
     echo "${key}=${value}" >> "$state_file"
   fi
 
-  log_debug "状态已写入：${module_name} ${key}=${value}"
   return 0
 }
 
@@ -191,7 +190,6 @@ state_clear() {
 
   if [[ -f "$state_file" ]]; then
     rm -f "$state_file"
-    log_debug "模块状态已清除：${module_name}"
   fi
   return 0
 }

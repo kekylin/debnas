@@ -134,7 +134,7 @@ apt_install_safe() {
     return 1
   fi
 
-  log_debug "apt install ${packages[*]}"
+  log_action "apt install ${packages[*]}"
   if DEBIAN_FRONTEND=noninteractive apt install "${apt_opts[@]}" "${packages[@]}" >&2; then
     log_success "${packages[*]} 就绪"
     return 0

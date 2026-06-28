@@ -218,7 +218,6 @@ discover_modules() {
     fi
   done
 
-  log_debug "已发现 ${#_DISCOVERED_MODULES[@]} 个模块"
   return 0
 }
 

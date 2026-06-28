@@ -44,9 +44,9 @@ installer_download() {
   fi
 
   log_info "从 ${region} 源下载..."
-  if ! wget -q -O "$tarball" "$primary_url" 2>/dev/null; then
+  if ! wget -q --timeout=30 -O "$tarball" "$primary_url" 2>/dev/null; then
     log_warning "主源下载失败，尝试备用源..."
-    if ! wget -q -O "$tarball" "$fallback_url" 2>/dev/null; then
+    if ! wget -q --timeout=30 -O "$tarball" "$fallback_url" 2>/dev/null; then
       log_error "所有下载源均失败"
       return 1
     fi

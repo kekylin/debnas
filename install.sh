@@ -292,7 +292,6 @@ write_config() {
 # 创建时间: $(date '+%Y-%m-%d %H:%M:%S')
 region=${REGION}
 lang=zh
-log_level=INFO
 file_logging=1
 EOF
     _success "配置: ${conf_file}"

@@ -96,13 +96,10 @@ install_missing_dependencies() {
     fi
     if [[ -n "$pkg_name" ]]; then
       installable_cmds+=("$cmd")
-    else
-      log_debug "跳过系统命令 $cmd（无需安装）"
     fi
   done
 
   if [[ ${#installable_cmds[@]} -eq 0 ]]; then
-    log_debug "所有缺失命令均为系统自带，无需安装"
     return 0
   fi
 
@@ -124,7 +121,6 @@ install_missing_dependencies() {
       pkg_name="${cmd_to_pkg[$cmd]}"
     fi
     if [[ -n "$pkg_name" ]]; then
-      log_debug "尝试安装 $cmd 对应的包：$pkg_name"
       if DEBIAN_FRONTEND=noninteractive apt install -y -qq "$pkg_name" 2>/dev/null; then
         log_success "${cmd} 就绪"
       else
@@ -156,7 +152,6 @@ ensure_command() {
   fi
 
   if [[ -z "$pkg" ]]; then
-    log_debug "跳过系统命令 $cmd（无需安装）"
     return 0
   fi
 

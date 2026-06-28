@@ -2,6 +2,7 @@
 # @module: login-mail-off
 # @name: 登录通知（关）
 # @category: 通知服务
+# @depend_modules: mail-account
 # @version: 1.0.0
 # @order: 62
 # 功能：禁用用户登录邮件通知（移除 pam 脚本配置）

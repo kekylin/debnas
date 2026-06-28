@@ -23,8 +23,8 @@ log_info "安装 Firewalld..."
 # 禁用 UFW 防火墙，避免冲突
 if command -v ufw &> /dev/null; then
   log_warning "检测到 UFW，已停用"
-  systemctl stop ufw
-  systemctl disable ufw
+  service_ensure ufw stopped
+  service_ensure ufw disabled
   log_info "UFW 已禁用"
 fi
 

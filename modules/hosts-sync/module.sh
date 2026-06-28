@@ -56,26 +56,11 @@ done
 
 
 setup_temp_environment() {
-  local base_tmp_dir="/tmp/debnas"
-  
-  if [[ ! -d "$base_tmp_dir" ]]; then
-    if ! mkdir -p "${base_tmp_dir}"; then
-      echo "无法创建临时目录: ${base_tmp_dir}" >&2
-      return 1
-    fi
-  fi
-  
-  # 权限 755 与 tempfile.sh 保持一致，允许 _apt 等系统用户遍历访问
-  local current_mode
-  current_mode=$(stat -c %a "${base_tmp_dir}" 2>/dev/null || echo "")
-  if [[ "$current_mode" != "755" ]]; then
-    if ! chmod 755 "${base_tmp_dir}"; then
-      echo "无法设置临时目录权限" >&2
-      return 1
-    fi
-  fi
-  
-  export TMP_DIR="${base_tmp_dir}"
+  # 复用 lib/system/tempfile.sh 的 init_temp_dir，创建并初始化 /tmp/debnas
+  init_temp_dir || return 1
+  # 权限 755 允许 _apt 等系统用户遍历访问（兼容并行子 shell 场景）
+  chmod 755 "${DEBNAS_TMP_BASE}" 2>/dev/null || true
+  export TMP_DIR="${DEBNAS_TMP_BASE}"
 }
 
 # 生成域名哈希值用于临时文件名

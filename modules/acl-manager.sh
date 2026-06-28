@@ -19,13 +19,13 @@ register_temp_cleanup
 ACL_OUTPUT=$(create_temp_file "acl-output")
 
 # 日志文件路径
-LOG_FILE="/var/log/homenas_acl_manager.log"
+LOG_FILE="/var/log/debnas/acl-manager.log"
 
 # 检查依赖，自动安装缺失的ACL工具
 REQUIRED_CMDS=(getfacl setfacl)
 if ! check_dependencies "${REQUIRED_CMDS[@]}"; then
   log_warning "ACL 工具缺失"
-  apt update && apt install -y acl
+  apt_install_packages acl
   if ! check_dependencies "${REQUIRED_CMDS[@]}"; then
     log_fail "ACL工具安装失败。请手动安装acl软件包后重试。"
     exit "${ERROR_DEPENDENCY}"

@@ -20,9 +20,6 @@ _parse_early_flags() {
   for arg in "$@"; do
     case "$arg" in
       --cron)    export DEBNAS_CRON_MODE=1 ;;
-      --debug)   export LOG_LEVEL="DEBUG" ;;
-      --quiet)   export LOG_LEVEL="ERROR" ;;
-      --xtrace)  export DEBNAS_XTRACE=1 ;;
       --dry-run) export DEBNAS_DRY_RUN=1 ;;
       --yes|-y)  export DEBNAS_FORCE_YES=1 ;;
     esac
@@ -62,6 +59,3 @@ source "${_DEBNAS_ROOT}/lib/system/module-registry.sh"
 
 # ==================== 完成标记 ====================
 _DEBNAS_BOOTSTRAPPED=1
-
-# 开启命令追踪（如果指定了 --xtrace）
-enable_xtrace

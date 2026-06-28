@@ -80,7 +80,7 @@ update_wallpaper() {
 
   local wallpaper_api_url
   wallpaper_api_url=$(get_wallpaper_api_url)
-  if ! bing_json=$(curl --fail --silent --location "$wallpaper_api_url" 2>/dev/null); then
+  if ! bing_json=$(curl --fail --silent --location --max-time 30 --connect-timeout 10 "$wallpaper_api_url" 2>/dev/null); then
     [[ "$first_run" == "true" ]] && return 1
     return 1
   fi
@@ -96,9 +96,9 @@ update_wallpaper() {
 
   full_url="https://www.bing.com${bing_url}"
 
-  if curl --fail --location --silent --show-error -o "${WALLPAPER_FILE}.tmp" "$full_url"; then
+  if curl --fail --location --silent --show-error --max-time 60 --connect-timeout 10 -o "${WALLPAPER_FILE}.tmp" "$full_url"; then
     mv -f "${WALLPAPER_FILE}.tmp" "$WALLPAPER_FILE"
-    printf '%s\n%s\n' "$bing_title" "$bing_copyright" > "$ISSUE_FILE"
+    write_file_if_changed "$ISSUE_FILE" "$(printf '%s\n%s\n' "$bing_title" "$bing_copyright")"
     mark_initialized
     return 0
   else
@@ -205,7 +205,7 @@ CSSEOF
 # ==================== Cockpit 服务管理 ====================
 restart_cockpit() {
   if systemctl is-active --quiet cockpit 2>/dev/null; then
-    systemctl restart cockpit
+    service_ensure cockpit restarted
     log_success "Cockpit 已重启"
   else
     log_warning "Cockpit 未运行"
@@ -256,7 +256,7 @@ enable_bing_wallpaper() {
 disable_bing_wallpaper() {
   cron_unregister "wallpaper" 2>/dev/null || true
   rm -rf "$BRANDING_DIR"
-  echo "基于Debian搭建 HomeNAS" > "$ISSUE_FILE"
+  write_file_if_changed "$ISSUE_FILE" "基于Debian搭建 DebNAS"
   restart_cockpit
   log_success "壁纸已禁用"
 }

@@ -65,7 +65,7 @@ preflight_dependencies() {
   done
 
   if [[ ${#missing_cmds[@]} -eq 0 ]]; then
-    log_debug "所有依赖命令已就绪：${depends_str}"
+    log_info "所有依赖命令已就绪：${depends_str}"
     return 0
   fi
 
@@ -153,7 +153,7 @@ execute_module() {
 run_preflight() {
   local module_name="$1"
 
-  log_debug "开始 preflight 检查：${module_name}"
+  log_info "开始 preflight 检查：${module_name}"
 
   # dry-run
   if ! preflight_dry_run "$module_name"; then
@@ -181,7 +181,7 @@ run_preflight() {
   local dep_modules
   dep_modules=$(get_module_field "$module_name" "depend_modules" "" 2>/dev/null) || dep_modules=""
   if [[ -n "$dep_modules" ]]; then
-    log_debug "解析模块依赖：${dep_modules}"
+    log_info "解析模块依赖：${dep_modules}"
     local -a exec_order=()
     mapfile -t exec_order < <(resolve_module_deps "$module_name" 2>/dev/null) || exec_order=()
     if [[ ${#exec_order[@]} -eq 0 ]]; then
@@ -202,7 +202,7 @@ run_preflight() {
         # 会话级去重：同一会话内依赖模块只执行一次
         local dep_stamp="/tmp/.debnas_dep_${single_dep}"
         if [[ -f "$dep_stamp" ]]; then
-          log_debug "依赖模块 ${single_dep} 已在本会话内执行过，跳过"
+          log_info "依赖模块 ${single_dep} 已在本会话内执行过，跳过"
           continue
         fi
         # 幂等检查：如果依赖模块已安装，跳过
@@ -212,7 +212,7 @@ run_preflight() {
           continue
         fi
 
-        log_debug "→ ${single_dep}"
+        log_action "→ ${single_dep}"
         if ! (unset _DEBNAS_BOOTSTRAPPED; bash "${_DEBNAS_ROOT}/bin/module-runner.sh" "$single_dep"); then
           log_error "${single_dep} 失败，跳过后续"
           return 1

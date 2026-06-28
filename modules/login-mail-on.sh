@@ -3,6 +3,7 @@
 # @name: 登录通知（开）
 # @category: 通知服务
 # @depends: exim4
+# @depend_modules: mail-account
 # @version: 1.0.0
 # @order: 61
 # 功能：启用用户登录邮件通知（通过 PAM 脚本，登录时自动发送邮件）
@@ -156,7 +157,6 @@ if [[ ! -f "$NOTIFY_SCRIPT" ]] || ! cmp -s "$NOTIFY_SCRIPT_TMP" "$NOTIFY_SCRIPT"
   log_info "登录通知脚本已更新。"
 else
   rm -f "$NOTIFY_SCRIPT_TMP"
-  log_debug "登录通知未变"
 fi
 
 # 配置 pam.d/common-session，集成登录通知脚本

@@ -45,7 +45,7 @@ Banner=/etc/cockpit/issue.cockpit
 ProtocolHeader = X-Forwarded-Proto
 ForwardedForHeader = X-Forwarded-For
 LoginTo = false
-LoginTitle = HomeNAS"
+LoginTitle = DebNAS"
 	if write_file_if_changed "/etc/cockpit/cockpit.conf" "$cockpit_conf"; then
 		config_changed=1
 	fi
@@ -59,7 +59,7 @@ LoginTitle = HomeNAS"
 		config_changed=1
 	fi
 
-	local issue_content="基于${system_name}搭建 HomeNAS"
+	local issue_content="基于${system_name}搭建 DebNAS"
 	if write_file_if_changed "/etc/cockpit/issue.cockpit" "$issue_content"; then
 		config_changed=1
 	fi
@@ -73,8 +73,6 @@ main() {
 	local system_name system_codename
 	system_name=$(get_system_name)
 	system_codename=$(get_system_codename)
-
-	log_debug "${system_name} ${system_codename}"
 
 	case "${system_codename}" in
 	"bookworm"|"trixie")

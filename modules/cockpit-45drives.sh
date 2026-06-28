@@ -261,7 +261,7 @@ configure_45drives_repo() {
 			return 1
 		fi
 	fi
-	if ! curl -sSL https://repo.45drives.com/setup | bash; then
+	if ! curl -sSL --max-time 60 --connect-timeout 15 https://repo.45drives.com/setup | bash; then
 		if [ ! -f /etc/apt/sources.list.d/45drives.sources ]; then
 			log_error "45Drives 软件源配置失败。"
 			return 1
@@ -287,12 +287,12 @@ main() {
 
 	case "${system_codename}" in
 	"bookworm")
-		log_debug "Debian 12: 45Drives 仓库"
+		log_info "Debian 12: 45Drives 仓库"
 		configure_45drives_repo
 		install_45drives_components_repo
 		;;
 	"trixie")
-		log_debug "Debian 13: GitHub .deb"
+		log_info "Debian 13: GitHub .deb"
 		if ! install_45drives_components_manual; then
 			log_error "45Drives Cockpit 组件手动安装失败。"
 			exit "${ERROR_GENERAL}"

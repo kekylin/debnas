@@ -57,7 +57,6 @@ managed=true"
   else
     # 移除 [ifupdown] 段中的 managed= 行，然后重新插入
     new_nm_config=$(echo "$current_nm_config" | sed '/^\[ifupdown\]/,/^\[/ {/^[ifupdown]/!{/^managed=/d}}' | sed '/^\[ifupdown\]/a managed=true')
-    log_debug "NetworkManager [ifupdown] managed 配置已更新"
   fi
   if write_file_if_changed "$nm_conf_file" "$new_nm_config"; then
     config_changed=1

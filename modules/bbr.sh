@@ -124,7 +124,7 @@ perm_enable_bbr() {
   echo "$SYSCONF_KEY = $BBR_ALGO" >> "$SYSCONF_FILE"
   sed -i "/^${SYSCONF_QDISC_KEY}[[:space:]]*=/d" "$SYSCONF_FILE" 2>/dev/null || true
   echo "$SYSCONF_QDISC_KEY = $QDISC_FQ" >> "$SYSCONF_FILE"
-  if systemctl restart systemd-sysctl.service >/dev/null 2>&1; then
+  if service_ensure systemd-sysctl restarted; then
     log_success "BBR (永久)"
   else
     log_warning "配置已写入 $SYSCONF_FILE，但应用失败；已临时启用 BBR"
@@ -156,7 +156,7 @@ perm_disable_bbr() {
   ensure_sysctl_file
   sed -i "/^${SYSCONF_KEY}[[:space:]]*=/d" "$SYSCONF_FILE" 2>/dev/null || true
   sed -i "/^${SYSCONF_QDISC_KEY}[[:space:]]*=/d" "$SYSCONF_FILE" 2>/dev/null || true
-  if systemctl restart systemd-sysctl.service >/dev/null 2>&1; then
+  if service_ensure systemd-sysctl restarted; then
     log_success "BBR 已关闭"
   else
     log_warning "配置已从 $SYSCONF_FILE 移除，但应用失败；算法已临时切换"

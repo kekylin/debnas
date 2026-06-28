@@ -74,7 +74,6 @@ cmd_config() {
 		echo "配置项:"
 		echo "  region      cn|global  网络环境（国内镜像 / 国际直连）"
 		echo "  lang        zh|en      界面语言"
-		echo "  log_level   INFO|DEBUG 日志级别"
 		echo "  file_logging 0|1        文件日志（0=禁用，1=启用）"
 		return 0
 	fi
@@ -88,8 +87,6 @@ cmd_config() {
 		printf "  %-15s %s\n" "region" "$val"
 		val=$(config_read "global" "lang" "" 2>/dev/null) || val="zh"
 		printf "  %-15s %s\n" "lang" "$val"
-		val=$(config_read "global" "log_level" "" 2>/dev/null) || val="INFO"
-		printf "  %-15s %s\n" "log_level" "$val"
 		val=$(config_read "global" "file_logging" "" 2>/dev/null) || val="0"
 		printf "  %-15s %s\n" "file_logging" "$val"
 		return 0

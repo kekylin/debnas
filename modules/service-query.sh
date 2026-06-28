@@ -3,6 +3,7 @@
 # @name: 服务状态
 # @category: 系统工具
 # @depends:
+# @depend_modules: cockpit
 # @version: 1.0.0
 # @order: 72
 # 功能：安装并配置服务状态查询工具
@@ -37,7 +38,7 @@ print_service_status() {
 check_system_services() {
   local host_ip="$1"
   if ! is_service_active cockpit; then
-    systemctl start cockpit >/dev/null 2>&1 || true
+    service_ensure cockpit started
   fi
   if is_service_active cockpit; then
     print_service_status "cockpit" "https://${host_ip}:9090"

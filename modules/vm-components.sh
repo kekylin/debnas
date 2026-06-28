@@ -3,6 +3,7 @@
 # @name: 虚拟机组件
 # @category: 管理面板
 # @depends:
+# @depend_modules: cockpit
 # @version: 1.0.0
 # @order: 31
 # 功能：安装虚拟机管理组件

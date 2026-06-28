@@ -42,9 +42,6 @@ DebNAS — Debian NAS 自动化部署工具
   cron add|remove|list    管理定时任务
 
 全局参数（临时生效，需配合子命令）:
-  --debug                 启用调试日志 (LOG_LEVEL=DEBUG)
-  --quiet                 静默模式，仅显示错误及以上 (LOG_LEVEL=ERROR)
-  --xtrace                命令追踪，逐行打印执行过程 (set -x)
   --dry-run               仅预览，不实际操作
   --yes, -y               自动确认所有提示
   --region cn|global      指定网络环境
@@ -60,7 +57,6 @@ DebNAS — Debian NAS 自动化部署工具
   debnas config region                      # 查询 region 值
   debnas config region cn                   # 设置: 国内镜像
   debnas --dry-run install docker-ce        # 预览安装计划
-  debnas --debug install cockpit            # 调试模式安装
   debnas doctor                             # 系统诊断
   debnas cron list                          # 查看定时任务
   debnas --help                             # 显示帮助
@@ -83,14 +79,12 @@ parse_global_args() {
 	local -a remaining_args=()
 
 	# 第1步：从配置文件读取持久化设置
-	local _cfg_region _cfg_lang _cfg_log _cfg_file_logging
+	local _cfg_region _cfg_lang _cfg_file_logging
 	_cfg_region=$(grep -oP '^region=\K.*' /etc/debnas/debnas.conf 2>/dev/null || true)
 	_cfg_lang=$(grep -oP '^lang=\K.*'    /etc/debnas/debnas.conf 2>/dev/null || true)
-	_cfg_log=$(grep -oP '^log_level=\K.*' /etc/debnas/debnas.conf 2>/dev/null || true)
 	_cfg_file_logging=$(grep -oP '^file_logging=\K.*' /etc/debnas/debnas.conf 2>/dev/null || true)
 
 	# 第2步：初始化环境变量（配置文件 > 环境变量 > 默认值）
-	export LOG_LEVEL="${LOG_LEVEL:-${_cfg_log:-INFO}}"
 	export DEBNAS_DRY_RUN="${DEBNAS_DRY_RUN:-0}"
 	export DEBNAS_FORCE_YES="${DEBNAS_FORCE_YES:-0}"
 	export DEBNAS_REGION="${DEBNAS_REGION:-${_cfg_region:-}}"
@@ -104,24 +98,6 @@ parse_global_args() {
 	# 第3步：解析 CLI 参数（临时覆盖，仅本次生效）
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
-			--debug)
-				export LOG_LEVEL="DEBUG"
-				_DEBNAS_CLI_FLAGS=1
-				shift
-				;;
-
-			--quiet)
-				export LOG_LEVEL="ERROR"
-				_DEBNAS_CLI_FLAGS=1
-				shift
-				;;
-
-			--xtrace)
-				export DEBNAS_XTRACE=1
-				_DEBNAS_CLI_FLAGS=1
-				shift
-				;;
-
 			--dry-run)
 				export DEBNAS_DRY_RUN=1
 				_DEBNAS_CLI_FLAGS=1

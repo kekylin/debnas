@@ -145,7 +145,6 @@ config_write() {
   # 确保文件权限正确
   chmod "$file_perm" "$conf_file"
 
-  log_debug "配置已写入：${conf_file} ${key}=${value}"
   return 0
 }
 
@@ -166,7 +165,6 @@ config_delete() {
 
   if [[ -f "$conf_file" ]]; then
     sed -i "/^[[:space:]]*${key}[[:space:]]*=/d" "$conf_file" 2>/dev/null || true
-    log_debug "配置键已删除：${conf_file} ${key}"
   fi
   return 0
 }
@@ -186,7 +184,6 @@ config_validate() {
   fi
 
   if [[ ! -f "$conf_file" ]]; then
-    log_debug "配置文件不存在，跳过校验：${conf_file}"
     return 0
   fi
 
@@ -214,7 +211,6 @@ config_validate() {
     return 1
   fi
 
-  log_debug "配置文件校验通过：${conf_file}"
   return 0
 }
 

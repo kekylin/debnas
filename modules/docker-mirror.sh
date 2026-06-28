@@ -98,7 +98,7 @@ new_content=$(build_merged_daemon_json "${DOCKER_MIRRORS[@]}")
 if write_file_if_changed "$DAEMON_JSON" "$new_content"; then
   log_info "重启 Docker 服务以应用配置..."
   systemctl daemon-reload
-  if ! systemctl restart docker; then
+  if ! service_ensure docker restarted; then
     log_error "重启 Docker 服务失败，请检查 systemctl 状态或日志。"
     exit "${ERROR_GENERAL}"
   fi
