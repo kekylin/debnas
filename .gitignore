@@ -12,6 +12,11 @@ tmp/
 .DS_Store
 Thumbs.db
 
+# 项目开发文件（不入库，减少用户下载体积）
+CLAUDE.md
+docs/
+tests/
+
 # 开发工具 / IDE 配置（不入库）
 .claude/
 .cursor/
@@ -19,4 +24,4 @@ Thumbs.db
 .vscode/
 devdocs/
 old-projects/
-tests/
+

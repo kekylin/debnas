@@ -20,7 +20,7 @@ get_ip_type() {
   local ip="$1"
   if [[ "$ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
     echo "ipv4"
-  elif command -v ping6 >/dev/null 2>&1 && ping6 -c 1 -W 1 "$ip" &>/dev/null; then
+  elif [[ "$ip" =~ ^([0-9a-fA-F]{0,4}:){2,} ]]; then
     echo "ipv6"
   else
     echo "unknown"

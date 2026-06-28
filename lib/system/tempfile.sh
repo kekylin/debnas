@@ -38,10 +38,10 @@ declare -g _DEBNAS_NORMAL_EXIT=0
 init_temp_dir() {
   if [[ ! -d "$DEBNAS_TMP_BASE" ]]; then
     mkdir -p "$DEBNAS_TMP_BASE" || {
-      echo "临时目录创建失败：${DEBNAS_TMP_BASE}" >&2
+      echo "临时目录失败: ${DEBNAS_TMP_BASE}" >&2
       return 1
     }
-    chmod 755 "$DEBNAS_TMP_BASE" || {
+    chmod 700 "$DEBNAS_TMP_BASE" || {
       echo "临时目录权限设置失败：${DEBNAS_TMP_BASE}" >&2
       return 1
     }
@@ -62,7 +62,7 @@ create_temp_file() {
   init_temp_dir || return 1
 
   temp_file=$(mktemp "${DEBNAS_TMP_BASE}/${prefix}.XXXXXX${suffix}") || {
-    echo "临时文件创建失败：${DEBNAS_TMP_BASE}/${prefix}.XXXXXX${suffix}" >&2
+    echo "临时文件失败: ${DEBNAS_TMP_BASE}/${prefix}.XXXXXX${suffix}" >&2
     return 1
   }
 
@@ -82,11 +82,11 @@ create_temp_dir() {
   init_temp_dir || return 1
 
   temp_dir=$(mktemp -d "${DEBNAS_TMP_BASE}/${prefix}.XXXXXXXX") || {
-    echo "临时目录创建失败：${DEBNAS_TMP_BASE}/${prefix}.XXXXXXXX" >&2
+    echo "临时目录失败: ${DEBNAS_TMP_BASE}" >&2
     return 1
   }
 
-  chmod 755 "$temp_dir"
+  chmod 700 "$temp_dir"
   _DEBNAS_TEMP_FILES+=("$temp_dir")
   echo "$temp_dir"
 }
@@ -117,18 +117,26 @@ cleanup_temp_files() {
 _debnas_cleanup_on_exit() {
   local exit_code=$?
   cleanup_temp_files
+  # 如果中断信号已处理过，不再重复输出
+  if [[ -f /tmp/.debnas_signal_handled ]]; then
+    return 0
+  fi
   if [[ $_DEBNAS_NORMAL_EXIT -eq 0 ]] && [[ $exit_code -ne 0 ]]; then
     if declare -f log_warning >/dev/null 2>&1; then
-      log_warning "脚本异常退出（退出码：${exit_code}），临时文件已清理"
+      log_warning "异常退出 (${exit_code})，临时文件已清理"
     fi
   fi
 }
 
-# INT/TERM 信号回调：执行清理并终止脚本
+# INT/TERM 信号回调：执行清理并终止脚本（跨进程去重，只提示一次）
 _debnas_cleanup_on_signal() {
   cleanup_temp_files
-  if declare -f log_warning >/dev/null 2>&1; then
-    log_warning "接收到中断信号，临时文件已清理"
+  # 跨进程去重：只有第一个接收到信号的进程输出提示
+  if [[ ! -f /tmp/.debnas_signal_handled ]]; then
+    touch /tmp/.debnas_signal_handled 2>/dev/null || true
+    if declare -f log_warning >/dev/null 2>&1; then
+      log_warning "已取消，临时文件已清理"
+    fi
   fi
   exit 1
 }

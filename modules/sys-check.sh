@@ -1,6 +1,6 @@
 #!/bin/bash
 # @module: sys-check
-# @name: 检查兼容性
+# @name: 兼容性检查
 # @category: 系统工具
 # @version: 1.0.0
 # @order: 70
@@ -11,7 +11,8 @@ IFS=$'\n\t'
 
 # 加载公共模块，确保依赖函数和常量可用
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-source "${SCRIPT_DIR}/lib/bootstrap-core.sh"
+source "${SCRIPT_DIR}/lib/bootstrap.sh"
+source "${SCRIPT_DIR}/lib/system/state.sh"
 
 # 检查依赖，确保必备命令已安装
 REQUIRED_CMDS=(awk grep df uname curl)
@@ -27,7 +28,7 @@ check_system_compatibility() {
   local issues_network=()
   local issues_service=()
 
-  log_info "正在执行系统兼容性检查..."
+  log_info "检查系统兼容性..."
 
   # 1. 系统类型和版本检查（必需）
   echo "[系统检查]"

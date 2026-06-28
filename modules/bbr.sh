@@ -1,8 +1,8 @@
 #!/bin/bash
 # @module: bbr
-# @name: BBR 算法管理
+# @name: BBR 加速
 # @category: 系统工具
-# @depends: sysctl
+# @depends:
 # @version: 1.0.0
 # @order: 76
 # BBR 拥塞控制算法管理工具
@@ -71,8 +71,8 @@ check_current_algo() {
   current_algo=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo "未知")
   supported_algos=$(sysctl -n net.ipv4.tcp_available_congestion_control 2>/dev/null || echo "未知")
   current_qdisc=$(sysctl -n net.core.default_qdisc 2>/dev/null || echo "未知")
-  log_info "当前拥塞控制算法：$current_algo"
-  log_info "系统支持算法：$supported_algos"
+  log_info "当前: $current_algo"
+  log_info "可用: $supported_algos"
   log_info "当前队列规则：$current_qdisc"
 }
 
@@ -86,32 +86,32 @@ load_bbr_module() {
   # 若可用则加载（兼容 .ko 与 .ko.xz）
   if modinfo "$BBR_MODULE" >/dev/null 2>&1; then
     if modprobe "$BBR_MODULE" >/dev/null 2>&1; then
-      log_success "BBR 模块加载成功"
+      log_success "BBR 模块"
       return 0
     fi
   fi
 
-  log_fail "未找到可用的 BBR 模块（tcp_bbr），请检查内核或模块路径"
+  log_fail "BBR 模块不可用"
   return 1
 }
 
 temp_enable_bbr() {
-  log_action "正在临时启用 BBR 算法..."
+  log_info "临时启用 BBR..."
   if ! load_bbr_module; then return 1; fi
   if sysctl -w net.ipv4.tcp_congestion_control="$BBR_ALGO" >/dev/null 2>&1 && \
      sysctl -w net.core.default_qdisc="$QDISC_FQ" >/dev/null 2>&1; then
-    log_success "BBR 算法临时启用成功"
+    log_success "BBR (临时)"
   else
-    log_fail "BBR 算法启用失败，请检查系统权限。"
+    log_fail "BBR 失败"
     return 1
   fi
 }
 
 perm_enable_bbr() {
-  log_action "正在永久启用 BBR 算法..."
+  log_info "永久启用 BBR..."
   if ! load_bbr_module; then return 1; fi
   if ! sysctl -w net.ipv4.tcp_congestion_control="$BBR_ALGO" >/dev/null 2>&1; then
-    log_fail "BBR 算法启用失败，请检查系统权限。"
+    log_fail "BBR 失败"
     return 1
   fi
   # 同步设置队列规则为 fq
@@ -125,17 +125,17 @@ perm_enable_bbr() {
   sed -i "/^${SYSCONF_QDISC_KEY}[[:space:]]*=/d" "$SYSCONF_FILE" 2>/dev/null || true
   echo "$SYSCONF_QDISC_KEY = $QDISC_FQ" >> "$SYSCONF_FILE"
   if systemctl restart systemd-sysctl.service >/dev/null 2>&1; then
-    log_success "BBR 算法永久启用成功"
+    log_success "BBR (永久)"
   else
     log_warning "配置已写入 $SYSCONF_FILE，但应用失败；已临时启用 BBR"
   fi
 }
 
 temp_disable_bbr() {
-  log_action "正在临时关闭 BBR 算法..."
+  log_info "临时关闭 BBR..."
   if sysctl -w net.ipv4.tcp_congestion_control="$DEFAULT_ALGO" >/dev/null 2>&1 && \
      sysctl -w net.core.default_qdisc="$DEFAULT_QDISC" >/dev/null 2>&1; then
-    log_success "已切换回 $DEFAULT_ALGO 算法"
+    log_success "${DEFAULT_ALGO} 已启用"
   else
     log_fail "算法切换失败，请检查系统权限。"
     return 1
@@ -143,7 +143,7 @@ temp_disable_bbr() {
 }
 
 perm_disable_bbr() {
-  log_action "正在永久关闭 BBR 算法..."
+  log_info "永久关闭 BBR..."
   if ! sysctl -w net.ipv4.tcp_congestion_control="$DEFAULT_ALGO" >/dev/null 2>&1; then
     log_fail "算法切换失败，请检查系统权限。"
     return 1
@@ -157,7 +157,7 @@ perm_disable_bbr() {
   sed -i "/^${SYSCONF_KEY}[[:space:]]*=/d" "$SYSCONF_FILE" 2>/dev/null || true
   sed -i "/^${SYSCONF_QDISC_KEY}[[:space:]]*=/d" "$SYSCONF_FILE" 2>/dev/null || true
   if systemctl restart systemd-sysctl.service >/dev/null 2>&1; then
-    log_success "BBR 算法永久关闭成功"
+    log_success "BBR 已关闭"
   else
     log_warning "配置已从 $SYSCONF_FILE 移除，但应用失败；算法已临时切换"
   fi
@@ -188,10 +188,22 @@ handle_choice() {
 }
 
 main() {
+  if [[ "${DEBNAS_CRON_MODE:-0}" -eq 1 ]]; then
+    log_info "cron 模式下不支持交互操作，已跳过"
+    return 0
+  fi
   if ! verify_system_support; then
     log_fail "当前系统不支持此功能。"
     exit "${ERROR_UNSUPPORTED_OS}"
   fi
+
+  # 非交互模式：通过参数指定操作（1=启用临时 2=启用永久 3=禁用临时 4=禁用永久 5=状态）
+  if [[ ! -t 0 ]] || [[ -n "${1:-}" ]]; then
+    local choice="${1:-5}"
+    handle_choice "$choice"
+    return $?
+  fi
+
   while true; do
     show_menu
     print_prompt "请选择编号："

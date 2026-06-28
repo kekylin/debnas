@@ -1,7 +1,7 @@
 #!/bin/bash
-# bootstrap.sh — DebNAS 完整库加载入口
-# 加载全部库文件，适合 bin/ 入口脚本使用
-# 模块推荐使用 bootstrap-core.sh（轻量版）
+# bootstrap.sh — DebNAS 统一库加载入口
+# 加载全部库文件（含 bootstrap-core.sh + 所有 system/ 库）
+# 所有 bin/ 入口脚本和 modules/ 模块统一使用此文件
 
 set -euo pipefail
 IFS=$'\n\t'
@@ -21,6 +21,8 @@ _parse_early_flags() {
     case "$arg" in
       --cron)    export DEBNAS_CRON_MODE=1 ;;
       --debug)   export LOG_LEVEL="DEBUG" ;;
+      --quiet)   export LOG_LEVEL="ERROR" ;;
+      --xtrace)  export DEBNAS_XTRACE=1 ;;
       --dry-run) export DEBNAS_DRY_RUN=1 ;;
       --yes|-y)  export DEBNAS_FORCE_YES=1 ;;
     esac
@@ -37,6 +39,8 @@ source "${_DEBNAS_ROOT}/lib/system/args.sh"
 source "${_DEBNAS_ROOT}/lib/system/state.sh"
 source "${_DEBNAS_ROOT}/lib/system/cron.sh"
 source "${_DEBNAS_ROOT}/lib/system/config.sh"
+source "${_DEBNAS_ROOT}/lib/system/installer.sh"
+source "${_DEBNAS_ROOT}/lib/system/migration.sh"
 
 # ==================== UI layer（cron 模式下跳过） ====================
 if [[ "${DEBNAS_CRON_MODE:-0}" -eq 0 ]]; then
@@ -58,3 +62,6 @@ source "${_DEBNAS_ROOT}/lib/system/module-registry.sh"
 
 # ==================== 完成标记 ====================
 _DEBNAS_BOOTSTRAPPED=1
+
+# 开启命令追踪（如果指定了 --xtrace）
+enable_xtrace

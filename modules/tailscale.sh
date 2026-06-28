@@ -1,9 +1,8 @@
 #!/bin/bash
 # @module: tailscale
-# @name: 安装 Tailscale
+# @name: Tailscale
 # @category: 系统工具
-# @depends: curl,apt,systemctl
-# @depend_modules: sources
+# @depends: curl
 # @version: 1.0.0
 # @order: 74
 # 功能：安装并配置 Tailscale 内网穿透服务
@@ -13,7 +12,9 @@ IFS=$'\n\t'
 
 # 加载公共模块，确保依赖函数和常量可用
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-source "${SCRIPT_DIR}/lib/bootstrap-core.sh"
+source "${SCRIPT_DIR}/lib/bootstrap.sh"
+main() {
+source "${SCRIPT_DIR}/lib/system/state.sh"
 
 # 检查 curl、apt、systemctl 依赖，确保后续操作可用
 REQUIRED_CMDS=(curl apt systemctl)
@@ -34,27 +35,27 @@ if [[ -z "${CODENAME}" ]]; then
   exit "${ERROR_GENERAL}"
 fi
 
-log_action "开始安装 Tailscale..."
+log_info "安装 Tailscale..."
 
 # 添加 Tailscale 的包签名密钥和存储库，确保软件源可信
-log_action "添加 Tailscale 密钥和存储库..."
+log_info "配置 Tailscale 源..."
 curl -fsSL "https://pkgs.tailscale.com/stable/debian/${CODENAME}.noarmor.gpg" \
   | tee /usr/share/keyrings/tailscale-archive-keyring.gpg >/dev/null
 curl -fsSL "https://pkgs.tailscale.com/stable/debian/${CODENAME}.tailscale-keyring.list" \
   | tee /etc/apt/sources.list.d/tailscale.list
 
-# 安装 Tailscale，保障内网穿透能力
-if [[ "${_DEBNAS_APT_UPDATED:-0}" -eq 1 ]]; then
-  log_info "已全局更新过软件包列表，跳过 apt update。"
-else
-  apt update && export _DEBNAS_APT_UPDATED=1
-fi
-log_action "安装 Tailscale..."
-apt install -y tailscale
+# 安装 Tailscale
+log_info "安装 Tailscale 组件..."
+apt_install_packages tailscale
 
 # 提示用户启动 Tailscale 并进行身份验证
-log_action "请运行以下命令启动 Tailscale，并复制输出的链接到浏览器完成身份验证："
+log_info "请运行以下命令启动 Tailscale 并完成身份验证："
 echo ""
-log_action "启动命令：tailscale up"
+log_info "  tailscale up"
 echo ""
 
+
+
+}
+
+main "$@"

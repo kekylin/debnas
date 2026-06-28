@@ -13,7 +13,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Run ShellCheck
+      - name: Run ShellCheck (error)
         uses: ludeeus/action-shellcheck@master
         with:
           severity: error
@@ -22,9 +22,20 @@ jobs:
         env:
           SHELLCHECK_OPTS: -x
 
+      - name: Run ShellCheck (warning report)
+        uses: ludeeus/action-shellcheck@master
+        continue-on-error: true
+        with:
+          severity: warning
+          scandir: '.'
+          additional_files: 'bin/debnas'
+        env:
+          SHELLCHECK_OPTS: -x
+
   syntax:
     name: Bash Syntax
     runs-on: ubuntu-latest
+    container: debian:bookworm-slim
     steps:
       - uses: actions/checkout@v4
 
@@ -53,13 +64,29 @@ jobs:
   bats-unit:
     name: BATS Unit Tests
     runs-on: ubuntu-latest
+    container: debian:bookworm-slim
     steps:
       - uses: actions/checkout@v4
 
       - name: Install BATS
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq bats
+          apt-get update -qq
+          apt-get install -y -qq bats
 
       - name: Run unit tests
         run: bash tests/run.sh unit
+
+  integration:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    container: debian:bookworm-slim
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install BATS
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq bats
+
+      - name: Run integration tests
+        run: bash tests/run.sh integration

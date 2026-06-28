@@ -4,8 +4,7 @@
 set -euo pipefail
 IFS=$'\n\t'
 
-LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-source "$LIB_DIR/core/logging.sh"
+# 依赖: core/logging.sh（由 bootstrap-core.sh 加载）
 
 # ==================== 底层 OS 信息获取函数 ====================
 
@@ -162,7 +161,7 @@ verify_system_support() {
   if ! _verify_os_is_debian; then
     local os_id
     os_id=$(_get_os_id)
-    log_error "不支持的操作系统 (${os_id})，需要 Debian 12 或更高版本"
+    log_error "不支持 ${os_id}，需要 Debian 12+"
     return 1
   fi
 
@@ -170,7 +169,7 @@ verify_system_support() {
     local codename version_id
     codename=$(_get_os_codename)
     version_id=$(_get_os_version_id)
-    log_error "Debian 版本不满足要求 (${codename:-${version_id}})，需要 Debian 12 (bookworm) 或更高版本"
+    log_error "需要 Debian 12+ (${codename:-${version_id}})"
     return 1
   fi
 
@@ -192,13 +191,13 @@ verify_debian_12_13_support() {
   codename=$(_get_os_codename)
 
   if _is_development_codename "$codename"; then
-    log_info "检测到 Debian 开发版本: $codename"
+    log_info "Debian 开发版 $codename"
     return 0
   fi
 
   case "$codename" in
     "bookworm" | "trixie" | "forky")
-      log_info "检测到支持的 Debian 版本: $codename"
+      log_info "系统版本 ${codename}"
       return 0
       ;;
     *)
@@ -206,7 +205,7 @@ verify_debian_12_13_support() {
         log_info "检测到支持的 Debian 版本: $codename"
         return 0
       else
-        log_error "不支持的 Debian 版本代号: ${codename}，需要 Debian 12 (bookworm) 或更高版本"
+        log_error "需要 Debian 12+${codename}"
         return 1
       fi
       ;;
@@ -285,18 +284,23 @@ get_system_architecture() {
 # 返回：0 支持，非 0 不支持
 verify_architecture_support() {
   local supported_archs="$1"
-  local current_arch
+  local current_arch arch
   current_arch=$(get_system_architecture)
 
   if [[ -z "$supported_archs" ]]; then
     return 1
   fi
 
+  # 临时设置 IFS 为空格以正确分词（全局 IFS=$'\n\t' 不分割空格）
+  local old_ifs="$IFS"
+  IFS=' '
   for arch in $supported_archs; do
     if [[ "$current_arch" == "$arch" ]]; then
+      IFS="$old_ifs"
       return 0
     fi
   done
+  IFS="$old_ifs"
 
   return 1
 }
@@ -305,4 +309,35 @@ verify_architecture_support() {
 # 返回：用户名字符串，找不到则返回空
 get_first_regular_user() {
   awk -F: '$3>=1000 && $1 != "nobody" {print $1; exit}' /etc/passwd
+}
+
+# 智能写入文件（内容比较去重）
+# 参数：$1 - 目标文件路径
+#       $2 - 新内容
+#       $3 - 文件权限（可选，默认 644）
+# 返回：0 表示已写入（内容变更），1 表示未变更（跳过写入）
+# 说明：比较现有文件内容，相同则跳过（避免无意义的文件写入和服务重启）
+write_file_if_changed() {
+  local file="${1:?write_file_if_changed: 缺少文件路径}"
+  local new_content="${2:?write_file_if_changed: 缺少文件内容}"
+  local file_perm="${3:-644}"
+
+  # 确保父目录存在
+  mkdir -p "$(dirname "$file")" 2>/dev/null || true
+
+  # 内容比较：相同则跳过
+  if [[ -f "$file" ]]; then
+    local current_content
+    current_content=$(cat "$file" 2>/dev/null) || current_content=""
+    if [[ "$current_content" == "$new_content" ]]; then
+      log_info "配置文件未变更，跳过写入：$file"
+      return 1
+    fi
+  fi
+
+  # 写入文件
+  echo "$new_content" > "$file"
+  chmod "$file_perm" "$file"
+  log_debug "配置文件已写入：$file"
+  return 0
 }

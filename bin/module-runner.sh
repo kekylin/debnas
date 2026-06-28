@@ -26,7 +26,7 @@ source "${_DEBNAS_ROOT}/lib/bootstrap.sh"
 # Preflight: root 权限检查
 preflight_root() {
   if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
-    log_error "此操作需要 root 权限，请使用 sudo 或以 root 身份运行"
+    log_error "需要 root 权限"
     return 1
   fi
 }
@@ -35,7 +35,7 @@ preflight_root() {
 preflight_debian_version() {
   local debian_min="${1:-bookworm}"
   if ! verify_system_support 2>/dev/null; then
-    log_error "系统不满足要求（需要 Debian 12 ${debian_min} 或更高版本）"
+    log_error "需要 Debian 12+"
     return 1
   fi
 }
@@ -51,8 +51,11 @@ preflight_dependencies() {
   fi
 
   local -a missing_cmds=()
+  local -a dep_cmds=()
   local cmd
-  for cmd in $(echo "$depends_str" | tr ',' ' '); do
+  # 使用 read -ra 拆分逗号/空格分隔的依赖列表（IFS=$'\n\t' 下 $(...|tr) 分词不可靠）
+  IFS=' ,' read -ra dep_cmds <<< "$depends_str"
+  for cmd in "${dep_cmds[@]}"; do
     cmd="${cmd#"${cmd%%[![:space:]]*}"}"
     cmd="${cmd%"${cmd##*[![:space:]]}"}"
     [[ -n "$cmd" ]] || continue
@@ -66,7 +69,7 @@ preflight_dependencies() {
     return 0
   fi
 
-  log_info "检测到缺失依赖：${missing_cmds[*]}，尝试自动安装..."
+  log_warning "缺少 ${missing_cmds[*]}"
   install_missing_dependencies "${missing_cmds[@]}" || true
 
   # 再次检查（安装失败只警告，不阻断 — 模块自身会处理缺失依赖）
@@ -78,34 +81,8 @@ preflight_dependencies() {
   done
 
   if [[ ${#still_missing[@]} -gt 0 ]]; then
-    log_warning "以下依赖仍缺失：${still_missing[*]}（模块将自行处理）"
+    log_warning "${still_missing[*]} 未装，模块自行处理"
   fi
-}
-
-# Preflight: 幂等性检查
-preflight_state() {
-  local module_name="$1"
-
-  if state_is_installed "$module_name" 2>/dev/null; then
-    local version
-    version=$(state_get "$module_name" "installed_version" 2>/dev/null) || version=""
-    local display_name
-    display_name=$(get_module_field "$module_name" "name" "$module_name" 2>/dev/null) || display_name="$module_name"
-
-    log_info "${display_name} 已安装（版本: ${version:-未知}），跳过"
-
-    if [[ "${DEBNAS_FORCE_YES:-0}" -eq 1 ]]; then
-      log_info "--yes 模式下跳过已安装模块"
-      return 1
-    fi
-
-    # 询问是否重新执行
-    read -rp "是否重新执行？[y/N]: " confirm
-    if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
-      return 1
-    fi
-  fi
-  return 0
 }
 
 # Preflight: dry-run 模式
@@ -119,7 +96,7 @@ preflight_dry_run() {
   local display_name
   display_name=$(get_module_field "$module_name" "name" "$module_name" 2>/dev/null) || display_name="$module_name"
 
-  echo "── 执行计划（dry-run）──"
+  echo "[预览模式]"
   echo "  模块: ${display_name} (${module_name})"
   echo "  入口: $(get_module_path "$module_name" 2>/dev/null || echo '未知')"
 
@@ -143,7 +120,7 @@ preflight_dry_run() {
     echo "  定时任务: ${schedule:-未指定}"
   fi
 
-  echo "── dry-run 模式，不实际执行 ──"
+  echo "[预览模式] 仅查看，不执行"
   return 1
 }
 
@@ -159,7 +136,7 @@ execute_module() {
   local display_name
   display_name=$(get_module_field "$module_name" "name" "$module_name" 2>/dev/null) || display_name="$module_name"
 
-  log_action "正在执行模块：${display_name}"
+  log_action "→ ${display_name}"
 
   # 通过 bash 子进程执行模块（清除 bootstrap 标记，让模块重新加载库）
   if (unset _DEBNAS_BOOTSTRAPPED; bash "$module_path" "$@"); then
@@ -200,27 +177,48 @@ run_preflight() {
     return 1
   fi
 
-  # 幂等性（已安装则询问）
-  if ! preflight_state "$module_name"; then
-    return 2
-  fi
-
-  # 依赖模块（递归执行）
+  # 依赖模块（始终自动执行，依赖模块自身负责幂等优化）
   local dep_modules
   dep_modules=$(get_module_field "$module_name" "depend_modules" "" 2>/dev/null) || dep_modules=""
   if [[ -n "$dep_modules" ]]; then
     log_debug "解析模块依赖：${dep_modules}"
-    local -a exec_order
-    mapfile -t exec_order < <(resolve_module_deps "$module_name" 2>/dev/null)
+    local -a exec_order=()
+    mapfile -t exec_order < <(resolve_module_deps "$module_name" 2>/dev/null) || exec_order=()
+    if [[ ${#exec_order[@]} -eq 0 ]]; then
+      # 回退解析：统一将逗号替换为空格后按空格拆分，兼容 "a,b" / "a, b" / "a b" 格式
+      read -ra exec_order <<< "${dep_modules//,/ }"
+    fi
 
-    local dep
-    for dep in "${exec_order[@]}"; do
-      [[ "$dep" == "$module_name" ]] && continue
-      log_info "执行依赖模块：${dep}"
-      if ! (unset _DEBNAS_BOOTSTRAPPED; bash "${_DEBNAS_ROOT}/bin/module-runner.sh" "$dep"); then
-        log_error "依赖模块 ${dep} 执行失败，当前模块已跳过"
-        return 1
-      fi
+    local dep single_dep
+    local -a split_deps=()
+    for dep in "${exec_order[@]+"${exec_order[@]}"}"; do
+      split_deps=()
+      IFS=' ,' read -ra split_deps <<< "$dep"
+      for single_dep in "${split_deps[@]+"${split_deps[@]}"}"; do
+        single_dep="${single_dep#"${single_dep%%[![:space:]]*}"}"
+        single_dep="${single_dep%"${single_dep##*[![:space:]]}"}"
+        [[ -n "$single_dep" ]] || continue
+        [[ "$single_dep" == "$module_name" ]] && continue
+        # 会话级去重：同一会话内依赖模块只执行一次
+        local dep_stamp="/tmp/.debnas_dep_${single_dep}"
+        if [[ -f "$dep_stamp" ]]; then
+          log_debug "依赖模块 ${single_dep} 已在本会话内执行过，跳过"
+          continue
+        fi
+        # 幂等检查：如果依赖模块已安装，跳过
+        if state_is_installed "$single_dep" 2>/dev/null; then
+          log_info "${single_dep} 已完成，跳过"
+          touch "$dep_stamp" 2>/dev/null || true
+          continue
+        fi
+
+        log_debug "→ ${single_dep}"
+        if ! (unset _DEBNAS_BOOTSTRAPPED; bash "${_DEBNAS_ROOT}/bin/module-runner.sh" "$single_dep"); then
+          log_error "${single_dep} 失败，跳过后续"
+          return 1
+        fi
+        touch "$dep_stamp" 2>/dev/null || true
+      done
     done
   fi
 
@@ -239,14 +237,14 @@ run_report() {
     local version
     version=$(get_module_field "$module_name" "version" "" 2>/dev/null) || version=""
     state_mark_success "$module_name" "$version"
-    log_success "模块执行完成：${display_name}"
+    log_success "${display_name}"
   else
     state_mark_fail "$module_name" "exit_code_${exit_code}"
-    log_error "模块执行失败：${display_name}"
+    log_error "${display_name} 失败"
     local log_file
     log_file=$(get_log_file 2>/dev/null)
     if [[ -n "$log_file" ]]; then
-      log_error "查看日志: ${log_file}"
+      log_info "日志 → ${log_file}"
     fi
   fi
 
@@ -259,11 +257,8 @@ main() {
   # 解析全局参数
   parse_global_args "$@"
 
-  # 获取剩余参数（eval 还原 printf %q 序列化的参数）
-  local -a args=()
-  if [[ -n "${DEBNAS_REMAINING_ARGS:-}" ]]; then
-    eval "args=($DEBNAS_REMAINING_ARGS)"
-  fi
+  # 获取剩余参数（通过全局数组传递，避免 eval）
+  local -a args=("${DEBNAS_REMAINING_ARGS_ARRAY[@]+"${DEBNAS_REMAINING_ARGS_ARRAY[@]}"}")
 
   if [[ ${#args[@]} -eq 0 ]]; then
     log_error "未指定模块名"
@@ -272,7 +267,10 @@ main() {
   fi
 
   local module_name="${args[0]}"
-  local -a module_args=("${args[@]:1}")
+  local -a module_args=()
+  if [[ ${#args[@]} -gt 1 ]]; then
+    module_args=("${args[@]:1}")
+  fi
 
   # 发现并验证模块
   discover_modules 2>/dev/null

@@ -4,12 +4,7 @@
 set -euo pipefail
 IFS=$'\n\t'
 
-# 获取库文件目录
-LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-
-# 加载核心模块
-source "$LIB_DIR/core/logging.sh"
-source "$LIB_DIR/system/utils.sh"
+# 依赖: core/logging.sh, system/utils.sh（由 bootstrap-core.sh 加载）
 
 # APT Pinning 配置目录
 APT_PREFERENCES_DIR="/etc/apt/preferences.d"
@@ -37,13 +32,17 @@ write_pinning_file() {
   chmod 644 "${pinning_file}"
 }
 
-# 写入 Cockpit 相关组件的 APT Pinning（始终覆盖为最新）
+# 写入 Cockpit 相关组件的 APT Pinning（始终从 backports 安装最新版）
 configure_cockpit_pinning() {
   local os_codename="$1"
   local pinning_file="${APT_PREFERENCES_DIR}/cockpit-backports.pref"
   write_pinning_file "${pinning_file}" "${os_codename}" \
-    "cockpit cockpit-*"
-  log_success "Cockpit APT Pinning 配置已写入: ${pinning_file}"
+    "cockpit" \
+    "cockpit-*" \
+    "pcp" \
+    "python3-pcp" \
+    "tuned"
+  log_success "Cockpit 源优先级已配置"
   return 0
 }
 
@@ -54,22 +53,22 @@ configure_component_pinning() {
   local packages="$3"
   local pinning_file="${APT_PREFERENCES_DIR}/${component}-backports.pref"
 
-  log_info "写入 ${component} APT Pinning 配置..."
+  log_info "写入 ${component} 源优先级..."
   write_pinning_file "${pinning_file}" "${os_codename}" "${packages}"
-  log_success "${component} APT Pinning 配置已写入: ${pinning_file}"
+  log_success "${component} 源优先级已配置"
   return 0
 }
 
 # 应用 APT Pinning 配置
 apply_pinning_config() {
-  log_info "正在应用 APT Pinning 配置..."
-  
+  log_info "应用源优先级..."
+
   if ! apt update; then
-    log_error "软件源更新失败，APT Pinning 配置可能未生效"
+    log_error "apt update 失败，源优先级可能未生效"
     return 1
   fi
-  
-  log_success "APT Pinning 配置已生效"
+
+  log_success "源优先级已生效"
   return 0
 }
 

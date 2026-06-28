@@ -4,10 +4,7 @@
 set -euo pipefail
 IFS=$'\n\t'
 
-# 获取库文件目录
-LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-source "$LIB_DIR/core/logging.sh"
-source "$LIB_DIR/ui/styles.sh"
+# 依赖: core/logging.sh, ui/styles.sh（由 bootstrap.sh 加载）
 
 # 显示菜单选项
 # 参数：$1 - 菜单标题（可选），$2... - 菜单选项数组
@@ -28,7 +25,7 @@ show_menu() {
     print_menu_item "${idx}" "${option}"
     ((idx++))
   done
-  print_menu_item "0" "返回" "true"
+  print_menu_item "0" "${MSG_BACK:-返回}" "true"
 }
 
 # 显示带分隔线的菜单
@@ -55,12 +52,12 @@ get_user_choice() {
   
   # 验证输入
   if [[ ! "$choice" =~ ^[0-9]+$ ]]; then
-    log_error "请输入数字编号"
+    log_error "${MSG_INVALID_INPUT:-请输入数字编号}"
     return 1
   fi
-  
+
   if [[ "$choice" -lt 0 ]] || [[ "$choice" -gt "$max_options" ]]; then
-    log_error "无效选择，请输入 0-$max_options"
+    log_error "${MSG_INVALID_CHOICE:-无效选择}，请输入 0-$max_options"
     return 1
   fi
   
@@ -76,12 +73,12 @@ get_user_multiple_choice() {
   local choices
   
   print_multiselect_prompt
-  print_prompt "请选择编号: "
+  print_prompt "${MSG_SELECT:-请选择编号: }"
   read -r choices
-  
+
   # 验证输入
   if [[ -z "$choices" ]]; then
-    log_error "输入为空，请重新输入"
+    log_error "${MSG_INVALID_INPUT:-输入为空，请重新输入}"
     return 1
   fi
   
@@ -91,12 +88,12 @@ get_user_multiple_choice() {
   
   for choice in "${choices_array[@]}"; do
     if [[ ! "$choice" =~ ^[0-9]+$ ]]; then
-      log_error "仅支持数字编号"
+      log_error "${MSG_INVALID_INPUT:-仅支持数字编号}"
       return 1
     fi
-    
+
     if [[ "$choice" -lt 0 ]] || [[ "$choice" -gt "$max_options" ]]; then
-      log_error "无效选择，请输入 0-$max_options"
+      log_error "${MSG_INVALID_CHOICE:-无效选择}，请输入 0-$max_options"
       return 1
     fi
   done

@@ -6,9 +6,7 @@
 set -euo pipefail
 IFS=$'\n\t'
 
-# 获取库文件目录
-LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-source "$LIB_DIR/core/logging.sh"
+# 依赖: core/logging.sh（由 bootstrap.sh 加载）
 
 # ==================== 常量定义 ====================
 
@@ -85,6 +83,8 @@ _parse_single_file() {
   _MODULE_REGISTRY["${module_name}.type"]="file"
   _MODULE_REGISTRY["${module_name}.cron"]="false"
   _MODULE_REGISTRY["${module_name}.cron_schedule"]=""
+  _MODULE_REGISTRY["${module_name}.author"]=""
+  _MODULE_REGISTRY["${module_name}.since"]=""
 
   # 从文件头部提取元数据（只扫描前 30 行，避免性能问题）
   local line key value
@@ -104,7 +104,7 @@ _parse_single_file() {
           # 清除以文件名为键的旧条目（防止 module.sh 残留 "module" 幽灵条目）
           if [[ "$old_name" != "$module_name" ]]; then
             local suffix
-            for suffix in module name category description depends depend_modules version debian_min order path type cron cron_schedule; do
+            for suffix in module name category description depends depend_modules version debian_min order path type cron cron_schedule author since; do
               unset "_MODULE_REGISTRY[${old_name}.${suffix}]"
             done
           fi
@@ -121,6 +121,8 @@ _parse_single_file() {
           _MODULE_REGISTRY["${module_name}.order"]="$DEFAULT_ORDER"
           _MODULE_REGISTRY["${module_name}.cron"]="false"
           _MODULE_REGISTRY["${module_name}.cron_schedule"]=""
+          _MODULE_REGISTRY["${module_name}.author"]=""
+          _MODULE_REGISTRY["${module_name}.since"]=""
           ;;
         name)          _MODULE_REGISTRY["${module_name}.name"]="$value" ;;
         category)      _MODULE_REGISTRY["${module_name}.category"]="$value" ;;
@@ -132,6 +134,8 @@ _parse_single_file() {
         order)         _MODULE_REGISTRY["${module_name}.order"]="$value" ;;
         cron)          _MODULE_REGISTRY["${module_name}.cron"]="$value" ;;
         cron_schedule) _MODULE_REGISTRY["${module_name}.cron_schedule"]="$value" ;;
+        author)        _MODULE_REGISTRY["${module_name}.author"]="$value" ;;
+        since)         _MODULE_REGISTRY["${module_name}.since"]="$value" ;;
       esac
       has_metadata=1
     fi
@@ -379,8 +383,9 @@ resolve_module_deps() {
     local deps_str="${_MODULE_REGISTRY["${node}.depend_modules"]:-}"
     if [[ -n "$deps_str" ]]; then
       local dep
-      for dep in $(echo "$deps_str" | tr ',' ' '); do
-        # 去除空格
+      local -a dep_list=()
+      IFS=' ,' read -ra dep_list <<< "$deps_str"
+      for dep in "${dep_list[@]}"; do
         dep="${dep#"${dep%%[![:space:]]*}"}"
         dep="${dep%"${dep##*[![:space:]]}"}"
         [[ -n "$dep" ]] || continue
@@ -401,7 +406,10 @@ resolve_module_deps() {
     return 1
   fi
 
-  # 输出排序结果
+  # 输出排序结果（空数组保护）
+  if [[ ${#result[@]} -eq 0 ]]; then
+    return 0
+  fi
   printf '%s\n' "${result[@]}"
 }
 

@@ -1,9 +1,8 @@
 #!/bin/bash
 # @module: mail-account
-# @name: 配置邮件账户
+# @name: 邮件账户
 # @category: 通知服务
-# @depends: exim4,update-exim4.conf,systemctl
-# @depend_modules: sources
+# @depends: exim4
 # @version: 1.0.0
 # @order: 60
 # 功能：设置发送邮件账户
@@ -13,7 +12,13 @@ IFS=$'\n\t'
 
 # 加载公共模块，确保依赖函数和常量可用
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-source "${SCRIPT_DIR}/lib/bootstrap-core.sh"
+source "${SCRIPT_DIR}/lib/bootstrap.sh"
+main() {
+  if [[ "${DEBNAS_CRON_MODE:-0}" -eq 1 ]]; then
+    log_info "cron 模式下不支持交互操作，已跳过"
+    return 0
+  fi
+  source "${SCRIPT_DIR}/lib/system/state.sh"
 
 # 检查 exim4、update-exim4.conf、systemctl 依赖，确保后续操作可用
 REQUIRED_CMDS=(exim4 update-exim4.conf systemctl)
@@ -23,8 +28,17 @@ if ! check_dependencies "${REQUIRED_CMDS[@]}"; then
 fi
 
 # 域名与 SMTP 服务器映射
+# 国内主流邮箱
 declare -A SMTP_MAP=(
   ["qq.com"]="smtp.qq.com:587"
+  ["163.com"]="smtp.163.com:465"
+  ["126.com"]="smtp.126.com:465"
+  ["sina.com"]="smtp.sina.com:465"
+  ["aliyun.com"]="smtp.aliyun.com:465"
+  # 国外主流邮箱
+  ["gmail.com"]="smtp.gmail.com:587"
+  ["outlook.com"]="smtp-mail.outlook.com:587"
+  ["yahoo.com"]="smtp.mail.yahoo.com:587"
 )
 
 # 用户输入提示
@@ -39,14 +53,16 @@ safe_write() {
   return 0
 }
 
-# 验证发件邮箱格式与域名匹配
+# 验证发件邮箱格式与域名匹配（支持 SMTP_MAP 中所有域名）
 validate_sender_email() {
-  local email="$1"
-  if [[ "$email" =~ ^[a-zA-Z0-9._%+-]{1,64}@qq\.com$ && "${email##*@}" == "qq.com" ]]; then
-    printf "%s" "${SMTP_MAP[qq.com]}"
+  local email="$1" domain smarthost
+  domain="${email##*@}"
+  smarthost="${SMTP_MAP[$domain]:-}"
+  if [[ -n "$smarthost" ]]; then
+    printf "%s" "$smarthost"
     return 0
   else
-    log_error "无效的 SMTP 发件邮箱地址，仅支持 qq.com 域名。"
+    log_error "不支持的邮箱域名：${domain}。支持的域名：${!SMTP_MAP[*]}"
     return 1
   fi
 }
@@ -54,8 +70,7 @@ validate_sender_email() {
 # 生成 Exim4 邮件服务器配置文件
 generate_exim_config() {
   local email_domain="$1" smarthost="$2"
-  safe_write "/etc/exim4/update-exim4.conf.conf" "$(cat <<EOF
-dc_eximconfig_configtype='satellite'
+  local exim_config="dc_eximconfig_configtype='satellite'
 dc_other_hostnames=''
 dc_local_interfaces='127.0.0.1 ; ::1'
 dc_readhost='$email_domain'
@@ -67,9 +82,8 @@ CFILEMODE='644'
 dc_use_split_config='false'
 dc_hide_mailname='true'
 dc_mailname_in_oh='true'
-dc_localdelivery='mail_spool'
-EOF
-)" || exit "${ERROR_GENERAL}"
+dc_localdelivery='mail_spool'"
+  write_file_if_changed "/etc/exim4/update-exim4.conf.conf" "$exim_config" || true
   if ! update-exim4.conf >/dev/null 2>&1; then
     log_error "更新 Exim4 配置失败，可能会影响后续操作。"
   fi
@@ -78,26 +92,16 @@ EOF
 # 配置 SMTP 认证参数
 configure_smtp_auth() {
   local email_domain="$1" email="$2" password="$3" notify_email="$4"
-  safe_write "/etc/exim4/passwd.client" "*.$email_domain:${email}:${password}" || exit "${ERROR_GENERAL}"
-  chown root:Debian-exim "/etc/exim4/passwd.client"
-  chmod 640 "/etc/exim4/passwd.client"
-  safe_write "/etc/email-addresses" "root: $email" || exit "${ERROR_GENERAL}"
-  safe_write "/etc/exim4/notify_email" "$notify_email" || exit "${ERROR_GENERAL}"
-  chmod 644 "/etc/exim4/notify_email"
+  write_file_if_changed "/etc/exim4/passwd.client" "*.$email_domain:${email}:${password}" 640 || true
+  chown root:Debian-exim "/etc/exim4/passwd.client" 2>/dev/null || true
+  write_file_if_changed "/etc/email-addresses" "root: $email" || true
+  write_file_if_changed "/etc/exim4/notify_email" "$notify_email" || true
 }
 
 # 重启 Exim4 邮件服务
 restart_exim_service() {
-  log_action "正在重启 Exim4 邮件服务..."
-  if command -v systemctl >/dev/null 2>&1; then
-    systemctl restart exim4 && systemctl is-active --quiet exim4 || { log_error "Exim4 服务重启失败。"; return 1; }
-  elif command -v service >/dev/null 2>&1; then
-    service exim4 restart || { log_error "Exim4 服务重启失败。"; return 1; }
-  else
-    log_error "未找到可用的服务管理工具。"
-    return 1
-  fi
-  log_success "Exim4 服务运行状态已更新。"
+  log_info "重启 Exim4..."
+  service_ensure "exim4" "restarted" || { log_error "Exim4 服务重启失败。"; return 1; }
 }
 
 # 发送测试邮件
@@ -139,40 +143,74 @@ From: ${sender_email}
 此邮件为系统自动发送，请勿直接回复。
 EOF
   )
-  log_action "正在发送测试邮件..."
+  log_info "发送测试邮件..."
   echo -e "$email_content" | exim -bm "$notify_email" && \
-    log_success "测试邮件已成功发送至 ${notify_email}" || \
+    log_success "测试邮件已发送" || \
     { log_fail "测试邮件发送失败，请查看 /var/log/exim4/mainlog。"; exit "${ERROR_GENERAL}"; }
 }
 
-# 主控制流程
-log_action "开始 Exim4 邮件服务配置..."
+# 安全读取一行输入（兼容 set -e，read 失败不终止脚本）
+# 参数：$1 - 提示信息，$2 - 隐藏输入（hidden）
+# 输出：用户输入内容
+safe_read_input() {
+  local prompt="$1"
+  local hidden="${2:-}"
+  local input=""
 
-prompt_message "请输入 SMTP 发件邮箱地址（仅支持 QQ 域名邮箱）："
-email=""
+  if [[ -n "$prompt" ]]; then
+    printf '%s\n' "$prompt" >&2
+  fi
+
+  if [[ "$hidden" == "hidden" ]]; then
+    read -rs input 2>/dev/null || true
+    printf '\n' >&2
+  else
+    read -r input 2>/dev/null || true
+  fi
+  printf '%s' "$input"
+}
+
+# 主控制流程
+log_info "配置邮件服务..."
+
+# 读取发件邮箱
+email_domain=""
 smarthost=""
-while read -r email; do
-  smarthost=$(validate_sender_email "$email")
-  if [[ $? -eq 0 ]]; then
+while true; do
+  email=$(safe_read_input "请输入 SMTP 发件邮箱地址（支持 QQ/163/126/新浪/阿里云/Gmail/Outlook/Yahoo）：")
+  if [[ -z "$email" ]]; then
+    log_fail "发件邮箱不能为空"
+    continue
+  fi
+  smarthost=$(validate_sender_email "$email") || true
+  if [[ -n "$smarthost" ]]; then
+    email_domain="${email##*@}"
     break
   fi
-  prompt_message "请输入有效的 QQ 邮箱地址："
+  log_fail "邮箱域名不支持"
 done
 
-email_domain="${email##*@}"
-prompt_message "请输入 SMTP 服务授权密码："
-password=""
-while read -rs password && [[ -z "$password" ]]; do
-  log_fail "SMTP 授权密码为必填项。"
-  prompt_message "请输入 SMTP 服务授权密码："
+# 读取授权密码
+while true; do
+  password=$(safe_read_input "请输入 SMTP 服务授权密码：" "hidden")
+  if [[ -z "$password" ]]; then
+    log_fail "授权密码不能为空"
+    continue
+  fi
+  break
 done
-echo
 
-prompt_message "请输入系统通知接收邮箱地址："
-notify_email=""
-while read -r notify_email && [[ ! "$notify_email" =~ ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; do
-  log_fail "通知邮箱地址格式无效或为空。"
-  prompt_message "请输入有效的通知接收邮箱地址："
+# 读取通知接收邮箱
+while true; do
+  notify_email=$(safe_read_input "请输入系统通知接收邮箱地址：")
+  if [[ -z "$notify_email" ]]; then
+    log_fail "通知邮箱不能为空"
+    continue
+  fi
+  if [[ "$notify_email" =~ ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
+    break
+  fi
+  log_fail "邮箱格式无效"
 done
 
 generate_exim_config "$email_domain" "$smarthost"
@@ -185,3 +223,8 @@ log_info "• SMTP 发件服务器: ${smarthost}"
 log_info "• 发件邮箱地址: ${email}"
 log_info "• 通知接收邮箱: ${notify_email}"
 log_info "• 配置验证时间: $(date +'%Y-%m-%d %H:%M')"
+
+
+}
+
+main "$@"

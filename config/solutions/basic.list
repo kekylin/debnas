@@ -1,0 +1,8 @@
+# HomeNAS 基础环境
+sources
+basic-tools
+cockpit
+cockpit-net
+docker-ce
+docker-mirror
+service-query

@@ -19,7 +19,7 @@ source "${_DEBNAS_ROOT}/lib/bootstrap.sh"
 
 # [1] 系统兼容性检查
 check_system_compatibility() {
-  echo "── 系统兼容性 ──"
+  echo "── 系统 ──"
 
   local os_name os_version os_codename arch
   os_name=$(get_system_name 2>/dev/null || echo "未知")
@@ -27,33 +27,33 @@ check_system_compatibility() {
   os_codename=$(get_system_codename 2>/dev/null || echo "未知")
   arch=$(get_system_architecture 2>/dev/null || echo "未知")
 
-  printf "  %-20s %s %s (%s)\n" "操作系统:" "$os_name" "$os_version" "$os_codename"
-  printf "  %-20s %s\n" "CPU 架构:" "$arch"
+  printf "  %-20s %s %s (%s)\n" "系统:" "$os_name" "$os_version" "$os_codename"
+  printf "  %-20s %s\n" "架构:" "$arch"
 
   if verify_system_support 2>/dev/null; then
-    printf "  %-20s %s\n" "系统兼容性:" "✅ 支持"
+    printf "  %-20s %s\n" "兼容:" "✅ 支持"
   else
-    printf "  %-20s %s\n" "系统兼容性:" "❌ 不支持（需要 Debian 12+）"
+    printf "  %-20s %s\n" "兼容:" "❌ 不支持（需要 Debian 12+）"
   fi
 
   # 内存检查
   local mem_total
   mem_total=$(awk '/MemTotal/ {printf "%.1f GB", $2/1024/1024}' /proc/meminfo 2>/dev/null) || mem_total="未知"
-  printf "  %-20s %s\n" "总内存:" "$mem_total"
+  printf "  %-20s %s\n" "内存:" "$mem_total"
 
   echo ""
 }
 
 # [2] 磁盘空间检查
 check_disk_space() {
-  echo "── 磁盘空间 ──"
+  echo "── 磁盘"
   df -h / /opt /var /tmp 2>/dev/null | awk 'NR==1 || /^\/dev/' | sed 's/^/  /'
   echo ""
 }
 
 # [3] APT 源检查
 check_apt_sources() {
-  echo "── APT 软件源 ──"
+  echo "── APT 源"
 
   if [[ -f "/etc/apt/sources.list.d/debian.sources" ]]; then
     local mirror
@@ -82,24 +82,29 @@ check_apt_sources() {
 
 # [4] 网络连通性检查
 check_network() {
-  echo "── 网络连通性 ──"
+  echo "── 网络"
 
-  local -a targets=(
-    "https://deb.debian.org:Debian 官方源"
-    "https://mirrors.tuna.tsinghua.edu.cn:清华镜像"
-    "https://download.docker.com:Docker 官方"
-    "https://github.com:GitHub"
-    "https://gitee.com:Gitee"
+  local -a target_urls=(
+    "https://deb.debian.org/"
+    "https://mirrors.tuna.tsinghua.edu.cn/"
+    "https://download.docker.com/"
+    "https://github.com/"
+    "https://gitee.com/"
+  )
+  local -a target_labels=(
+    "Debian 官方源"
+    "清华镜像"
+    "Docker 官方"
+    "GitHub"
+    "Gitee"
   )
 
-  local entry url label
-  for entry in "${targets[@]}"; do
-    url="${entry%%:*}"
-    label="${entry#*:}"
-    if probe_url "$url" 2>/dev/null; then
-      printf "  %-30s %s\n" "${label}:" "✅ 可达"
+  local i
+  for ((i=0; i<${#target_urls[@]}; i++)); do
+    if probe_url "${target_urls[$i]}" 2>/dev/null; then
+      printf "  %-30s %s\n" "${target_labels[$i]}:" "✅ 可达"
     else
-      printf "  %-30s %s\n" "${label}:" "❌ 不可达"
+      printf "  %-30s %s\n" "${target_labels[$i]}:" "❌ 不可达"
     fi
   done
 
@@ -108,7 +113,7 @@ check_network() {
 
 # [5] DebNAS 状态检查
 check_debnas_status() {
-  echo "── DebNAS 状态 ──"
+  echo "── 模块"
 
   printf "  %-20s %s\n" "版本:" "${DEBNAS_VERSION:-未知}"
   printf "  %-20s %s\n" "安装目录:" "${_DEBNAS_ROOT}"
@@ -141,7 +146,7 @@ check_debnas_status() {
       fi
     done
   fi
-  printf "  %-20s %s 个\n" "已安装模块:" "$installed_count"
+  printf "  %-20s %s 个\n" "模块:" "$installed_count"
   if [[ ${#installed_modules[@]} -gt 0 ]]; then
     printf "  %-20s %s\n" "" "$(IFS=', '; echo "${installed_modules[*]}")"
   fi
@@ -160,7 +165,7 @@ check_debnas_status() {
 
 # [6] 关键服务检查
 check_services() {
-  echo "── 关键服务 ──"
+  echo "── 服务"
 
   local -a services=(
     "cockpit:Cockpit 管理面板"
@@ -196,10 +201,38 @@ check_services() {
   echo ""
 }
 
+# [7] 版本兼容性检查
+check_version_compatibility() {
+  echo "── 版本"
+
+  local installed_ver
+  installed_ver=$(cat /var/lib/debnas/state/.debnas_version 2>/dev/null) || installed_ver=""
+
+  if [[ -n "$installed_ver" ]]; then
+    printf "  %-20s %s\n" "已记录版本:" "$installed_ver"
+    printf "  %-20s %s\n" "当前代码版本:" "${DEBNAS_VERSION:-未知}"
+    if [[ "$installed_ver" != "${DEBNAS_VERSION:-}" ]]; then
+      printf "  %-20s %s\n" "版本一致性:" "⚠️ 不一致（建议执行 debnas update）"
+    else
+      printf "  %-20s %s\n" "版本一致性:" "✅ 一致"
+    fi
+  else
+    printf "  %-20s %s\n" "已记录版本:" "未记录（首次安装）"
+  fi
+
+  if migration_check_compatibility 2>/dev/null; then
+    printf "  %-20s %s\n" "配置兼容性:" "✅ 正常"
+  else
+    printf "  %-20s %s\n" "配置兼容性:" "⚠️ 存在问题"
+  fi
+
+  echo ""
+}
+
 # ==================== 主入口 ====================
 
 main() {
-  log_info "开始系统诊断..."
+  log_info "DebNAS 诊断"
   echo ""
 
   check_system_compatibility
@@ -208,8 +241,9 @@ main() {
   check_network
   check_debnas_status
   check_services
+  check_version_compatibility
 
-  log_success "诊断完成（仅报告，未做任何修改）"
+  log_success "诊断完成 (7 项)"
 }
 
 main "$@"

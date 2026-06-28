@@ -1,9 +1,9 @@
 #!/bin/bash
 # @module: fail2ban
-# @name: 安装 Fail2ban
+# @name: 防暴力破解
 # @category: 安全防护
-# @depends: apt,systemctl
-# @depend_modules: sources,firewall
+# @depends:
+# @depend_modules: firewall
 # @version: 1.0.0
 # @order: 42
 # 功能：安装并配置 fail2ban 自动封锁服务
@@ -15,27 +15,13 @@ IFS=$'\n\t'
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${SCRIPT_DIR}/lib/bootstrap.sh"
 
-# ==================== 幂等性检查 ====================
-if command -v fail2ban-client &>/dev/null; then
-  if systemctl is-active fail2ban &>/dev/null; then
-    if state_is_installed "fail2ban" 2>/dev/null; then
-      log_info "Fail2ban 已安装并运行，跳过"
-      exit 0
-    fi
-  fi
-fi
-
-# 检查 apt、systemctl 依赖，确保后续操作可用
-REQUIRED_CMDS=(apt systemctl)
-if ! check_dependencies "${REQUIRED_CMDS[@]}"; then
-  log_error "缺少 apt 或 systemctl，请先手动安装。"
-  exit "${ERROR_DEPENDENCY}"
-fi
+# 跟踪是否有配置变更（决定是否重启服务）
+_config_changed=0
 
 # 安装 Fail2ban 软件包，保障安全防护
 install_fail2ban() {
-  log_info "正在安装 Fail2ban 软件包..."
-  apt install fail2ban -y
+  log_info "安装 Fail2ban..."
+  apt_install_packages fail2ban
   if ! command -v fail2ban-server >/dev/null 2>&1; then
     log_error "未检测到 fail2ban，请先安装后再运行本脚本。"
     exit "${ERROR_DEPENDENCY}"
@@ -73,8 +59,8 @@ configure_email() {
 # 配置 jail.local，定制 fail2ban 行为
 configure_jail_local() {
   local config_file="/etc/fail2ban/jail.local"
-  cat > "$config_file" <<EOF
-[DEFAULT]
+  local content
+  content="[DEFAULT]
 
 # 忽略本机流量，防止自身被封禁
 ignoreip = 127.0.0.1/8 ::1
@@ -113,14 +99,20 @@ enabled  = true
 port     = ssh
 filter   = sshd
 backend  = systemd
-logpath  = %(sshd_log)s
-EOF
+logpath  = %(sshd_log)s"
+
+  if write_file_if_changed "$config_file" "$content"; then
+    _config_changed=1
+  fi
 }
 
 # 配置 mail-whois.local，定制告警邮件内容
+# shellcheck disable=SC2016
+# 注：$GEO、$COUNTRY 等变量及 \n、\t 转义序列属于 fail2ban 模板，由 fail2ban 运行时展开
 configure_mail_whois() {
   local config_file="/etc/fail2ban/action.d/mail-whois.local"
-  cat > "$config_file" <<'EOF'
+  local content
+  content=$(cat <<'MAIL_EOF'
 [INCLUDES]
 before = mail-whois-common.conf
 
@@ -134,7 +126,12 @@ actionunban =
 [Init]
 name = default
 dest = root
-EOF
+MAIL_EOF
+)
+
+  if write_file_if_changed "$config_file" "$content"; then
+    _config_changed=1
+  fi
 }
 
 # 配置 pam-generic，增强 Cockpit 登录防护
@@ -142,21 +139,23 @@ configure_pam_generic() {
   local config_file="/etc/fail2ban/jail.d/defaults-debian.conf"
   if ! grep -q "\[pam-generic\]" "$config_file"; then
     printf "\n[pam-generic]\nenabled = true\n" >> "$config_file"
+    _config_changed=1
   fi
 }
 
 # 启动并启用 Fail2ban 服务，确保防护生效
 start_fail2ban() {
-  if ! systemctl enable fail2ban >/dev/null 2>&1; then
-    log_error "Fail2ban 服务开机自启配置失败，请检查 systemctl 服务状态。"
-    exit "${ERROR_GENERAL}"
+  # 确保 firewalld 正在运行（fail2ban 的 firewallcmd-ipset 后端需要它）
+  service_ensure firewalld started
+
+  service_ensure fail2ban enabled
+  if [[ $_config_changed -eq 1 ]]; then
+    log_info "重启 Fail2ban 服务以加载新配置..."
+    service_ensure fail2ban restarted
+  else
+    log_info "配置未变更，跳过 Fail2ban 服务重启"
   fi
-  log_info "正在重启 Fail2ban 服务以加载新配置..."
-  if ! systemctl restart fail2ban >/dev/null 2>&1; then
-    log_error "Fail2ban 服务重启失败，请检查 systemctl 服务状态。"
-    exit "${ERROR_GENERAL}"
-  fi
-  log_success "Fail2ban 服务已启动，并设置为开机自启。"
+  log_success "Fail2ban 就绪"
 }
 
 # 主执行流程，串联各功能模块
@@ -168,8 +167,6 @@ main() {
   configure_pam_generic
   start_fail2ban
 
-  # ==================== 记录状态 ====================
-  state_mark_success "fail2ban"
 }
 
-main 
+main "$@"

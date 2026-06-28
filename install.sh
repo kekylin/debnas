@@ -12,7 +12,7 @@
 #   # 卸载
 #   bash install.sh --uninstall
 
-set -e
+set -eo pipefail
 
 # ==================== 常量 ====================
 
@@ -21,8 +21,8 @@ readonly DEBNAS_BIN="/usr/local/bin/debnas"
 readonly DEBNAS_CONF_DIR="/etc/debnas"
 readonly DEBNAS_LOG_DIR="/var/log/debnas"
 readonly DEBNAS_STATE_DIR="/var/lib/debnas/state"
-readonly DEBNAS_TMP_DIR="/tmp/debnas"
 
+# ⚠️ 此 URL 与 lib/system/installer.sh 中的定义必须保持同步
 readonly REPO_CN_URL="https://gitee.com/kekylin/debnas/repository/archive/main.tar.gz"
 readonly REPO_GLOBAL_URL="https://github.com/kekylin/debnas/archive/refs/heads/main.tar.gz"
 
@@ -121,18 +121,18 @@ do_uninstall() {
     fi
   fi
 
-  _action "正在卸载 DebNAS..."
+  _action "卸载"
 
   # 移除全局命令
   if [[ -f "$DEBNAS_BIN" ]]; then
     rm -f "$DEBNAS_BIN"
-    _info "已移除全局命令: ${DEBNAS_BIN}"
+    _info "命令: ${DEBNAS_BIN}"
   fi
 
   # 移除脚本代码
   if [[ -d "$DEBNAS_INSTALL_DIR" ]]; then
     rm -rf "$DEBNAS_INSTALL_DIR"
-    _info "已移除脚本目录: ${DEBNAS_INSTALL_DIR}/"
+    _info "脚本: ${DEBNAS_INSTALL_DIR}"
   fi
 
   # 移除 cron 定时任务
@@ -140,34 +140,34 @@ do_uninstall() {
   current_crontab=$(crontab -l 2>/dev/null || true)
   if echo "$current_crontab" | grep -q "DEBNAS-CRON" 2>/dev/null; then
     echo "$current_crontab" | grep -v "DEBNAS-CRON" | crontab - 2>/dev/null || crontab -r 2>/dev/null || true
-    _info "已移除 DebNAS 定时任务"
+    _info "定时任务已清理"
   fi
 
   # 移除配置目录
   if [[ -d "$DEBNAS_CONF_DIR" ]]; then
     rm -rf "$DEBNAS_CONF_DIR"
-    _info "已移除配置目录: ${DEBNAS_CONF_DIR}/"
+    _info "配置: ${DEBNAS_CONF_DIR}"
   fi
 
   # 移除日志目录
   if [[ -d "$DEBNAS_LOG_DIR" ]]; then
     rm -rf "$DEBNAS_LOG_DIR"
-    _info "已移除日志目录: ${DEBNAS_LOG_DIR}/"
+    _info "日志: ${DEBNAS_LOG_DIR}"
   fi
 
   # 移除状态目录
   if [[ -d "$DEBNAS_STATE_DIR" ]]; then
     rm -rf "$DEBNAS_STATE_DIR"
-    _info "已移除状态目录: ${DEBNAS_STATE_DIR}/"
+    _info "状态: ${DEBNAS_STATE_DIR}"
   fi
 
-  # 移除临时文件
-  if [[ -d "$DEBNAS_TMP_DIR" ]]; then
-    rm -rf "$DEBNAS_TMP_DIR"
-    _info "已移除临时目录: ${DEBNAS_TMP_DIR}/"
+  # 移除临时文件（使用固定路径，卸载模式下 DEBNAS_TMP_DIR 未定义）
+  if [[ -d "/tmp/debnas" ]]; then
+    rm -rf "/tmp/debnas"
+    _info "临时: /tmp/debnas"
   fi
 
-  _success "DebNAS 已卸载"
+  _success "卸载完成"
   _info "已安装的软件包和系统配置未被修改。如需恢复系统，请手动操作。"
 }
 
@@ -187,23 +187,23 @@ download_repo() {
   if [[ "$REGION" == "cn" ]]; then
     primary_url="$REPO_CN_URL"
     fallback_url="$REPO_GLOBAL_URL"
-    _info "下载源: Gitee（国内），备用: GitHub"
+    _info "源: Gitee"
   else
     primary_url="$REPO_GLOBAL_URL"
     fallback_url="$REPO_CN_URL"
-    _info "下载源: GitHub（国际），备用: Gitee"
+    _info "源: GitHub"
   fi
 
   local tmpdir
   tmpdir=$(mktemp -d "${DEBNAS_TMP_DIR}/install.XXXXXX")
-  chmod 755 "$tmpdir"
+  chmod 700 "$tmpdir"
 
   local tarball="${tmpdir}/debnas.tar.gz"
 
-  _action "正在下载仓库压缩包..."
-  if ! wget -q --show-progress -O "$tarball" "$primary_url" 2>&1; then
-    _warn "主下载源失败，尝试备用源..."
-    if ! wget -q --show-progress -O "$tarball" "$fallback_url" 2>&1; then
+  _action "下载代码"
+  if ! wget -q -O "$tarball" "$primary_url" 2>/dev/null; then
+    _warn "切换备用源"
+    if ! wget -q -O "$tarball" "$fallback_url" 2>/dev/null; then
       _fail "所有下载源均失败"
       rm -rf "$tmpdir"
       exit 1
@@ -212,7 +212,7 @@ download_repo() {
 
   # SHA256 校验
   if [[ -n "$EXPECTED_SHA256" ]]; then
-    _action "校验文件完整性..."
+    _action "校验"
     local actual_sha256
     actual_sha256=$(sha256sum "$tarball" | awk '{print $1}')
     if [[ "$actual_sha256" != "$EXPECTED_SHA256" ]]; then
@@ -222,7 +222,7 @@ download_repo() {
       rm -rf "$tmpdir"
       exit 1
     fi
-    _success "SHA256 校验通过"
+    _success "校验通过"
   fi
 
   echo "$tmpdir"
@@ -235,8 +235,8 @@ extract_repo() {
   local extract_dir="${tmpdir}/extract"
 
   mkdir -p "$extract_dir"
-  _action "正在解压仓库..."
-  if ! tar -xzf "$tarball" -C "$extract_dir" --strip-components=1 2>&1; then
+  _action "解压"
+  if ! tar -xzf "$tarball" -C "$extract_dir" --strip-components=1 2>/dev/null; then
     _fail "解压失败"
     rm -rf "$tmpdir"
     exit 1
@@ -246,7 +246,7 @@ extract_repo() {
   mkdir -p "$DEBNAS_INSTALL_DIR"
 
   # 复制文件到安装目录
-  _action "正在安装到 ${DEBNAS_INSTALL_DIR}..."
+  _action "部署"
   cp -rf "$extract_dir"/bin "$DEBNAS_INSTALL_DIR/" 2>/dev/null || true
   cp -rf "$extract_dir"/lib "$DEBNAS_INSTALL_DIR/" 2>/dev/null || true
   cp -rf "$extract_dir"/modules "$DEBNAS_INSTALL_DIR/" 2>/dev/null || true
@@ -270,7 +270,7 @@ install_debnas_bin() {
 exec bash ${DEBNAS_INSTALL_DIR}/bin/debnas "\$@"
 WRAPPER
   chmod +x "$DEBNAS_BIN"
-  _success "全局命令已安装: ${DEBNAS_BIN}"
+  _success "命令: ${DEBNAS_BIN}"
 }
 
 # 创建运行时目录
@@ -293,28 +293,15 @@ write_config() {
 region=${REGION}
 lang=zh
 log_level=INFO
+file_logging=1
 EOF
-    _success "全局配置已写入: ${conf_file}"
+    _success "配置: ${conf_file}"
   else
     # 更新模式：仅更新 region（如果未设置）
     if ! grep -q "^region=" "$conf_file" 2>/dev/null; then
       echo "region=${REGION}" >> "$conf_file"
     fi
     _info "已保留现有配置"
-  fi
-}
-
-# 配置 APT 软件源（用户通过菜单或命令自行配置）
-configure_apt_sources() {
-  local sources_script="${DEBNAS_INSTALL_DIR}/modules/sources.sh"
-
-  if [[ -f "$sources_script" ]]; then
-    _action "正在配置 APT 软件源..."
-    if bash "$sources_script"; then
-      _success "APT 软件源配置完成"
-    else
-      _warn "APT 软件源配置未完成，可稍后通过 debnas install sources 手动配置"
-    fi
   fi
 }
 
@@ -365,9 +352,14 @@ main() {
   # 检测已安装
   check_existing_install
 
-  # 创建临时目录
-  mkdir -p "$DEBNAS_TMP_DIR"
-  chmod 755 "$DEBNAS_TMP_DIR"
+  # 创建安全临时目录
+  local _install_tmpdir
+  _install_tmpdir=$(mktemp -d /tmp/debnas-install.XXXXXX)
+  chmod 700 "$_install_tmpdir"
+  trap 'rm -rf "${_install_tmpdir:-}"' EXIT
+
+  # 临时覆盖全局 TMP 变量供 download_repo 使用
+  export DEBNAS_TMP_DIR="$_install_tmpdir"
 
   # 下载
   local tmpdir
@@ -387,6 +379,8 @@ main() {
 
   # 清理临时文件
   rm -rf "$tmpdir"
+  rm -rf "$_install_tmpdir"
+  trap - EXIT
   _info "临时文件已清理"
 
   echo ""
@@ -398,7 +392,7 @@ main() {
   echo ""
 
   # 自动启动交互菜单
-  exec bash "${DEBNAS_INSTALL_DIR}/bin/debnas" menu
+  exec bash "${DEBNAS_INSTALL_DIR}/bin/debnas"
 }
 
 main "$@"

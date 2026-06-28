@@ -10,8 +10,7 @@ create_cron_job() {
 
   # 使用统一 cron 框架注册定时任务
   if cron_register "hosts-sync" "0 0,6,12,18 * * *" 2>/dev/null; then
-    log_success "定时任务已创建，每天0点、6点、12点和18点自动执行。"
-    log_success "hosts 自动更新相关配置已全部完成。"
+    log_success "定时 0,6,12,18"
   else
     log_fail "定时任务注册失败。"
     return 1
@@ -21,7 +20,7 @@ create_cron_job() {
 
 remove_cron_job() {
   if cron_unregister "hosts-sync" 2>/dev/null; then
-    log_success "定时任务已删除。"
+    log_success "定时已取消"
   else
     log_info "未找到定时任务。"
   fi

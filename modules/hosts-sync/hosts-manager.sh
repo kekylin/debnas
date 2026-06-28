@@ -14,8 +14,50 @@ print_host_entry() {
 # 并行检测线程上限
 readonly CONCURRENT_THREADS=8
 
-# 域名配置（格式：域名|组名）
-DOMAINS=(
+# 域名配置文件路径
+readonly DOMAINS_CONF_FILE="/etc/debnas/conf.d/hosts-sync-domains.conf"
+
+# 初始化域名配置文件（首次运行时创建，后续不覆盖）
+init_domains_config() {
+  if [[ -f "${DOMAINS_CONF_FILE}" ]]; then
+    return 0  # 已存在，保留用户修改
+  fi
+  local conf_dir
+  conf_dir="$(dirname "${DOMAINS_CONF_FILE}")"
+  if [[ ! -d "${conf_dir}" ]]; then
+    mkdir -p "${conf_dir}" 2>/dev/null || return 1
+  fi
+  {
+    echo "# DebNAS Hosts-Sync 域名配置文件"
+    echo "# 格式：域名|组名（每行一个，以 # 开头的行为注释）"
+    echo "# 修改后下次解析生效，删除此文件可恢复默认列表"
+    echo "#"
+    printf '%s\n' "${_DEFAULT_DOMAINS[@]}"
+  } > "${DOMAINS_CONF_FILE}"
+  log_info "已创建域名配置文件：${DOMAINS_CONF_FILE}"
+}
+
+# 加载域名列表（优先读取配置文件，不存在则使用内置默认值）
+load_domains() {
+  if [[ -f "${DOMAINS_CONF_FILE}" ]] && [[ -s "${DOMAINS_CONF_FILE}" ]]; then
+    # 从配置文件读取（跳过空行和注释行）
+    local -a loaded=()
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
+      line=$(printf '%s' "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+      [[ -n "$line" ]] && loaded+=("$line")
+    done < "${DOMAINS_CONF_FILE}"
+    if [[ ${#loaded[@]} -gt 0 ]]; then
+      printf '%s\n' "${loaded[@]}"
+      return 0
+    fi
+  fi
+  # 回退：内置默认域名列表
+  printf '%s\n' "${_DEFAULT_DOMAINS[@]}"
+}
+
+# 内置默认域名（格式：域名|组名）
+_DEFAULT_DOMAINS=(
   # ==== GitHub ====
   "github.githubassets.com|GitHub"
   "central.github.com|GitHub"
@@ -154,15 +196,15 @@ select_best_ips() {
         local method
         method=$(get_detection_method "$https_result" "$tcp_result" "$ping_result")
         selected_ips+=("${ip}|${dns}|${method}")
-        ((count++))
-        
+        ((count++)) || true
+
         if [[ $CRON_MODE -eq 0 && -n "$domain" ]]; then
           echo "  选中 IPv4: $ip (检测方法: $method, 延迟: ${ping_delay:-未知}ms) - $domain" >&2
         fi
       fi
     done
   fi
-  
+
   if [[ $select_ipv6 -eq 1 && ${#ipv6_results[@]} -gt 0 ]]; then
     local -a sorted_ipv6
     IFS=$'\n' read -d '' -r -a sorted_ipv6 < <(
@@ -174,7 +216,7 @@ select_best_ips() {
         echo "${score}|${result}"
       done | sort -t'|' -k1,1rn | sed 's/^[^|]*|//'
     ) || true
-    
+
     local count=0
     for result in "${sorted_ipv6[@]}"; do
       [[ -z "$result" ]] && continue
@@ -187,7 +229,7 @@ select_best_ips() {
         local method
         method=$(get_detection_method "$https_result" "$tcp_result" "$ping_result")
         selected_ips+=("${ip}|${dns}|${method}")
-        ((count++))
+        ((count++)) || true
         
         if [[ $CRON_MODE -eq 0 && -n "$domain" ]]; then
           echo "  选中 IPv6: $ip (检测方法: $method, 延迟: ${ping_delay:-未知}ms) - $domain" >&2
@@ -242,9 +284,15 @@ generate_hosts_footer() {
 
 process_all_domains() {
   local hosts_content="$1"
-  
+  local -a DOMAINS=()
+  local domain_count
+
+  # 从配置文件或内置默认加载域名列表
+  mapfile -t DOMAINS < <(load_domains)
+  domain_count=${#DOMAINS[@]}
+
   if [[ $CRON_MODE -eq 0 ]]; then
-    echo "开始解析 ${#DOMAINS[@]} 个域名..." >&2
+    echo "开始解析 ${domain_count} 个域名..." >&2
   fi
   
   TOTAL_DOMAINS=0
@@ -267,11 +315,11 @@ process_all_domains() {
     
     local group_file="${group_files[$group]}"
     resolve_domain "$domain_group" "${group_file}" || true
-    ((TOTAL_DOMAINS++))
+    ((TOTAL_DOMAINS++)) || true
     case "$RESOLVE_RESULT" in
-      success) ((SUCCESS_DOMAINS++)) ;;
-      unresolved) ((UNRESOLVED_DOMAINS++)) ;;
-      unreachable) ((UNREACHABLE_DOMAINS++)) ;;
+      success) ((SUCCESS_DOMAINS++)) || true ;;
+      unresolved) ((UNRESOLVED_DOMAINS++)) || true ;;
+      unreachable) ((UNREACHABLE_DOMAINS++)) || true ;;
     esac
   done
   
@@ -314,7 +362,7 @@ process_all_domains() {
   done
 
   if [[ $CRON_MODE -eq 0 ]]; then
-    echo "所有域名解析任务完成" >&2
+    echo "解析完成" >&2
   fi
 }
 
@@ -322,7 +370,7 @@ process_all_domains() {
 # 返回：0 成功，非 0 失败
 update_hosts() {
   if [[ $CRON_MODE -eq 0 ]]; then
-    log_action "开始更新 /etc/hosts 文件..."
+    log_info "更新 Hosts..."
   fi
   
   export TMP_DIR START_MARK END_MARK HOSTS_FILE
@@ -354,7 +402,7 @@ update_hosts() {
   rm -f "${hosts_content}"
   
   if [[ $CRON_MODE -eq 0 ]]; then
-    log_success "/etc/hosts 文件已更新完成。"
+    log_success "Hosts 已更新"
     log_info "域名统计：总计 ${TOTAL_DOMAINS}，成功 ${SUCCESS_DOMAINS}，解析失败 ${UNRESOLVED_DOMAINS}，不可达 ${UNREACHABLE_DOMAINS}"
   else
     printf '域名统计：总计 %d，成功 %d，解析失败 %d，不可达 %d\n' \

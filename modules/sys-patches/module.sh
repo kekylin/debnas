@@ -1,9 +1,8 @@
 #!/bin/bash
 # @module: sys-patches
-# @name: 检查系统更新
+# @name: 系统更新
 # @category: 系统工具
-# @depends: apt
-# @depend_modules: sources
+# @depends:
 # @version: 1.0.0
 # @order: 71
 # @cron: true
@@ -19,7 +18,7 @@ export LC_ALL="C.UTF-8"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 MODULE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/bootstrap.sh"
-
+main() {
 source "${MODULE_DIR}/check.sh"
 source "${MODULE_DIR}/notify.sh"
 source "${MODULE_DIR}/cron.sh"
@@ -32,7 +31,6 @@ fi
 
 # 定义文件路径常量
 EMAIL_CONFIG_FILE="/etc/exim4/notify_email"
-CRON_TASK_FILE="/etc/cron.d/system-update-checker"
 
 # 获取主机名
 
@@ -107,19 +105,20 @@ schedule_menu() {
 }
 
 # 主程序入口
-case "${1:-}" in
-  "--check")
-    # 仅检测，无交互，适合定时任务
-    if ! verify_system_support; then
-      exit "${ERROR_UNSUPPORTED_OS}"
-    fi
-    run_update_check
-    if [[ $security_update_count -gt 0 || $regular_update_count -gt 0 ]]; then
-      send_email_notification
-    fi
-    ;;
-  *)
-    # 默认进入交互菜单，适合主菜单调用和手动操作
-    main_menu
-    ;;
-esac 
+if [[ "${DEBNAS_CRON_MODE:-0}" -eq 1 ]]; then
+  # 定时任务模式：执行检测，有更新时发送邮件通知
+  if ! verify_system_support; then
+    exit "${ERROR_UNSUPPORTED_OS}"
+  fi
+  run_update_check
+  if [[ $security_update_count -gt 0 || $regular_update_count -gt 0 ]]; then
+    send_email_notification
+  fi
+else
+  # 交互模式：显示菜单
+  main_menu
+fi
+
+}
+
+main "$@"

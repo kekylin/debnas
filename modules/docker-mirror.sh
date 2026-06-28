@@ -1,6 +1,6 @@
 #!/bin/bash
 # @module: docker-mirror
-# @name: Docker 镜像加速
+# @name: 镜像加速
 # @category: 容器管理
 # @depends: docker
 # @depend_modules: docker-ce
@@ -13,7 +13,9 @@ IFS=$'\n\t'
 
 # 加载公共模块，确保依赖函数和常量可用
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-source "${SCRIPT_DIR}/lib/bootstrap-core.sh"
+source "${SCRIPT_DIR}/lib/bootstrap.sh"
+main() {
+source "${SCRIPT_DIR}/lib/system/state.sh"
 
 # 检查依赖，确保 Docker 已安装
 REQUIRED_CMDS=(docker)
@@ -34,15 +36,16 @@ array_to_json_array() {
   local len=${#arr[@]}
   for ((i = 0; i < len; i++)); do
     json_array+="    \"${arr[i]}\""
-    [[ $i -lt $((len - 1)) ]] && json_array+="," 
+    [[ $i -lt $((len - 1)) ]] && json_array+=","
     json_array+="\n"
   done
   json_array+="  ]"
   echo -e "$json_array"
 }
 
-# 合并并去重 registry-mirrors，优先保留已有配置
-update_registry_mirrors() {
+# 合并并去重 registry-mirrors，优先保留已有配置，返回最终 JSON 内容
+# shellcheck disable=SC2005
+build_merged_daemon_json() {
   local new_mirrors=("$@")
   local existing_mirrors=()
   if [[ -f "$DAEMON_JSON" ]]; then
@@ -68,7 +71,7 @@ update_registry_mirrors() {
     done
     [[ $seen -eq 0 ]] && unique_mirrors+=("$m")
   done
-  log_info "正在更新 Docker 镜像加速配置..."
+  log_info "构建 Docker 镜像加速配置..."
   # 使用 python3 合并 JSON，保留 daemon.json 中已有的其他配置项
   if command -v python3 >/dev/null 2>&1 && [[ -f "$DAEMON_JSON" ]]; then
     python3 -c "
@@ -80,27 +83,31 @@ except (json.JSONDecodeError, FileNotFoundError):
     data = {}
 mirrors = [m for m in sys.argv[2:] if m]
 data['registry-mirrors'] = mirrors
-with open(sys.argv[1], 'w') as f:
-    json.dump(data, f, indent=2, ensure_ascii=False)
-    f.write('\\n')
-" "$DAEMON_JSON" ${unique_mirrors[*]}
+print(json.dumps(data, indent=2, ensure_ascii=False))
+" "$DAEMON_JSON" "${unique_mirrors[@]}"
   else
     local updated_mirrors_json
     updated_mirrors_json=$(array_to_json_array "${unique_mirrors[@]}")
-    printf '{\n  "registry-mirrors": %s\n}\n' "$updated_mirrors_json" > "$DAEMON_JSON"
+    printf '{\n  "registry-mirrors": %s\n}\n' "$updated_mirrors_json"
   fi
 }
 
-# 重启 Docker 服务，确保新配置生效
-reload_and_restart_docker() {
-  log_info "正在重启 Docker 服务..."
+# 主流程：构建配置、智能写入、按需重启
+new_content=$(build_merged_daemon_json "${DOCKER_MIRRORS[@]}")
+
+if write_file_if_changed "$DAEMON_JSON" "$new_content"; then
+  log_info "重启 Docker 服务以应用配置..."
   systemctl daemon-reload
   if ! systemctl restart docker; then
     log_error "重启 Docker 服务失败，请检查 systemctl 状态或日志。"
-    return 1
+    exit "${ERROR_GENERAL}"
   fi
+  log_success "镜像加速 就绪"
+else
+  log_info "镜像加速配置未变"
+fi
+
+
 }
 
-# 主流程，自动合并镜像源并重启服务
-update_registry_mirrors "${DOCKER_MIRRORS[@]}"
-reload_and_restart_docker 
+main "$@"

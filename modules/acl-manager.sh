@@ -1,6 +1,6 @@
 #!/bin/bash
 # @module: acl-manager
-# @name: ACL 权限管理
+# @name: ACL 权限
 # @category: 系统工具
 # @depends: getfacl,setfacl
 # @version: 1.0.0
@@ -24,7 +24,7 @@ LOG_FILE="/var/log/homenas_acl_manager.log"
 # 检查依赖，自动安装缺失的ACL工具
 REQUIRED_CMDS=(getfacl setfacl)
 if ! check_dependencies "${REQUIRED_CMDS[@]}"; then
-  log_warning "检测到ACL工具缺失，尝试自动安装..."
+  log_warning "ACL 工具缺失"
   apt update && apt install -y acl
   if ! check_dependencies "${REQUIRED_CMDS[@]}"; then
     log_fail "ACL工具安装失败。请手动安装acl软件包后重试。"
@@ -46,7 +46,7 @@ validate_permissions() {
   if [[ "$perms" =~ ^[rwx-]{0,3}$ ]]; then
     return 0
   else
-    log_fail "无效权限。请输入r、w、x的组合（如rwx、rw、-）。"
+    log_fail "无效权限"
     return 1
   fi
 }
@@ -56,7 +56,7 @@ view_acl() {
   print_prompt "请输入文件或目录路径: "
   read -r path
   if [ ! -e "$path" ]; then
-    log_error "文件或目录 $path 不存在，请检查路径。"
+    log_error "$path 不存在"
     return
   fi
   getfacl "$path" 2>&1 | tee "$ACL_OUTPUT"
@@ -68,7 +68,7 @@ set_user_acl() {
   print_prompt "请输入文件或目录路径: "
   read -r path
   if [ ! -e "$path" ]; then
-    log_error "文件或目录 $path 不存在，请检查路径。"
+    log_error "$path 不存在"
     return
   fi
   print_prompt "请输入用户名: "
@@ -81,19 +81,19 @@ set_user_acl() {
   print_warning "将为用户 $username 设置 $permissions 权限于 $path，确认操作？(y/n): "
   read -r confirm
   if [[ "$confirm" != "y" ]]; then
-    log_info "操作已取消。"
+    log_info "已取消"
     return
   fi
   if [[ "$recursive" == "y" ]]; then
     if setfacl -R -m u:"$username":"$permissions" "$path" 2>&1 | tee "$ACL_OUTPUT"; then
-      log_success "已为用户 $username 设置权限 $permissions。"
+      log_success "ACL: u:$username:$permissions $path"
       log_acl_action "设置用户ACL: u:$username:$permissions $path (递归: $recursive)"
     else
       log_error "无法设置权限。请检查输入或查看 $ACL_OUTPUT。"
     fi
   else
     if setfacl -m u:"$username":"$permissions" "$path" 2>&1 | tee "$ACL_OUTPUT"; then
-      log_success "已为用户 $username 设置权限 $permissions。"
+      log_success "ACL: u:$username:$permissions $path"
       log_acl_action "设置用户ACL: u:$username:$permissions $path (递归: $recursive)"
     else
       log_error "无法设置权限。请检查输入或查看 $ACL_OUTPUT。"
@@ -106,7 +106,7 @@ set_group_acl() {
   print_prompt "请输入文件或目录路径: "
   read -r path
   if [ ! -e "$path" ]; then
-    log_error "文件或目录 $path 不存在，请检查路径。"
+    log_error "$path 不存在"
     return
   fi
   print_prompt "请输入组名: "
@@ -119,19 +119,19 @@ set_group_acl() {
   print_warning "将为组 $groupname 设置 $permissions 权限于 $path，确认操作？(y/n): "
   read -r confirm
   if [[ "$confirm" != "y" ]]; then
-    log_info "操作已取消。"
+    log_info "已取消"
     return
   fi
   if [[ "$recursive" == "y" ]]; then
     if setfacl -R -m g:"$groupname":"$permissions" "$path" 2>&1 | tee "$ACL_OUTPUT"; then
-      log_success "已为组 $groupname 设置权限 $permissions。"
+      log_success "ACL: g:$groupname:$permissions $path"
       log_acl_action "设置组ACL: g:$groupname:$permissions $path (递归: $recursive)"
     else
       log_error "无法设置权限。请检查输入或查看 $ACL_OUTPUT。"
     fi
   else
     if setfacl -m g:"$groupname":"$permissions" "$path" 2>&1 | tee "$ACL_OUTPUT"; then
-      log_success "已为组 $groupname 设置权限 $permissions。"
+      log_success "ACL: g:$groupname:$permissions $path"
       log_acl_action "设置组ACL: g:$groupname:$permissions $path (递归: $recursive)"
     else
       log_error "无法设置权限。请检查输入或查看 $ACL_OUTPUT。"
@@ -155,11 +155,11 @@ set_default_acl() {
   print_warning "将为目录 $path 设置默认ACL $entry:$permissions，确认操作？(y/n): "
   read -r confirm
   if [[ "$confirm" != "y" ]]; then
-    log_info "操作已取消。"
+    log_info "已取消"
     return
   fi
   if setfacl -d -m "$entry":"$permissions" "$path" 2>&1 | tee "$ACL_OUTPUT"; then
-    log_success "已为目录 $path 设置默认ACL权限。"
+    log_success "ACL 默认: $path"
     log_acl_action "设置默认ACL: $entry:$permissions $path"
   else
     log_error "无法设置默认ACL权限。请检查输入或查看 $ACL_OUTPUT。"
@@ -177,11 +177,11 @@ remove_default_acl() {
   print_warning "将取消目录 $path 的默认ACL，确认操作？(y/n): "
   read -r confirm
   if [[ "$confirm" != "y" ]]; then
-    log_info "操作已取消。"
+    log_info "已取消"
     return
   fi
   if setfacl -k "$path" 2>&1 | tee "$ACL_OUTPUT"; then
-    log_success "已取消目录 $path 的默认ACL权限。"
+    log_success "ACL 默认取消: $path"
     log_acl_action "取消默认ACL: $path"
   else
     log_error "无法取消默认ACL权限。请检查输入或查看 $ACL_OUTPUT。"
@@ -193,7 +193,7 @@ remove_acl() {
   print_prompt "请输入文件或目录路径: "
   read -r path
   if [ ! -e "$path" ]; then
-    log_error "文件或目录 $path 不存在，请检查路径。"
+    log_error "$path 不存在"
     return
   fi
   print_prompt "请输入要删除的ACL条目（u:username 或 g:groupname）: "
@@ -203,19 +203,19 @@ remove_acl() {
   print_warning "将删除 $entry 的ACL于 $path，确认操作？(y/n): "
   read -r confirm
   if [[ "$confirm" != "y" ]]; then
-    log_info "操作已取消。"
+    log_info "已取消"
     return
   fi
   if [[ "$recursive" == "y" ]]; then
     if setfacl -R -x "$entry" "$path" 2>&1 | tee "$ACL_OUTPUT"; then
-      log_success "已删除ACL条目 $entry。"
+      log_success "ACL 删除: $entry"
       log_acl_action "删除ACL: $entry $path (递归: $recursive)"
     else
       log_error "无法删除ACL条目。请检查输入或查看 $ACL_OUTPUT。"
     fi
   else
     if setfacl -x "$entry" "$path" 2>&1 | tee "$ACL_OUTPUT"; then
-      log_success "已删除ACL条目 $entry。"
+      log_success "ACL 删除: $entry"
       log_acl_action "删除ACL: $entry $path (递归: $recursive)"
     else
       log_error "无法删除ACL条目。请检查输入或查看 $ACL_OUTPUT。"
@@ -237,7 +237,7 @@ batch_set_acl() {
   print_warning "将为匹配 $pattern 的文件设置 $entry:$permissions，确认操作？(y/n): "
   read -r confirm
   if [[ "$confirm" != "y" ]]; then
-    log_info "操作已取消。"
+    log_info "已取消"
     return
   fi
   shopt -s nullglob
@@ -281,6 +281,10 @@ show_acl_menu() {
 
 # 主循环
 main() {
+  if [[ "${DEBNAS_CRON_MODE:-0}" -eq 1 ]]; then
+    log_info "cron 模式下不支持交互操作，已跳过"
+    return 0
+  fi
   local menu_options=(
     "查看ACL权限"
     "设置用户ACL"
@@ -310,4 +314,4 @@ main() {
   done
 }
 
-main 
+main "$@"

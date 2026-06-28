@@ -1,8 +1,8 @@
 #!/bin/bash
 # @module: service-query
-# @name: 查询服务状态
+# @name: 服务状态
 # @category: 系统工具
-# @depends: systemctl,hostname,awk,dpkg
+# @depends:
 # @version: 1.0.0
 # @order: 72
 # 功能：安装并配置服务状态查询工具
@@ -12,18 +12,10 @@ IFS=$'\n\t'
 
 # 加载公共模块，确保依赖函数和常量可用
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-source "${SCRIPT_DIR}/lib/bootstrap-core.sh"
+source "${SCRIPT_DIR}/lib/bootstrap.sh"
+source "${SCRIPT_DIR}/lib/system/state.sh"
 
-# 检查 systemctl、hostname、awk、dpkg 依赖，确保后续操作可用
-REQUIRED_CMDS=(systemctl hostname awk dpkg)
-if ! check_dependencies "${REQUIRED_CMDS[@]}"; then
-  log_info "检测到部分依赖未安装，尝试自动安装..."
-  install_missing_dependencies "${REQUIRED_CMDS[@]}"
-  if ! check_dependencies "${REQUIRED_CMDS[@]}"; then
-    log_error "缺少必要系统工具，请先手动安装。"
-    exit "${ERROR_DEPENDENCY}"
-  fi
-fi
+# 依赖由 module-runner preflight 自动检测（@depends 元数据）
 
 # 检查指定服务是否处于激活状态，便于后续判断
 is_service_active() {
@@ -45,7 +37,7 @@ print_service_status() {
 check_system_services() {
   local host_ip="$1"
   if ! is_service_active cockpit; then
-    systemctl start cockpit >/dev/null 2>&1
+    systemctl start cockpit >/dev/null 2>&1 || true
   fi
   if is_service_active cockpit; then
     print_service_status "cockpit" "https://${host_ip}:9090"
@@ -102,4 +94,5 @@ main() {
   display_firewalld_fail2ban_info
 }
 
-main
+main "$@"
+

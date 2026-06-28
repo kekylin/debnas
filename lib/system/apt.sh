@@ -5,9 +5,7 @@
 set -euo pipefail
 IFS=$'\n\t'
 
-# 获取库文件目录
-LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-source "$LIB_DIR/core/logging.sh"
+# 依赖: core/logging.sh（由 bootstrap-core.sh 加载）
 
 # ==================== 常量定义 ====================
 
@@ -18,9 +16,6 @@ readonly _APT_FRONTEND_LOCK="/var/lib/dpkg/lock-frontend"
 
 # 锁等待超时（秒）
 readonly APT_LOCK_TIMEOUT="${APT_LOCK_TIMEOUT:-300}"
-
-# 全局防重复标志
-declare -g _DEBNAS_APT_UPDATED="${_DEBNAS_APT_UPDATED:-0}"
 
 # ==================== 内部函数 ====================
 
@@ -58,14 +53,14 @@ apt_wait_for_lock() {
     return 0
   fi
 
-  log_info "检测到 APT 锁被占用，等待释放（最长 ${timeout} 秒）..."
+  log_info "APT 锁等待 (${timeout}s)"
 
   while (( elapsed < timeout )); do
     sleep "$interval"
     elapsed=$(( elapsed + interval ))
 
     if _apt_lock_available; then
-      log_success "APT 锁已释放"
+      log_success "APT 锁释放"
       return 0
     fi
 
@@ -74,69 +69,78 @@ apt_wait_for_lock() {
     fi
   done
 
-  log_error "等待 APT 锁超时（${timeout} 秒），请检查是否有其他 apt 进程正在运行"
-  log_error "可尝试：sudo killall apt apt-get dpkg 或等待其完成"
+  log_error "APT 锁超时 (${timeout}s)"
   return 1
 }
 
-# 安全执行 apt update（防重复 + 锁等待）
+# 安全执行 apt update（锁等待 + 直接执行）
 # 参数：无
 # 返回：0 成功，1 失败
-# 说明：同一会话内多次调用只执行一次（通过 _DEBNAS_APT_UPDATED 标志控制）
 apt_update_safe() {
-  # 防重复：同一会话已更新过则跳过
-  if [[ "${_DEBNAS_APT_UPDATED}" -eq 1 ]]; then
-    log_debug "apt update 已在本次会话中执行过，跳过"
-    return 0
-  fi
-
-  # 等待锁释放
   if ! apt_wait_for_lock; then
     return 1
   fi
 
-  log_info "正在更新软件包列表..."
-  if apt update 2>&1; then
-    export _DEBNAS_APT_UPDATED=1
-    log_success "软件包列表更新完成"
+  log_info "更新索引..."
+  if DEBIAN_FRONTEND=noninteractive apt update -qq >&2; then
+    log_success "索引已更新"
     return 0
   else
-    log_error "apt update 执行失败"
+    log_error "apt update 失败"
     return 1
   fi
+}
+
+# 智能安装软件包（过滤已装包 + apt update 去重 + 锁等待）
+# 参数：$@ - 包名列表
+# 返回：0 成功，1 失败
+# 说明：先检测哪些包未安装，只安装缺失的包；全部已装则直接返回
+apt_install_packages() {
+  if [[ $# -eq 0 ]]; then
+    return 0
+  fi
+
+  local -a to_install=()
+  for pkg in "$@"; do
+    if ! dpkg -s "$pkg" &>/dev/null; then
+      to_install+=("$pkg")
+    fi
+  done
+
+  if [[ ${#to_install[@]} -eq 0 ]]; then
+    log_info "所有软件包已安装，无需操作：$*"
+    return 0
+  fi
+
+  log_info "安装 ${to_install[*]}..."
+  apt_update_safe
+  apt_install_safe "${to_install[@]}"
 }
 
 # 安全安装软件包（锁等待 + 错误提示）
 # 参数：$@ - 包名列表
 # 返回：0 成功，1 失败
-# 选项：通过环境变量控制行为
-#   APT_INSTALL_NO_RECOMMENDS=1  不安装推荐包
 apt_install_safe() {
   if [[ $# -eq 0 ]]; then
-    log_error "apt_install_safe: 未指定要安装的包名"
+    log_error "apt_install_safe: 未指定包名"
     return 1
   fi
 
   local -a packages=("$@")
   local -a apt_opts=(-y)
 
-  # 默认不安装推荐包（精简安装）
-  if [[ "${APT_INSTALL_NO_RECOMMENDS:-1}" -eq 1 ]]; then
-    apt_opts+=(--no-install-recommends)
-  fi
-
   # 等待锁释放
   if ! apt_wait_for_lock; then
     return 1
   fi
 
-  log_info "正在安装：${packages[*]}"
-  if DEBIAN_FRONTEND=noninteractive apt install "${apt_opts[@]}" "${packages[@]}" 2>&1; then
-    log_success "安装完成：${packages[*]}"
+  log_debug "apt install ${packages[*]}"
+  if DEBIAN_FRONTEND=noninteractive apt install "${apt_opts[@]}" "${packages[@]}" >&2; then
+    log_success "${packages[*]} 就绪"
     return 0
   else
-    log_error "安装失败：${packages[*]}"
-    log_error "请检查软件源配置或手动执行: apt install ${packages[*]}"
+    log_error "${packages[*]} 安装失败"
+    log_error "请检查 APT 源，或手动: apt install ${packages[*]}"
     return 1
   fi
 }
@@ -148,7 +152,7 @@ apt_install_safe() {
 #   APT_REMOVE_PURGE=1  同时清除配置文件（默认启用）
 apt_remove_safe() {
   if [[ $# -eq 0 ]]; then
-    log_error "apt_remove_safe: 未指定要卸载的包名"
+    log_error "apt_remove_safe: 未指定包名"
     return 1
   fi
 
@@ -165,9 +169,9 @@ apt_remove_safe() {
     return 1
   fi
 
-  log_info "正在卸载：${packages[*]}"
-  if DEBIAN_FRONTEND=noninteractive apt "${action}" -y "${packages[@]}" 2>&1; then
-    log_success "卸载完成：${packages[*]}"
+  log_info "卸载 ${packages[*]}..."
+  if DEBIAN_FRONTEND=noninteractive apt "${action}" -y "${packages[@]}" >&2; then
+    log_success "${packages[*]} 已卸载"
 
     # 自动清理不再需要的依赖
     apt autoremove -y &>/dev/null || true
@@ -178,10 +182,3 @@ apt_remove_safe() {
   fi
 }
 
-# 重置 apt update 防重复标志
-# 参数：无
-# 说明：用于需要强制重新执行 apt update 的场景（如切换镜像源后）
-apt_reset_update_flag() {
-  export _DEBNAS_APT_UPDATED=0
-  log_debug "apt update 防重复标志已重置"
-}

@@ -1,0 +1,13 @@
+# HomeNAS 安全环境
+sources
+basic-tools
+cockpit
+cockpit-net
+mail-account
+login-mail-on
+security
+firewall
+fail2ban
+docker-ce
+docker-mirror
+service-query

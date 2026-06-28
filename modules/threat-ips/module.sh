@@ -1,8 +1,8 @@
 #!/bin/bash
 # @module: threat-ips
-# @name: IP 封禁工具
+# @name: 威胁 IP 封禁
 # @category: 安全防护
-# @depends: firewall-cmd,ipset,wget,gzip,awk,sed,grep,sort,comm,head,crontab,sipcalc
+# @depends: firewall-cmd,ipset,wget,sipcalc
 # @depend_modules: firewall
 # @version: 2.0.0
 # @order: 43
@@ -15,12 +15,6 @@ IFS=$'\n\t'
 
 # 设置标准 PATH
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"
-
-# ==================== 运行模式检测 ====================
-declare RUN_MODE="manual"
-if [[ "${1:-}" == "--cron" ]]; then
-  RUN_MODE="cron"
-fi
 
 # ==================== 公共库加载 ====================
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -51,135 +45,6 @@ log_message() {
   timestamp=$(date '+%Y-%m-%d %H:%M:%S')
   printf "[%s] [%s] %s\n" "${timestamp}" "${level}" "${message}" \
     >> "${LOG_FILE}" 2>/dev/null || true
-}
-
-
-# ==================== 临时文件管理 ====================
-# ==================== 临时文件管理 ====================
-# 交互模式：由 tempfile.sh 库统一管理（register_temp_cleanup / create_temp_file）
-# 定时任务模式：使用最小化自包含实现
-if [[ "${RUN_MODE}" == "cron" ]]; then
-  # DEBNAS_TMP_BASE 已由 tempfile.sh (bootstrap) 定义为 readonly，直接使用
-  declare -a _DEBNAS_TEMP_FILES=()
-  declare -g _DEBNAS_NORMAL_EXIT=0
-
-  init_temp_dir() {
-    if [[ ! -d "${DEBNAS_TMP_BASE}" ]]; then
-      mkdir -p "${DEBNAS_TMP_BASE}" || {
-        log_error "创建临时目录失败：${DEBNAS_TMP_BASE}"
-        exit "${ERROR_GENERAL}"
-      }
-      chmod 700 "${DEBNAS_TMP_BASE}"
-    fi
-  }
-
-  create_temp_file() {
-    local prefix="$1" suffix="${2:-.tmp}"
-    local temp_file
-    init_temp_dir
-    temp_file=$(mktemp "${DEBNAS_TMP_BASE}/${prefix}.XXXXXX${suffix}")
-    _DEBNAS_TEMP_FILES+=("${temp_file}")
-    printf "%s" "${temp_file}"
-  }
-
-  cleanup_temp_files() {
-    local item i
-    for (( i=${#_DEBNAS_TEMP_FILES[@]}-1; i>=0; i-- )); do
-      item="${_DEBNAS_TEMP_FILES[$i]}"
-      rm -f "${item}" 2>/dev/null || true
-    done
-    _DEBNAS_TEMP_FILES=()
-    if [[ -d "${DEBNAS_TMP_BASE}" ]] \
-      && [[ -z "$(ls -A "${DEBNAS_TMP_BASE}" 2>/dev/null)" ]]; then
-      rmdir "${DEBNAS_TMP_BASE}" 2>/dev/null || true
-    fi
-  }
-
-  register_temp_cleanup() {
-    trap 'cleanup_temp_files' EXIT
-    trap 'cleanup_temp_files; exit "${ERROR_GENERAL}"' INT TERM
-  }
-
-  mark_normal_exit() {
-    _DEBNAS_NORMAL_EXIT=1
-  }
-fi
-
-
-# ==================== 工具函数 ====================
-# ==================== 工具函数 ====================
-check_ipset_exists() {
-  local ipset_name="$1"
-  firewall-cmd --permanent --get-ipsets | grep -qw "${ipset_name}"
-}
-
-check_ipset_bound() {
-  local ipset_name="$1" zone="$2"
-  firewall-cmd --permanent --zone="${zone}" --list-sources \
-    | grep -qw "ipset:${ipset_name}"
-}
-
-# 使用 sipcalc 验证 IPv4 地址（支持 CIDR 格式）
-validate_ipv4() {
-  local ip=$1 sipcalc_output
-  if [[ ! "${ip}" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){0,3}(/[0-9]{1,2})?$ ]]; then
-    return 1
-  fi
-  if sipcalc_output=$(sipcalc "${ip}" 2>/dev/null); then
-    if printf "%s" "${sipcalc_output}" | grep -qiE "^\\-\\[ipv4\\s*:"; then
-      return 0
-    fi
-  fi
-  return 1
-}
-
-# 使用 sipcalc 验证 IPv6 地址（支持 CIDR 格式）
-validate_ipv6() {
-  local ip=$1 sipcalc_output
-  if [[ ! "${ip}" =~ ^[0-9a-fA-F:]+(/[0-9]{1,3})?$ ]]; then
-    return 1
-  fi
-  if sipcalc_output=$(sipcalc "${ip}" 2>/dev/null); then
-    if printf "%s" "${sipcalc_output}" | grep -qiE "^\\-\\[ipv6\\s*:"; then
-      return 0
-    fi
-  fi
-  return 1
-}
-
-# 使用 sipcalc 验证 IP 地址并返回类型（输出 "ipv4" 或 "ipv6"）
-validate_ip() {
-  local ip=$1 sipcalc_output
-  if sipcalc_output=$(sipcalc "${ip}" 2>/dev/null); then
-    if printf "%s" "${sipcalc_output}" | grep -qiE "^\\-\\[ipv4\\s*:"; then
-      printf "ipv4"
-      return 0
-    elif printf "%s" "${sipcalc_output}" | grep -qiE "^\\-\\[ipv6\\s*:"; then
-      printf "ipv6"
-      return 0
-    fi
-  fi
-  return 1
-}
-
-# 验证 IPv4 CIDR 格式并提取前缀和掩码（输出 "前缀 掩码"）
-validate_cidr_ipv4() {
-  local input=$1 prefix mask sipcalc_output
-  if [[ ! ${input} =~ ^([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3})/([0-9]{1,2})$ ]]; then
-    return 1
-  fi
-  prefix=${BASH_REMATCH[1]}
-  mask=${BASH_REMATCH[2]}
-  if [[ ! ${mask} =~ ^[0-9]+$ ]] || [[ ${mask} -gt 32 ]] || [[ ${mask} -lt 0 ]]; then
-    return 1
-  fi
-  if sipcalc_output=$(sipcalc "${input}" 2>/dev/null); then
-    if printf "%s" "${sipcalc_output}" | grep -qiE "^\\-\\[ipv4\\s*:"; then
-      printf "%s %s" "${prefix}" "${mask}"
-      return 0
-    fi
-  fi
-  return 1
 }
 
 
@@ -513,7 +378,7 @@ main() {
     exit "${ERROR_GENERAL}"
   fi
 
-  if [[ "${RUN_MODE}" == "manual" ]]; then
+  if [[ "${DEBNAS_CRON_MODE:-0}" -eq 0 ]]; then
     init_manual
     while true; do
       show_menu

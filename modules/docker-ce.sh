@@ -1,9 +1,8 @@
 #!/bin/bash
 # @module: docker-ce
-# @name: 安装 Docker
+# @name: Docker CE
 # @category: 容器管理
-# @depends: apt,wget,curl,systemctl
-# @depend_modules: sources
+# @depends: wget,curl
 # @version: 1.0.0
 # @order: 50
 # 功能：安装 Docker CE 社区版
@@ -13,15 +12,7 @@ IFS=$'\n\t'
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${SCRIPT_DIR}/lib/bootstrap.sh"
-
-# ==================== 幂等性检查 ====================
-if command -v docker &>/dev/null; then
-  if state_is_installed "docker-ce" 2>/dev/null; then
-    docker_version=$(docker --version 2>/dev/null | grep -oP '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
-    log_info "Docker 已安装（版本: ${docker_version:-未知}），跳过"
-    exit 0
-  fi
-fi
+main() {
 
 # ==================== 函数定义 ====================
 
@@ -34,11 +25,11 @@ probe_mirror() {
 # 返回：镜像源基础 URL（不含路径），失败返回非 0
 extract_mirror_from_sources() {
   local sources_file="/etc/apt/sources.list.d/debian.sources"
-  
+
   if [[ ! -f "$sources_file" ]] || [[ ! -r "$sources_file" ]]; then
     return 1
   fi
-  
+
   local first_uri
   first_uri=$(awk '
     /^[[:space:]]*URIs:[[:space:]]+/ && !/^[[:space:]]*#/ {
@@ -49,16 +40,16 @@ extract_mirror_from_sources() {
       }
     }
   ' "$sources_file" 2>/dev/null)
-  
+
   if [[ -z "$first_uri" ]]; then
     return 1
   fi
-  
+
   if [[ "$first_uri" =~ ^(https?://[^/]+) ]]; then
     echo "${BASH_REMATCH[1]}"
     return 0
   fi
-  
+
   return 1
 }
 
@@ -67,11 +58,11 @@ extract_mirror_from_sources() {
 # 返回：0 表示是官方源，非 0 表示不是官方源
 is_official_debian_source() {
   local mirror_url="$1"
-  
+
   if [[ "$mirror_url" =~ ^https?://(deb\.debian\.org|ftp\.debian\.org) ]]; then
     return 0
   fi
-  
+
   return 1
 }
 
@@ -80,40 +71,40 @@ is_official_debian_source() {
 get_docker_mirror() {
   local base_mirror=""
   local docker_mirror=""
-  
+
   base_mirror=$(extract_mirror_from_sources)
-  
+
   if [[ -n "$base_mirror" ]]; then
     if is_official_debian_source "$base_mirror"; then
-      log_info "检测到 Debian 官方源，Docker 使用官方源: ${DOCKER_OFFICIAL_MIRROR}" >&2
+      log_info "Docker 官方源" >&2
       echo "$DOCKER_OFFICIAL_MIRROR" >&1
       return 0
     else
       docker_mirror="${base_mirror}/docker-ce/linux/debian"
       if probe_mirror "${docker_mirror}/dists/"; then
-        log_info "使用系统配置的镜像源: ${base_mirror}" >&2
+        log_info "镜像: ${base_mirror}" >&2
         echo "$docker_mirror" >&1
         return 0
       else
-        log_warning "系统镜像源不可用 (${base_mirror})，尝试备用镜像源" >&2
+        log_warning "镜像 ${base_mirror} 不可用" >&2
       fi
     fi
   else
-    log_info "未检测到系统镜像源配置，使用备用镜像源" >&2
+    log_warning "无系统镜像配置" >&2
   fi
-  
+
   for fallback in "${DOCKER_FALLBACK_MIRRORS[@]}"; do
     docker_mirror="${fallback}/docker-ce/linux/debian"
     if probe_mirror "${docker_mirror}/dists/"; then
-      log_info "使用备用镜像源: ${fallback}" >&2
+      log_info "镜像: ${fallback}" >&2
       echo "$docker_mirror" >&1
       return 0
     fi
   done
-  
-  log_warning "所有备用镜像源均不可用，尝试使用 Docker 官方源" >&2
+
+  log_warning "备用镜像不可用" >&2
   if probe_mirror "$DOCKER_OFFICIAL_MIRROR"; then
-    log_info "Docker 官方源可用，使用官方源: ${DOCKER_OFFICIAL_MIRROR}" >&2
+    log_info "Docker 官方源" >&2
     echo "$DOCKER_OFFICIAL_MIRROR" >&1
     return 0
   else
@@ -133,27 +124,22 @@ fi
 
 . /etc/os-release
 
-log_info "检测镜像源可用性..."
+log_info "检测镜像源"
 DOCKER_MIRROR=$(get_docker_mirror)
 mirror_status=$?
 
 if [[ $mirror_status -ne 0 ]] || [[ -z "$DOCKER_MIRROR" ]]; then
-  log_error "无法获取有效的 Docker 镜像源，安装终止"
+  log_fail "无法获取 Docker 源"
   exit "${ERROR_DEPENDENCY}"
 fi
 
-log_info "开始安装 Docker CE..."
+log_info "安装 Docker CE..."
 
-log_info "更新软件包列表并安装依赖..."
-if [[ "${_DEBNAS_APT_UPDATED:-0}" -eq 1 ]]; then
-  log_info "已全局更新过软件包列表，跳过 apt update。"
-else
-  apt update && export _DEBNAS_APT_UPDATED=1
-fi
-apt install -y ca-certificates curl
+log_info "安装依赖..."
+apt_install_packages ca-certificates curl
 
 install -m 0755 -d /etc/apt/keyrings
-log_info "下载 GPG 密钥..."
+log_info "获取 GPG 密钥..."
 
 gpg_downloaded=0
 max_retries=3
@@ -176,18 +162,18 @@ while [[ $retry_count -lt $max_retries ]]; do
 done
 
 if [[ $gpg_downloaded -eq 0 ]]; then
-  log_error "GPG 密钥下载失败，请检查网络连接或镜像源可用性"
+  log_fail "GPG 密钥下载失败"
   exit "${ERROR_DEPENDENCY}"
 fi
 
 chmod a+r /etc/apt/keyrings/docker.asc
 
-log_info "配置 Docker 软件源..."
+log_info "写入 Docker 源..."
 
 # 备份旧格式文件（sources.list 格式）
 readonly OLD_DOCKER_LIST="/etc/apt/sources.list.d/docker.list"
 if [[ -f "$OLD_DOCKER_LIST" ]]; then
-  log_info "检测到旧格式文件，重命名为备份文件"
+  log_info "旧源文件已备份"
   mv "$OLD_DOCKER_LIST" "${OLD_DOCKER_LIST}.bak"
 fi
 
@@ -200,34 +186,33 @@ Components: stable
 Signed-By: /etc/apt/keyrings/docker.asc
 EOF
 
-apt update
+apt_update_safe
 
 log_info "安装 Docker 组件..."
-apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-
-# 获取 UID 1000 的用户（通常是 Debian 系统安装时创建的第一个用户）
-# first_user=$(awk -F: '$3==1000 && $1 != "nobody" {print $1; exit}' /etc/passwd)
-
-if [[ -n "$first_user" ]]; then
-  log_info "将系统第一个用户（UID 1000）添加到 docker 组..."
-  usermod -aG docker "$first_user"
-  
-  if systemctl is-active --quiet docker; then
-    log_success "Docker 安装完成，用户 $first_user（UID 1000）已添加到 docker 组"
-  else
-    systemctl enable --now docker
-    log_success "Docker 安装完成，用户 $first_user（UID 1000）已添加到 docker 组，服务已启动并设置为开机自启"
-  fi
+if command -v docker &>/dev/null; then
+  log_info "$(docker --version)"
+  # 已安装，尝试升级
+  apt_update_safe
+  apt install -y --only-upgrade docker-ce docker-ce-cli containerd.io 2>/dev/null || true
 else
-  log_info "未检测到 UID 1000 的用户，跳过 docker 组添加"
-  
-  if systemctl is-active --quiet docker; then
-    log_success "Docker 安装完成"
-  else
-    systemctl enable --now docker
-    log_success "Docker 安装完成，服务已启动并设置为开机自启"
-  fi
+  # 全新安装
+  apt_install_packages docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 fi
 
-# ==================== 记录状态 ====================
-state_mark_success "docker-ce" "$(docker --version 2>/dev/null | grep -oP '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+service_ensure docker started
+service_ensure docker enabled
+
+if [[ -n "$first_user" ]]; then
+  log_info "添加用户到 docker 组..."
+  usermod -aG docker "$first_user"
+  log_success "Docker CE 就绪"
+else
+  log_info "无普通用户，跳过 docker 组"
+  log_success "Docker CE 就绪"
+fi
+
+log_info "Docker $(docker --version 2>/dev/null | grep -oP '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+
+}
+
+main "$@"

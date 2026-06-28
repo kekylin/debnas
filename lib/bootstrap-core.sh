@@ -13,6 +13,9 @@ fi
 
 _DEBNAS_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+# 确保系统关键路径在 PATH 中（非登录 shell / cron 环境下 /usr/sbin 可能缺失）
+PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH}"
+
 # ==================== Core layer（零依赖） ====================
 source "${_DEBNAS_ROOT}/lib/core/constants.sh"
 source "${_DEBNAS_ROOT}/lib/core/colors.sh"

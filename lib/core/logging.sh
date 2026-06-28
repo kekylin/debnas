@@ -2,6 +2,18 @@
 # 功能：统一日志输出模块
 # 说明：支持标准日志级别密度控制，终端仅展示业务状态
 #       增强功能：支持文件日志输出（/var/log/debnas/）
+#
+# 日志等级使用指南：
+#   DEBUG  — 内部细节：依赖解析、模块发现、分支决策、实际执行的命令
+#            开启方式：--debug 或 log_level=DEBUG；深入排查：--xtrace
+#   INFO   — 用户关心的操作进度 + 幂等跳过说明
+#            "正在安装 X"、"Y 已是最新，跳过"、"Z 配置未变更"
+#   WARN   — 非致命异常，系统可自行处理
+#            "APT 更新失败，使用缓存继续"
+#   ERROR  — 操作失败，需用户介入
+#            "权限不足"、"下载失败"
+#   FATAL  — 不可恢复，程序终止 (exit 1)
+#            "核心依赖缺失"、"磁盘空间耗尽"
 
 set -euo pipefail
 IFS=$'\n\t'
@@ -15,15 +27,10 @@ declare -A LOG_LEVELS=(
   [FATAL]=4
 )
 
-# 默认日志级别
+# 默认日志级别（LOG_LEVEL 环境变量由 args.sh / --debug / 配置文件设置）
 DEFAULT_LOG_LEVEL="INFO"
-CURRENT_LOG_LEVEL="${LOG_LEVEL:-$DEFAULT_LOG_LEVEL}"
 
-# 获取库文件目录
-LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-
-# 加载核心颜色定义
-source "$LIB_DIR/core/colors.sh"
+# 依赖: core/colors.sh（由 bootstrap-core.sh 先行加载）
 
 # ==================== 文件日志配置 ====================
 
@@ -34,7 +41,7 @@ DEBNAS_LOG_DIR="/var/log/debnas"
 declare -g _DEBNAS_LOG_FILE="${_DEBNAS_LOG_FILE:-}"
 
 # 文件日志是否启用
-declare -g _DEBNAS_FILE_LOGGING="${_DEBNAS_FILE_LOGGING:-0}"
+declare -g _DEBNAS_FILE_LOGGING="${_DEBNAS_FILE_LOGGING:-${DEBNAS_FILE_LOGGING:-0}}"
 
 # ==================== 核心函数 ====================
 
@@ -47,11 +54,28 @@ get_timestamp() {
   fi
 }
 
+# 获取日志级别对应的数字（避免 set -u 下关联数组下标问题）
+_log_level_num() {
+  case "$1" in
+    DEBUG) echo 0 ;;
+    INFO)  echo 1 ;;
+    WARN)  echo 2 ;;
+    ERROR) echo 3 ;;
+    FATAL) echo 4 ;;
+    *)     echo -1 ;;
+  esac
+}
+
 # 检查日志级别是否应该输出
+# 直接从 LOG_LEVEL 环境变量读取（单一真实来源，避免 CURRENT_LOG_LEVEL 快照不同步）
 should_log() {
   local level="$1"
-  local current_level_num="${LOG_LEVELS[$CURRENT_LOG_LEVEL]:-1}"
-  local message_level_num="${LOG_LEVELS[$level]:-0}"
+  local current_level_num message_level_num
+  current_level_num=$(_log_level_num "${LOG_LEVEL:-$DEFAULT_LOG_LEVEL}")
+  message_level_num=$(_log_level_num "$level")
+  # 未知级别默认输出
+  [[ $current_level_num -eq -1 ]] && current_level_num=1
+  [[ $message_level_num -eq -1 ]] && return 0
   [[ $message_level_num -ge $current_level_num ]]
 }
 
@@ -108,19 +132,20 @@ log_debug() {
   if should_log "DEBUG"; then log_status "[DEBUG]"   "$1" "$COLOR_CYAN";   _log_to_file "[DEBUG]" "$1"; fi
 }
 log_error() {
-  if should_log "ERROR"; then log_status "[FAIL]"    "$1" "$COLOR_RED";    _log_to_file "[FAIL]" "$1"; fi
+  if should_log "ERROR"; then log_status "[ERROR]"   "$1" "$COLOR_RED";    _log_to_file "[ERROR]" "$1"; fi
 }
 log_fatal() {
-  if should_log "FATAL"; then log_status "[FAIL]"    "$1" "$COLOR_MAGENTA"; _log_to_file "[FATAL]" "$1"; fi
+  if should_log "FATAL"; then log_status "[FATAL]"   "$1" "$COLOR_MAGENTA"; _log_to_file "[FATAL]" "$1"; fi
+  exit 1
 }
 
 # ==================== 日志级别管理（保持原有签名不变） ====================
 
-# 设置日志级别
+# 设置日志级别（仅影响当前进程，不导出到子进程）
 set_log_level() {
   local level="$1"
-  if [[ -n "${LOG_LEVELS[$level]}" ]]; then
-    CURRENT_LOG_LEVEL="$level"
+  if [[ $(_log_level_num "$level") -ne -1 ]]; then
+    LOG_LEVEL="$level"
     log_info "日志级别设置为: $level"
   else
     log_fail "无效的日志级别: $level (支持: ${!LOG_LEVELS[*]})"
@@ -130,7 +155,7 @@ set_log_level() {
 
 # 获取当前日志级别
 get_log_level() {
-  echo "$CURRENT_LOG_LEVEL"
+  echo "${LOG_LEVEL:-$DEFAULT_LOG_LEVEL}"
 }
 
 # 显示支持的日志级别
@@ -139,10 +164,22 @@ show_log_levels() {
   for level in "${!LOG_LEVELS[@]}"; do
     echo "  $level (${LOG_LEVELS[$level]})"
   done
-  echo "当前日志级别: $CURRENT_LOG_LEVEL"
+  echo "当前日志级别: ${LOG_LEVEL:-$DEFAULT_LOG_LEVEL}"
 }
 
-# ==================== 文件日志功能（新增） ====================
+# ==================== 命令追踪（set -x） ====================
+
+# 开启命令追踪（对标 bash -x，由 --xtrace 参数触发）
+# 说明：逐行打印执行的每条命令及展开后的变量值，比手写 log_debug 更全面
+# 用法：debnas --xtrace install cockpit
+enable_xtrace() {
+  if [[ "${DEBNAS_XTRACE:-0}" -ne 1 ]]; then
+    return 0
+  fi
+  set -x
+}
+
+# ==================== 文件日志功能 ====================
 
 # 初始化文件日志
 # 参数：$1 - 模块名（用于日志文件命名）

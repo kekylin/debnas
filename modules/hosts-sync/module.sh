@@ -1,9 +1,8 @@
 #!/bin/bash
 # @module: hosts-sync
-# @name: 更新 Hosts 文件
+# @name: Hosts 优化
 # @category: 系统工具
 # @depends: dig,ping
-# @depend_modules: sources
 # @version: 2.0.0
 # @order: 73
 # @cron: true
@@ -24,6 +23,9 @@ if [[ "${1:-}" == "auto_update_hosts" ]]; then
 fi
 
 # 加载子模块
+# DNS 服务器配置（固定顺序，必须在子模块加载前定义）
+readonly -a DNS_NAME_ORDER=("AliDNS" "TencentDNS" "BaiduDNS" "DNS114")
+
 # 全局常量（供子模块使用）
 readonly HOSTS_FILE="/etc/hosts"
 readonly START_MARK="# DebNAS Hosts Start"
@@ -94,15 +96,15 @@ menu() {
 
     case "$choice" in
       1)
-        log_action "执行单次更新"
+        log_info "更新 Hosts..."
         update_hosts
         ;;
       2)
-        log_action "创建定时更新任务"
+        log_info "创建定时任务..."
         create_cron_job
         ;;
       3)
-        log_action "删除定时任务"
+        log_info "删除定时任务..."
         remove_cron_job
         ;;
       4)
@@ -121,7 +123,16 @@ menu() {
 main() {
   if [[ $CRON_MODE -eq 0 ]]; then
     setup_temp_environment
-    check_required_dependencies
+    init_domains_config
+    # 检查必要依赖
+    local missing=()
+    for cmd in dig ping curl; do
+      command -v "$cmd" &>/dev/null || missing+=("$cmd")
+    done
+    if [[ ${#missing[@]} -gt 0 ]]; then
+      log_warning "缺失依赖: ${missing[*]}，尝试安装..."
+      install_missing_dependencies "${missing[@]}" 2>/dev/null || true
+    fi
     menu
   else
     setup_temp_environment

@@ -64,7 +64,7 @@ enable_auto_update() {
 
   # 使用统一 cron 框架注册定时任务（替代自行管理 crontab）
   if ! cron_register "threat-ips" "${cron_schedule}" 2>/dev/null; then
-    log_message "ERROR" "设置定时任务失败（请检查 cron 服务）"
+    log_error "定时注册失败"
     return 1
   fi
   log_message "SUCCESS" \
@@ -105,7 +105,7 @@ disable_auto_update() {
     fi
   fi
 
-  log_message "SUCCESS" "已禁用自动更新并清理所有相关配置"
+  log_success "威胁 IP 已禁用"
 }
 
 view_cron_jobs() {
@@ -116,39 +116,6 @@ view_cron_jobs() {
     log_message "INFO" "未设置任何与 IPThreat Firewalld 相关的定时任务"
   fi
 }
-
-update_threat_ips() {
-  local threat_level="${1:-${THREAT_LEVEL:-${DEFAULT_THREAT_LEVEL}}}"
-  local temp_gz temp_txt temp_file_ipv4 temp_file_ipv6
-
-  if ! [[ "${threat_level}" =~ ^[0-9]+$ ]] \
-    || [[ "${threat_level}" -lt 0 || "${threat_level}" -gt 100 ]]; then
-    log_message "WARNING" \
-      "无效威胁等级：${threat_level}，使用默认：${DEFAULT_THREAT_LEVEL}"
-    threat_level=${DEFAULT_THREAT_LEVEL}
-  fi
-
-  temp_gz=$(create_temp_file "threat" ".gz")
-  temp_txt=$(create_temp_file "threat" ".txt")
-  temp_file_ipv4=$(create_temp_file "valid_ips_ipv4" ".txt")
-  temp_file_ipv6=$(create_temp_file "valid_ips_ipv6" ".txt")
-
-  if ! check_ipset_exists "${IPSET_NAME_IPV4}" \
-    && ! check_ipset_exists "${IPSET_NAME_IPV6}"; then
-    configure_ipset || true
-  fi
-
-  if ! download_threat_list "${threat_level}" "${temp_gz}" "${temp_txt}"; then
-    log_message "ERROR" "下载威胁 IP 列表失败，终止更新"
-    return 1
-  fi
-
-  if ! filter_and_add_ips "${temp_txt}" "${temp_file_ipv4}" "${temp_file_ipv6}"; then
-    log_message "ERROR" "处理 IP 列表失败，终止更新"
-    return 1
-  fi
-}
-
 
 update_threat_ips() {
   local threat_level="${1:-${THREAT_LEVEL:-${DEFAULT_THREAT_LEVEL}}}"

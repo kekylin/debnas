@@ -4,11 +4,7 @@
 set -euo pipefail
 IFS=$'\n\t'
 
-# 获取库文件目录
-LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-
-# 加载核心颜色定义
-source "$LIB_DIR/core/colors.sh"
+# 依赖: core/colors.sh（由 bootstrap.sh 加载）
 
 # 语义化颜色映射（用于UI系统）
 get_ui_color() {
@@ -89,10 +85,8 @@ print_highlight() {
 # 返回值：无
 print_separator() {
   local char="${1:-=}"
-  local line=""
-  for ((i=0; i<50; i++)); do
-    line+="$char"
-  done
+  local line
+  line=$(printf '%*s' 50 '' | tr ' ' "$char")
   print_colored "COLOR_CYAN" "$line"
 }
 
@@ -149,5 +143,5 @@ print_prompt() {
 # 参数：无
 # 返回值：无
 print_multiselect_prompt() {
-  print_colored "COLOR_GREEN" "支持多选，空格分隔多个编号，如：1 2 3"
+  print_colored "COLOR_GREEN" "${MSG_MULTISELECT:-支持多选，空格分隔多个编号，如：1 2 3}"
 } 

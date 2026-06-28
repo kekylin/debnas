@@ -5,10 +5,7 @@
 set -euo pipefail
 IFS=$'\n\t'
 
-# 获取库文件目录
-LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-source "$LIB_DIR/core/logging.sh"
-source "$LIB_DIR/core/constants.sh"
+# 依赖: core/logging.sh, core/constants.sh（由 bootstrap-core.sh 加载）
 
 # ==================== 公共接口 ====================
 
@@ -18,7 +15,7 @@ source "$LIB_DIR/core/constants.sh"
 # 说明：非 root 时输出错误提示并退出
 require_root() {
   if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
-    log_error "此操作需要 root 权限，请使用 sudo 或以 root 身份运行"
+    log_error "需要 root 权限"
     return "${ERROR_PERMISSION}"
   fi
   return 0
@@ -37,22 +34,22 @@ service_ensure() {
 
   # 检查 systemctl 是否可用
   if ! command -v systemctl &>/dev/null; then
-    log_error "systemctl 不可用，无法管理服务：${service_name}"
+    log_error "systemctl 不可用，跳过 ${service_name}"
     return 1
   fi
 
   case "$target_state" in
     started)
       if systemctl is-active --quiet "$service_name" 2>/dev/null; then
-        log_debug "服务 ${service_name} 已在运行"
+        log_info "服务 ${service_name} 已在运行，跳过启动"
         return 0
       fi
-      log_info "正在启动服务：${service_name}"
+      log_info "启动 ${service_name}..."
       if systemctl start "$service_name" 2>&1; then
-        log_success "服务已启动：${service_name}"
+        log_success "${service_name} 已启动"
         return 0
       else
-        log_error "启动服务失败：${service_name}"
+        log_error "启动 ${service_name} 失败"
         log_error "请检查日志：journalctl -u ${service_name} -n 20"
         return 1
       fi
@@ -60,63 +57,63 @@ service_ensure() {
 
     stopped)
       if ! systemctl is-active --quiet "$service_name" 2>/dev/null; then
-        log_debug "服务 ${service_name} 已停止"
+        log_info "服务 ${service_name} 已停止，跳过停止"
         return 0
       fi
-      log_info "正在停止服务：${service_name}"
+      log_info "停止 ${service_name}..."
       if systemctl stop "$service_name" 2>&1; then
-        log_success "服务已停止：${service_name}"
+        log_success "${service_name} 已停止"
         return 0
       else
-        log_error "停止服务失败：${service_name}"
+        log_error "停止 ${service_name} 失败"
         return 1
       fi
       ;;
 
     enabled)
       if systemctl is-enabled --quiet "$service_name" 2>/dev/null; then
-        log_debug "服务 ${service_name} 已设为开机启动"
+        log_info "服务 ${service_name} 已设为开机启动，跳过"
         return 0
       fi
-      log_info "正在启用开机启动：${service_name}"
+      log_info "启用 ${service_name} 开机启动..."
       if systemctl enable "$service_name" 2>&1; then
-        log_success "已启用开机启动：${service_name}"
+        log_success "${service_name} 开机启动"
         return 0
       else
-        log_error "启用开机启动失败：${service_name}"
+        log_error "启用 ${service_name} 开机启动失败"
         return 1
       fi
       ;;
 
     disabled)
       if ! systemctl is-enabled --quiet "$service_name" 2>/dev/null; then
-        log_debug "服务 ${service_name} 已禁用开机启动"
+        log_info "服务 ${service_name} 已禁用开机启动，跳过"
         return 0
       fi
-      log_info "正在禁用开机启动：${service_name}"
+      log_info "禁用 ${service_name} 开机启动..."
       if systemctl disable "$service_name" 2>&1; then
-        log_success "已禁用开机启动：${service_name}"
+        log_success "${service_name} 已禁用开机启动"
         return 0
       else
-        log_error "禁用开机启动失败：${service_name}"
+        log_error "禁用 ${service_name} 开机启动失败"
         return 1
       fi
       ;;
 
     restarted)
-      log_info "正在重启服务：${service_name}"
+      log_info "重启 ${service_name}..."
       if systemctl restart "$service_name" 2>&1; then
-        log_success "服务已重启：${service_name}"
+        log_success "${service_name} 已重启"
         return 0
       else
-        log_error "重启服务失败：${service_name}"
+        log_error "${service_name} 重启失败"
         log_error "请检查日志：journalctl -u ${service_name} -n 20"
         return 1
       fi
       ;;
 
     *)
-      log_error "service_ensure: 无效的目标状态 '${target_state}'"
+      log_error "service_ensure: 无效状态 '${target_state}'"
       log_error "支持的状态：started, stopped, enabled, disabled, restarted"
       return 1
       ;;
@@ -159,7 +156,7 @@ sysctl_set() {
 
   # 幂等检查：值相同则跳过
   if [[ "$current_value" == "$param_value" ]]; then
-    log_debug "sysctl ${param_name} 已设置为 ${param_value}，跳过"
+    log_info "sysctl ${param_name} 已设置为 ${param_value}，跳过"
     return 0
   fi
 
@@ -191,7 +188,7 @@ sysctl_persist() {
 
   # 幂等检查：配置文件中已存在相同配置
   if [[ -f "$conf_path" ]] && grep -qF "$conf_line" "$conf_path" 2>/dev/null; then
-    log_debug "sysctl 持久化配置已存在：${conf_path}"
+    log_info "sysctl 持久化配置已存在：${conf_path}"
     return 0
   fi
 

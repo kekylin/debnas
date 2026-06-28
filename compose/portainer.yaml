@@ -2,14 +2,19 @@ services:
   portainer-ce:
     ports:
       - 8000:8000
-      - 9000:9000
+      # 9000 (HTTP) 已移除，仅保留 HTTPS 端口 9443
       - 9443:9443
     container_name: portainer
     restart: always
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - /opt/docker/portainer:/data
-    image: portainer/portainer-ce:latest
+    image: portainer/portainer-ce:2.27.1
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '1.0'
     network_mode: bridge
 networks:
   bridge:

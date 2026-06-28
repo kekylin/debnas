@@ -1,8 +1,8 @@
 #!/bin/bash
 # @module: cockpit-ext-on
-# @name: 启用外网访问
+# @name: 外网访问（开）
 # @category: 管理面板
-# @depends: hostname,awk,sed,systemctl
+# @depends:
 # @depend_modules: cockpit
 # @version: 1.0.0
 # @order: 32
@@ -13,7 +13,9 @@ IFS=$'\n\t'
 
 # 加载公共模块，确保依赖函数和常量可用
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-source "${SCRIPT_DIR}/lib/bootstrap-core.sh"
+source "${SCRIPT_DIR}/lib/bootstrap.sh"
+main() {
+source "${SCRIPT_DIR}/lib/system/state.sh"
 
 # 检查依赖，确保 hostname、awk、sed、systemctl 已安装
 REQUIRED_CMDS=(hostname awk sed systemctl)
@@ -42,26 +44,45 @@ fi
 internal_ip=$(hostname -I | awk '{print $1}')
 log_info "配置 Cockpit 外网访问地址：$domain"
 
-# 配置 Cockpit 的 Origins 参数，支持新建和更新
+# 配置 Cockpit 的 Origins 参数（在内存中构建完整内容，使用 write_file_if_changed 写入）
+origins_line="Origins = https://$domain wss://$domain https://$internal_ip:9090"
+new_config=""
+
 if [[ -f "$config_file" ]]; then
-  if grep -q "Origins" "$config_file"; then
-    sed -i "s#^Origins = .*#Origins = https://$domain wss://$domain https://$internal_ip:9090#" "$config_file"
-    log_info "已更新 Origins 配置。"
+  current_config=$(cat "$config_file")
+  if echo "$current_config" | grep -q "Origins"; then
+    # 替换已有 Origins 行
+    new_config=$(echo "$current_config" | sed "s#^Origins = .*#$origins_line#")
   else
-    sed -i "/\[WebService\]/a Origins = https://$domain wss://$domain https://$internal_ip:9090" "$config_file"
-    log_info "已添加 Origins 配置。"
+    # 在 [WebService] 段后插入 Origins 行
+    if echo "$current_config" | grep -q '\[WebService\]'; then
+      new_config=$(echo "$current_config" | sed "/\[WebService\]/a $origins_line")
+    else
+      new_config="$current_config
+
+[WebService]
+$origins_line"
+    fi
   fi
 else
-  echo "[WebService]" > "$config_file"
-  echo "Origins = https://$domain wss://$domain https://$internal_ip:9090" >> "$config_file"
-  log_info "已创建配置文件并添加 Origins 配置。"
+  new_config="[WebService]
+$origins_line"
 fi
 
-log_success "已设置 Cockpit 外网访问地址：https://$domain"
-
-# 重启 Cockpit 服务，确保配置生效
-if systemctl try-restart cockpit; then
-  log_success "Cockpit 服务已重启，外网访问配置生效。"
+if write_file_if_changed "$config_file" "$new_config"; then
+  log_info "Origins 配置已更新。"
+  if service_ensure "cockpit" "restarted"; then
+    log_success "外网访问已启用"
+  else
+    log_warning "Cockpit 服务重启失败，请手动重启。"
+  fi
 else
-  log_warning "Cockpit 服务重启失败，请手动重启。"
+  log_info "配置未变更，跳过重启。"
 fi
+
+log_success "https://$domain"
+
+
+}
+
+main "$@"

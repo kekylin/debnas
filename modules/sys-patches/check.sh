@@ -29,6 +29,22 @@ detect_major_version_update() {
   fi
 }
 
+# 解析 Inst 行并格式化为"包名  旧版 → 新版"
+format_inst_lines() {
+  awk '
+  /^Inst / {
+    if (match($0, /^Inst[[:space:]]+([^[:space:]]+)[[:space:]]+\[([^\]]+)\][[:space:]]+\(([^[:space:]]+)/, m)) {
+      n++; pkg[n]=m[1]; oldv[n]=m[2]; newv[n]=m[3];
+    }
+    next
+  }
+  END {
+    for (i=1;i<=n;i++) {
+      printf "%s\n   ↳ %s → %s\n\n", pkg[i], oldv[i], newv[i];
+    }
+  }'
+}
+
 # 生成报告内容
 build_report_content() {
   local security_update_list="$1" security_update_count="$2" regular_update_list="$3" regular_update_count="$4"
@@ -53,9 +69,9 @@ build_report_content() {
 
 # 执行更新检测并生成报告
 run_update_check() {
-  log_action "正在生成系统更新报告"
-  # 刷新索引；若失败则记录警告但不中止
-  apt-get update > /dev/null 2>&1 || log_warning "apt-get update 执行失败，已跳过索引刷新。"
+  log_info "检测系统更新..."
+  # 刷新索引（使用跨进程去重，若失败则记录警告但不中止）
+  apt_update_safe || log_warning "apt update 失败，跳过"
   full_update_list=$(apt-get upgrade -s)
   
   declare -g security_update_list=$(echo "$full_update_list" | grep -E '^Inst' | grep -i 'Debian-Security\|security')
@@ -74,9 +90,16 @@ execute_update_check() {
     exit "${ERROR_UNSUPPORTED_OS}"
   fi
   run_update_check
-  if [[ $security_update_count -gt 0 || $regular_update_count -gt 0 ]]; then
-    send_email_notification
-    log_success "检测到更新，已发送通知邮件"
+
+  local total=$((security_update_count + regular_update_count))
+  if [[ $total -gt 0 ]]; then
+    # 始终在屏幕输出检测结果
+    echo ""
+    echo -e "$report_content"
+    echo ""
+    log_info "检测完成：共 ${total} 个可用更新（安全 ${security_update_count} / 常规 ${regular_update_count}）"
+    # 邮件通知（可选，失败不阻断）
+    send_email_notification || true
   else
     log_info "系统已是最新状态，无可用更新"
   fi

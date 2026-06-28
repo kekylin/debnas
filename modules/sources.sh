@@ -1,8 +1,9 @@
 #!/bin/bash
 # @module: sources
-# @name: 配置软件源
+# @name: APT 软件源
 # @category: 基础系统
-# @depends: wget,apt
+# @depends:
+# 说明：使用 smart library 实现幂等写入，内容未变更时跳过 apt update
 # @version: 1.0.0
 # @order: 10
 # 功能：自动配置 Debian 软件源（DEB822 格式）
@@ -13,29 +14,16 @@ IFS=$'\n\t'
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${SCRIPT_DIR}/lib/bootstrap.sh"
 
-# ==================== 幂等性检查 ====================
-if [[ -f "/etc/apt/sources.list.d/debian.sources" ]]; then
-  if grep -q "^URIs:" /etc/apt/sources.list.d/debian.sources 2>/dev/null; then
-    if state_is_installed "sources" 2>/dev/null; then
-      log_info "APT 软件源已配置，跳过（如需重新配置，请先删除 /etc/apt/sources.list.d/debian.sources）"
-      exit 0
-    fi
-  fi
-fi
+# ==================== 常量 ====================
 
-readonly DEB822_PATH="/etc/apt/sources.list.d/debian.sources"
-readonly TRADITIONAL_PATH="/etc/apt/sources.list"
-readonly PROBE_TIMEOUT=5
+DEB822_PATH="/etc/apt/sources.list.d/debian.sources"
+TRADITIONAL_PATH="/etc/apt/sources.list"
 
-# wget 用于镜像站连通性探测；如果不可用则跳过探测，使用默认镜像
+# wget/curl 用于镜像站连通性探测；如果不可用则跳过探测，使用默认镜像
 _HAS_PROBE_TOOL=1
 if ! command -v wget &>/dev/null && ! command -v curl &>/dev/null; then
-  log_info "wget/curl 不可用，尝试安装..."
-  install_missing_dependencies wget 2>/dev/null || true
-  if ! command -v wget &>/dev/null && ! command -v curl &>/dev/null; then
-    log_warning "wget/curl 无法安装，将跳过镜像站探测，直接使用默认镜像"
-    _HAS_PROBE_TOOL=0
-  fi
+  log_warning "无 wget/curl，使用默认镜像"
+  _HAS_PROBE_TOOL=0
 fi
 
 if ! verify_debian_12_13_support; then
@@ -57,7 +45,7 @@ detect_best_mirror() {
 
   # 无探测工具时，直接使用第一个国内镜像（不探测）
   if [[ "${_HAS_PROBE_TOOL}" -eq 0 ]]; then
-    log_info "跳过镜像站探测，使用默认国内镜像"
+    log_info "使用默认镜像"
     echo "${APT_MIRRORS[0]}"
     return 0
   fi
@@ -70,11 +58,11 @@ detect_best_mirror() {
   done
 
   if [[ -z "${selected_mirror}" ]]; then
-    log_warning "未检测到可用的国内镜像站，使用官方镜像站"
+    log_warning "镜像不可用，使用官方源"
     if probe_mirror "${APT_OFFICIAL_MIRROR}"; then
       selected_mirror="${APT_OFFICIAL_MIRROR}"
     else
-      log_warning "官方镜像站连接失败，网络可能异常"
+      log_warning "官方源连接失败"
       selected_mirror="${APT_OFFICIAL_MIRROR}"
     fi
   fi
@@ -93,12 +81,13 @@ backup_config_files() {
   fi
 }
 
-# 写入 DEB822 格式的软件源配置
+# 构建 DEB822 格式的软件源配置内容
 # 参数：mirror_url - 镜像站 URL
-write_deb822_config() {
+# 输出：DEB822 配置内容（stdout）
+build_deb822_content() {
   local mirror_url="$1"
-  
-  cat <<EOF > "${DEB822_PATH}"
+
+  cat <<EOF
 # Standard Repository
 Types: deb
 URIs: ${mirror_url}/debian
@@ -115,7 +104,7 @@ Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
 EOF
 }
 
-# 执行 apt update 更新软件包列表
+# 执行 apt update 更新软件包列表（带连通性检查）
 # 参数：mirror_url - 镜像站 URL
 # 返回：0 表示成功，1 表示失败
 update_package_lists() {
@@ -128,48 +117,47 @@ update_package_lists() {
   fi
 
   if [[ "${is_offline}" == "true" ]]; then
-    log_warning "软件源已配置为官方地址，但当前网络检测失败"
-    log_warning "请检查网络连接、DNS 配置或网关设置。网络恢复后执行 'apt update' 验证"
+    log_warning "已写入源，网络检测失败"
+    log_info "请检查网络，恢复后 apt update"
     return 1
   fi
-  
-  if [[ "${_DEBNAS_APT_UPDATED:-0}" -eq 1 ]]; then
-    log_info "已全局更新过软件包列表，跳过 apt update。"
-    return 0
-  fi
-  log_info "执行 apt update 更新软件包列表"
-  if apt update; then
-    export _DEBNAS_APT_UPDATED=1
-    local mirror_name
-    mirror_name=$(get_mirror_name "${mirror_url}")
-    if [[ "${mirror_name}" == "${mirror_url}" ]]; then
-      mirror_name="${APT_OFFICIAL_MIRROR_NAME}"
-    fi
-    log_success "软件包列表更新完成"
-    return 0
-  else
-    log_warning "apt update 执行失败，网络连接可能异常"
+
+  if ! apt_update_safe; then
+    log_warning "apt update 失败"
     return 1
   fi
+  return 0
 }
 
 main() {
   local selected_mirror
   local mirror_name
-  
+  local new_content
+
   selected_mirror=$(detect_best_mirror)
   mirror_name=$(get_mirror_name "${selected_mirror}")
   if [[ "${mirror_name}" == "${selected_mirror}" ]]; then
     mirror_name="${APT_OFFICIAL_MIRROR_NAME}"
   fi
-  log_success "已选择镜像站：${mirror_name}"
-  
-  backup_config_files
-  write_deb822_config "${selected_mirror}"
-  update_package_lists "${selected_mirror}"
+  log_success "${mirror_name}"
+
+  # 构建 DEB822 内容，使用 write_file_if_changed 实现幂等写入
+  new_content=$(build_deb822_content "${selected_mirror}")
+  if write_file_if_changed "$DEB822_PATH" "$new_content"; then
+    # 内容变更：备份旧配置（传统 sources.list）
+    if [[ -f "${TRADITIONAL_PATH}" ]]; then
+      mv "${TRADITIONAL_PATH}" "${TRADITIONAL_PATH}.bak"
+    fi
+    log_success "源已写入"
+    if ! update_package_lists "${selected_mirror}"; then
+      log_warning "apt update 失败，源已写入"
+      return 1
+    fi
+  else
+    log_info "源未变更，跳过更新"
+  fi
+
+  # 状态由 module-runner.sh 的 run_report() 统一管理
 }
 
-# ==================== 记录状态 ====================
-state_mark_success "sources"
-
-main
+main "$@"

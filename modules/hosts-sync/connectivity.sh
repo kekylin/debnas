@@ -199,15 +199,15 @@ test_ips_concurrently() {
         fi
       ) &
       pids+=($!)
-      ((running++))
-      ((index++))
+      ((running++)) || true
+      ((index++)) || true
     done
     
     if [[ $running -gt 0 ]]; then
       local wait_pid
       for wait_pid in "${pids[@]}"; do
         if wait "$wait_pid" 2>/dev/null; then
-          ((running--))
+          ((running--)) || true
           local -a new_pids=()
           local pid
           for pid in "${pids[@]}"; do

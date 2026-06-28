@@ -7,20 +7,15 @@
 set -euo pipefail
 IFS=$'\n\t'
 
-# 获取库文件目录
-LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-source "$LIB_DIR/core/logging.sh"
+# 依赖: core/logging.sh（由 bootstrap.sh 加载）
 
 # ==================== 常量定义 ====================
 
-# 配置目录
-readonly DEBNAS_CONF_DIR="/etc/debnas/conf.d"
+# 配置目录（不设 readonly，允许测试 Mock）
+DEBNAS_CONF_DIR="${DEBNAS_CONF_DIR:-/etc/debnas/conf.d}"
 
 # 全局配置文件
-readonly DEBNAS_GLOBAL_CONF="/etc/debnas/debnas.conf"
-
-# 默认配置文件（仓库内）
-readonly DEBNAS_DEFAULT_CONF_DIR="${DEBNAS_DEFAULT_CONF_DIR:-}"
+DEBNAS_GLOBAL_CONF="${DEBNAS_GLOBAL_CONF:-/etc/debnas/debnas.conf}"
 
 # ==================== 内部函数 ====================
 
@@ -128,8 +123,20 @@ config_write() {
 
   # 更新或追加键值对
   if grep -qE "^[[:space:]]*${key}[[:space:]]*=" "$conf_file" 2>/dev/null; then
-    # 替换已有行
-    sed -i "s|^[[:space:]]*${key}[[:space:]]*=.*|${key}=${value}|" "$conf_file"
+    # 替换已有行（使用 ENVIRON 传递变量，避免 awk -v 解释转义序列）
+    export _DEBNAS_CFG_KEY="$key" _DEBNAS_CFG_VAL="$value"
+    awk '{
+      line = $0
+      sub(/^[[:space:]]*/, "", line)
+      k = ENVIRON["_DEBNAS_CFG_KEY"]
+      if (line ~ "^"k"[[:space:]]*=") {
+        print k"="ENVIRON["_DEBNAS_CFG_VAL"]
+      } else {
+        print $0
+      }
+    }' "$conf_file" > "${conf_file}.tmp"
+    unset _DEBNAS_CFG_KEY _DEBNAS_CFG_VAL
+    mv "${conf_file}.tmp" "$conf_file"
   else
     # 追加新行
     echo "${key}=${value}" >> "$conf_file"
@@ -187,7 +194,7 @@ config_validate() {
   local has_error=0
 
   while IFS= read -r line || [[ -n "$line" ]]; do
-    (( line_num++ ))
+    (( ++line_num ))
 
     # 跳过空行和注释
     if [[ -z "$line" ]] || [[ "$line" =~ ^[[:space:]]*# ]]; then

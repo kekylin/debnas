@@ -1,9 +1,8 @@
 #!/bin/bash
 # @module: login-mail-on
-# @name: 启用登录通知
+# @name: 登录通知（开）
 # @category: 通知服务
 # @depends: exim4
-# @depend_modules: mail-account
 # @version: 1.0.0
 # @order: 61
 # 功能：启用用户登录邮件通知（通过 PAM 脚本，登录时自动发送邮件）
@@ -13,7 +12,9 @@ IFS=$'\n\t'
 
 # 加载公共模块，确保依赖函数和常量可用
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-source "${SCRIPT_DIR}/lib/bootstrap-core.sh"
+source "${SCRIPT_DIR}/lib/bootstrap.sh"
+main() {
+source "${SCRIPT_DIR}/lib/system/state.sh"
 
 # 检查 exim4 依赖，确保邮件发送功能可用
 REQUIRED_CMDS=(exim4)
@@ -25,7 +26,7 @@ fi
 # 检查邮件通知配置文件是否存在
 EMAIL_FILE="/etc/exim4/notify_email"
 if [[ ! -f "$EMAIL_FILE" ]]; then
-  log_error "未检测到 $EMAIL_FILE，请先通过“设置发送邮件账户”模块完成配置。"
+  log_error "未检测到 $EMAIL_FILE，请先通过「设置发送邮件账户」模块完成配置。"
   exit "${ERROR_DEPENDENCY}"
 fi
 
@@ -36,15 +37,16 @@ read -r notify_email < "$EMAIL_FILE" || {
 }
 
 if [[ -z "$notify_email" ]]; then
-  log_error "通知邮箱地址为空，请先通过“设置发送邮件账户”模块完成配置。"
+  log_error "通知邮箱地址为空，请先通过「设置发送邮件账户」模块完成配置。"
   exit "${ERROR_DEPENDENCY}"
 fi
 
 log_info "通知邮箱地址：$notify_email"
 
-# 生成 PAM 登录通知脚本，登录时自动发送邮件
+# 生成 PAM 登录通知脚本（仅在内容变更时写入）
 NOTIFY_SCRIPT="/etc/pam.d/login-notify.sh"
-cat > "$NOTIFY_SCRIPT" << 'EOF'
+NOTIFY_SCRIPT_TMP=$(mktemp)
+cat > "$NOTIFY_SCRIPT_TMP" << 'EOF'
 #!/bin/bash
 # PAM 登录会话开启时发送邮件通知（UTF-8，带地理位置与处置指引）
 
@@ -145,14 +147,27 @@ fi
   echo "此邮件由系统自动生成，请勿直接回复。"
 } | /usr/sbin/exim4 -t || true
 EOF
-chmod 755 "$NOTIFY_SCRIPT"
-chown root:root "$NOTIFY_SCRIPT"
+
+# 仅在内容变更时写入文件
+if [[ ! -f "$NOTIFY_SCRIPT" ]] || ! cmp -s "$NOTIFY_SCRIPT_TMP" "$NOTIFY_SCRIPT"; then
+  mv "$NOTIFY_SCRIPT_TMP" "$NOTIFY_SCRIPT"
+  chmod 755 "$NOTIFY_SCRIPT"
+  chown root:root "$NOTIFY_SCRIPT"
+  log_info "登录通知脚本已更新。"
+else
+  rm -f "$NOTIFY_SCRIPT_TMP"
+  log_debug "登录通知未变"
+fi
 
 # 配置 pam.d/common-session，集成登录通知脚本
 PAM_FILE="/etc/pam.d/common-session"
 if ! grep -Fxq "session optional pam_exec.so debug /bin/bash $NOTIFY_SCRIPT" "$PAM_FILE" 2>/dev/null; then
   echo "session optional pam_exec.so debug /bin/bash $NOTIFY_SCRIPT" >> "$PAM_FILE"
-  log_success "已成功集成登录邮件通知至 pam.d/common-session。"
+  log_success "登录通知已配置"
 else
-  log_info "pam.d/common-session 已存在登录邮件通知配置，无需重复添加。"
+  log_info "登录通知已配置"
 fi
+
+}
+
+main "$@"

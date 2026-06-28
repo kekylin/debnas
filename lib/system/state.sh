@@ -6,18 +6,16 @@
 set -euo pipefail
 IFS=$'\n\t'
 
-# 获取库文件目录
-LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-source "$LIB_DIR/core/logging.sh"
+# 依赖: core/logging.sh（由 bootstrap-core.sh 加载）
 
 # ==================== 常量定义 ====================
 
-# 状态目录
-readonly DEBNAS_STATE_DIR="/var/lib/debnas/state"
+# 状态目录（不设 readonly，允许测试 Mock）
+DEBNAS_STATE_DIR="${DEBNAS_STATE_DIR:-/var/lib/debnas/state}"
 
 # 状态值常量
-readonly STATE_SUCCESS="success"
-readonly STATE_FAIL="fail"
+STATE_SUCCESS="${STATE_SUCCESS:-success}"
+STATE_FAIL="${STATE_FAIL:-fail}"
 
 # ==================== 内部函数 ====================
 
@@ -96,14 +94,15 @@ state_set() {
 
   # 更新或追加键值对
   if grep -q "^${key}=" "$state_file" 2>/dev/null; then
-    # 替换已有行
-    sed -i "s|^${key}=.*|${key}=${value}|" "$state_file"
+    # 替换已有行（使用 awk 避免 sed 分隔符冲突）
+    awk -F= -v k="$key" -v v="$value" 'BEGIN{OFS="="} $1==k{$2=v} {print}' "$state_file" > "${state_file}.tmp"
+    mv "${state_file}.tmp" "$state_file"
   else
     # 追加新行
     echo "${key}=${value}" >> "$state_file"
   fi
 
-  log_debug "状态已更新：${module_name} ${key}=${value}"
+  log_debug "状态已写入：${module_name} ${key}=${value}"
   return 0
 }
 

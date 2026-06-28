@@ -6,9 +6,7 @@
 set -euo pipefail
 IFS=$'\n\t'
 
-# 获取库文件目录
-LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-source "$LIB_DIR/core/logging.sh"
+# 依赖: core/logging.sh（由 bootstrap.sh 加载）
 
 # ==================== 常量定义 ====================
 
@@ -63,12 +61,12 @@ cron_register() {
   local field_count
   field_count=$(echo "$schedule" | awk '{print NF}')
   if [[ "$field_count" -ne 5 ]]; then
-    log_error "无效的 cron 表达式: '${schedule}'（需要 5 个字段）"
+    log_error "Cron 表达式无效: '${schedule}'"
     return 1
   fi
 
-  # 构建 cron 命令
-  local cron_cmd="${schedule} ${DEBNAS_BIN} ${module_name} --cron ${marker}"
+  # 构建 cron 命令（传递 DEBNAS_CRON_MODE=1 告知模块以非交互模式运行）
+  local cron_cmd="${schedule} DEBNAS_CRON_MODE=1 ${DEBNAS_BIN} run ${module_name} ${marker}"
 
   # 获取当前 crontab，移除该模块的旧条目
   local current_crontab
@@ -88,10 +86,10 @@ ${cron_cmd}"
 
   # 写入 crontab
   if echo "$new_crontab" | _set_crontab; then
-    log_success "定时任务已注册：${module_name}（${schedule}）"
+    log_success "${module_name}（${schedule}）"
     return 0
   else
-    log_error "注册定时任务失败：${module_name}"
+    log_error "定时注册失败${module_name}"
     return 1
   fi
 }
@@ -110,25 +108,25 @@ cron_unregister() {
 
   # 检查是否存在该模块的条目
   if ! echo "$current_crontab" | grep -q "${marker}" 2>/dev/null; then
-    log_debug "模块 ${module_name} 未注册定时任务"
+    log_debug "未找到 cron 条目：${module_name}，跳过注销"
     return 0
   fi
 
   # 移除该模块的条目
   local new_crontab
-  new_crontab=$(echo "$current_crontab" | grep -v "${marker}")
+  new_crontab=$(echo "$current_crontab" | grep -v "${marker}" || true)
 
   # 写入 crontab（如果为空则移除整个 crontab）
   if [[ -z "$new_crontab" ]]; then
     crontab -r 2>/dev/null || true
   else
     if ! echo "$new_crontab" | _set_crontab; then
-      log_error "移除定时任务失败：${module_name}"
+      log_error "定时取消失败${module_name}"
       return 1
     fi
   fi
 
-  log_success "定时任务已移除：${module_name}"
+  log_success "定时已取消${module_name}"
   return 0
 }
 
@@ -141,7 +139,7 @@ cron_list() {
   current_crontab=$(_get_current_crontab)
 
   if [[ -z "$current_crontab" ]]; then
-    log_info "当前没有注册任何定时任务"
+    log_info "无定时任务"
     return 0
   fi
 
@@ -149,11 +147,11 @@ cron_list() {
   debnas_entries=$(echo "$current_crontab" | grep "${CRON_MARKER}" || true)
 
   if [[ -z "$debnas_entries" ]]; then
-    log_info "当前没有 DebNAS 管理的定时任务"
+    log_info "无定时任务"
     return 0
   fi
 
-  echo "DebNAS 定时任务列表："
+  echo "定时任务"
   echo "─────────────────────────────────────────────────"
 
   while IFS= read -r line; do

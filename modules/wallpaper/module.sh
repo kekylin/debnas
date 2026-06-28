@@ -1,41 +1,21 @@
 #!/bin/bash
 # @module: wallpaper
-# @name: 面板必应壁纸
+# @name: 登录页壁纸
 # @category: 管理面板
-# @depends: wget,systemctl,crontab
+# @depends: wget
 # @depend_modules: cockpit
 # @version: 1.0.0
 # @order: 35
 # @cron: true
 # @cron_schedule: 0 */6 * * *
-# 功能：Cockpit 登录页必应每日壁纸自动管理（自包含模块）
-#
-# 此模块为自包含设计：复制到 /etc/cockpit/branding/ 后仍可独立运行 --auto 模式。
+# 功能：Cockpit 登录页必应每日壁纸自动管理
 
 set -euo pipefail
 IFS=$'\n\t'
 
 # ==================== 库加载 ====================
-# 检测运行位置：branding 目录（cron 副本）还是项目目录
-if [[ "$(dirname "${BASH_SOURCE[0]}")" == "/etc/cockpit/branding" ]]; then
-  # cron 副本运行：使用内置简化日志
-  log_info()    { printf '\033[1;34m[INFO]\033[0m %s\n' "$*" 2>/dev/null || true; }
-  log_success() { printf '\033[1;32m[SUCCESS]\033[0m %s\n' "$*" 2>/dev/null || true; }
-  log_error()   { printf '\033[1;31m[ERROR]\033[0m %s\n' "$*" >&2 2>/dev/null || true; }
-  log_warning() { printf '\033[1;33m[WARNING]\033[0m %s\n' "$*" 2>/dev/null || true; }
-  log_to_file() { local f="$1"; shift; "$f" "$@" 2>/dev/null || true; }
-  print_prompt(){ printf '%s' "$*" 2>/dev/null || true; }
-  show_menu_with_border() { local t="$1"; shift; echo "--- $t ---"; local i=1; for o in "$@"; do echo "$i. $o"; ((i++)); done; echo "0.返回"; }
-  # cron 框架函数（简化版）
-  cron_register() { return 0; }
-  cron_unregister() { return 0; }
-  cron_is_registered() { return 1; }
-  cron_list() { crontab -l 2>/dev/null || true; }
-else
-  # 项目目录运行：加载完整库
-  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-  source "${SCRIPT_DIR}/lib/bootstrap.sh"
-fi
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+source "${SCRIPT_DIR}/lib/bootstrap.sh"
 
 # ==================== 常量 ====================
 readonly BRANDING_DIR="/etc/cockpit/branding"
@@ -43,23 +23,22 @@ readonly BRANDING_CSS="${BRANDING_DIR}/branding.css"
 readonly WALLPAPER_FILE="${BRANDING_DIR}/login-bg.png"
 readonly ISSUE_FILE="/etc/cockpit/issue.cockpit"
 readonly STATE_FILE="${BRANDING_DIR}/.initialized"
-readonly SCRIPT_COPY="${BRANDING_DIR}/cockpit-bing-wallpaper.sh"
-readonly BING_API_URL="https://www.bing.com/HPImageArchive.aspx?format=js&idx=0&n=1&mkt=zh-CN"
-readonly SELF_PATH="$(realpath "${BASH_SOURCE[0]}")"
-readonly ERROR_DEPENDENCY=2
+readonly DEFAULT_WALLPAPER_API_URL="https://www.bing.com/HPImageArchive.aspx?format=js&idx=0&n=1&mkt=zh-CN"
 
-# ==================== 依赖检查 ====================
-REQUIRED_CMDS=(curl crontab)
-if ! command -v curl &>/dev/null; then
-  log_error "curl 不可用"
-  exit "${ERROR_DEPENDENCY}"
-fi
+# 获取壁纸 API 地址（优先级：debnas.conf > 默认值）
+get_wallpaper_api_url() {
+  local api_url
+  api_url=$(config_read "WALLPAPER_API_URL" 2>/dev/null || true)
+  if [[ -n "$api_url" ]]; then
+    printf '%s' "$api_url"
+    return 0
+  fi
+  printf '%s' "$DEFAULT_WALLPAPER_API_URL"
+}
 
 # ==================== 工具函数 ====================
-log_to_file() { local f="$1"; shift; "$f" "$@" 2>/dev/null || true; }
 is_first_run() { [[ ! -f "$STATE_FILE" ]]; }
 mark_initialized() { touch "$STATE_FILE"; }
-is_auto_mode() { [[ ! -t 0 ]] || [[ -n "${CRON:-}" ]]; }
 
 # ==================== Cockpit 版本检查 ====================
 check_cockpit_version() {
@@ -91,11 +70,6 @@ prepare_env() {
   install -d -m 755 "$BRANDING_DIR"
 }
 
-create_script_copy() {
-  cp "$SELF_PATH" "$SCRIPT_COPY"
-  chmod +x "$SCRIPT_COPY"
-}
-
 # ==================== 壁纸下载 ====================
 update_wallpaper() {
   check_cockpit_version || return 1
@@ -104,13 +78,13 @@ update_wallpaper() {
 
   is_first_run && first_run=true
 
-  # 获取 Bing API 数据
-  if ! bing_json=$(curl --fail --silent --location "$BING_API_URL" 2>/dev/null); then
+  local wallpaper_api_url
+  wallpaper_api_url=$(get_wallpaper_api_url)
+  if ! bing_json=$(curl --fail --silent --location "$wallpaper_api_url" 2>/dev/null); then
     [[ "$first_run" == "true" ]] && return 1
     return 1
   fi
 
-  # 解析数据
   bing_url=$(echo "$bing_json" | grep -oP '(?<="url":")[^"]+' | head -n1 || true)
   bing_title=$(echo "$bing_json" | grep -oP '(?<="title":")[^"]+' | head -n1 || true)
   bing_copyright=$(echo "$bing_json" | grep -oP '(?<="copyright":")[^"]+' | head -n1 || true)
@@ -120,7 +94,6 @@ update_wallpaper() {
     return 1
   fi
 
-  # 下载壁纸
   full_url="https://www.bing.com${bing_url}"
 
   if curl --fail --location --silent --show-error -o "${WALLPAPER_FILE}.tmp" "$full_url"; then
@@ -138,7 +111,7 @@ update_wallpaper() {
 # ==================== CSS 生成 ====================
 generate_css() {
   check_cockpit_version || return 1
-  cat > "$BRANDING_CSS" <<'CSSEOF'
+  cat > "$BRANDING_CSS" <<CSSEOF
 /* Cockpit 登录页样式（自动生成） */
 body.login, body.login-pf {
   background: url("login-bg.png") no-repeat center center fixed !important;
@@ -233,23 +206,13 @@ CSSEOF
 restart_cockpit() {
   if systemctl is-active --quiet cockpit 2>/dev/null; then
     systemctl restart cockpit
-    log_to_file log_success "Cockpit 服务已重启"
+    log_success "Cockpit 已重启"
   else
-    log_to_file log_warning "Cockpit 服务未运行"
+    log_warning "Cockpit 未运行"
   fi
 }
 
 # ==================== Cron 管理 ====================
-add_cron_job() {
-  local cron_expr="$1"
-  if cron_register "wallpaper" "$cron_expr" 2>/dev/null; then
-    log_to_file log_success "定时任务已添加：$cron_expr"
-  else
-    log_to_file log_error "定时任务注册失败"
-    return 1
-  fi
-}
-
 show_cron_jobs() {
   log_info "当前定时任务："
   if cron_is_registered "wallpaper" 2>/dev/null; then
@@ -270,19 +233,23 @@ enable_bing_wallpaper() {
     [[ -z "$cron_expr" ]] && cron_expr="0 0 * * *"
   else
     cron_expr="0 0 * * *"
-    log_info "非交互式模式，使用默认 Cron：$cron_expr"
+    log_info "默认定时 $cron_expr"
   fi
 
   prepare_env
-  add_cron_job "$cron_expr"
-  create_script_copy
+  if ! cron_register "wallpaper" "$cron_expr" 2>/dev/null; then
+    log_error "定时注册失败"
+    return 1
+  fi
+  log_success "壁纸定时 $cron_expr"
 
   if update_wallpaper; then
     generate_css
     restart_cockpit
-    log_to_file log_success "壁纸功能已启用"
+    log_success "壁纸已启用"
   else
-    log_to_file log_error "壁纸下载失败"
+    log_error "壁纸下载失败"
+    return 1
   fi
 }
 
@@ -291,7 +258,7 @@ disable_bing_wallpaper() {
   rm -rf "$BRANDING_DIR"
   echo "基于Debian搭建 HomeNAS" > "$ISSUE_FILE"
   restart_cockpit
-  log_to_file log_success "壁纸功能已禁用"
+  log_success "壁纸已禁用"
 }
 
 # ==================== 自动更新模式（cron 调用） ====================
@@ -328,9 +295,7 @@ main_menu() {
 
 # ==================== 主入口 ====================
 main() {
-  if [[ "${1:-}" == "--auto" ]] || [[ -n "${CRON:-}" ]]; then
-    auto_update_mode
-  elif [[ "${1:-}" == "--cron" ]]; then
+  if [[ "${DEBNAS_CRON_MODE:-0}" -eq 1 ]]; then
     auto_update_mode
   elif [[ -t 0 ]]; then
     main_menu

@@ -1,8 +1,8 @@
 #!/bin/bash
 # @module: cockpit-ext-off
-# @name: 禁用外网访问
+# @name: 外网访问（关）
 # @category: 管理面板
-# @depends: sed,systemctl
+# @depends:
 # @depend_modules: cockpit
 # @version: 1.0.0
 # @order: 33
@@ -13,7 +13,9 @@ IFS=$'\n\t'
 
 # 加载公共模块，确保依赖函数和常量可用
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-source "${SCRIPT_DIR}/lib/bootstrap-core.sh"
+source "${SCRIPT_DIR}/lib/bootstrap.sh"
+main() {
+source "${SCRIPT_DIR}/lib/system/state.sh"
 
 # 检查依赖，确保 sed、systemctl 已安装
 REQUIRED_CMDS=(sed systemctl)
@@ -24,9 +26,12 @@ fi
 
 # 删除 Cockpit 外网访问配置，提升安全性
 config_file="/etc/cockpit/cockpit.conf"
+config_changed=0
 if [[ -f "$config_file" ]]; then
-  if grep -q "Origins" "$config_file"; then
-    sed -i '/Origins/d' "$config_file"
+  current_config=$(cat "$config_file")
+  new_config=$(echo "$current_config" | sed '/Origins/d')
+  if write_file_if_changed "$config_file" "$new_config"; then
+    config_changed=1
     log_success "已删除 Cockpit 外网访问配置。"
   else
     log_info "未检测到外网访问参数，跳过操作。"
@@ -35,9 +40,16 @@ else
   log_info "未检测到 Cockpit 配置文件，跳过操作。"
 fi
 
-# 重启 Cockpit 服务，确保配置生效
-if systemctl try-restart cockpit; then
-  log_success "Cockpit 服务已重启，外网访问已禁用。"
-else
-  log_warning "Cockpit 服务重启失败，请手动重启。"
+# 仅在配置变更时重启 Cockpit 服务
+if [[ "$config_changed" -eq 1 ]]; then
+  if service_ensure "cockpit" "restarted"; then
+    log_success "外网访问已禁用"
+  else
+    log_warning "Cockpit 服务重启失败，请手动重启。"
+  fi
 fi
+
+
+}
+
+main "$@"
