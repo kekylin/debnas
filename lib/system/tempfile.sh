@@ -40,7 +40,7 @@ readonly _DEBNAS_INTENTIONAL_EXIT_MAX=6
 # ==================== 核心函数 ====================
 
 # 初始化临时文件基目录
-# 若目录不存在则创建，权限为 0755（允许 _apt 等系统用户遍历访问）
+# 若目录不存在则创建，权限强制为 0755（允许 _apt 等系统用户遍历访问）
 # 返回：0 成功，1 失败
 init_temp_dir() {
   if [[ ! -d "$DEBNAS_TMP_BASE" ]]; then
@@ -48,11 +48,11 @@ init_temp_dir() {
       echo "临时目录失败: ${DEBNAS_TMP_BASE}" >&2
       return 1
     }
-    chmod 700 "$DEBNAS_TMP_BASE" || {
-      echo "临时目录权限设置失败：${DEBNAS_TMP_BASE}" >&2
-      return 1
-    }
   fi
+  chmod 755 "$DEBNAS_TMP_BASE" || {
+    echo "临时目录权限设置失败：${DEBNAS_TMP_BASE}" >&2
+    return 1
+  }
 }
 
 # 创建临时文件并纳入跟踪列表
@@ -126,9 +126,14 @@ cleanup_temp_files() {
 # 其他非零退出码（7-127, 128+信号）视为异常退出
 _debnas_cleanup_on_exit() {
   local exit_code=$?
+  # 在清理前捕获信号状态（哨兵文件将在 cleanup_temp_files 后被移除，
+  # 避免残留的哨兵文件影响后续 debnas 运行的异常退出警告）
+  local _was_signalled=0
+  [[ -f /tmp/.debnas_signal_handled ]] && _was_signalled=1
   cleanup_temp_files
+  rm -f /tmp/.debnas_signal_handled 2>/dev/null || true
   # 如果中断信号已处理过，不再重复输出
-  if [[ -f /tmp/.debnas_signal_handled ]]; then
+  if [[ $_was_signalled -eq 1 ]]; then
     return 0
   fi
   # 退出码 0：成功，不报警

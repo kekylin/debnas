@@ -250,7 +250,7 @@ cleanup_old_hosts() {
   fi
   
   local temp_hosts
-  temp_hosts=$(mktemp "${TMP_DIR}/hosts-cleanup.XXXXXX") || {
+  temp_hosts=$(create_temp_file "hosts-cleanup") || {
     echo "无法创建临时文件" >&2
     return 1
   }
@@ -309,7 +309,7 @@ process_all_domains() {
     
     if [[ -z "${group_files[$group]:-}" ]]; then
       local group_file
-      group_file=$(mktemp "${TMP_DIR}/group-${group}.XXXXXX") || continue
+      group_file=$(create_temp_file "group-${group}") || continue
       group_files["$group"]="$group_file"
     fi
     
@@ -385,7 +385,7 @@ update_hosts() {
   fi
   
   local hosts_content
-  hosts_content=$(mktemp "${TMP_DIR}/hosts-content.XXXXXX") || {
+  hosts_content=$(create_temp_file "hosts-content") || {
     if [[ $CRON_MODE -eq 0 ]]; then
       log_error "无法创建临时文件"
     else

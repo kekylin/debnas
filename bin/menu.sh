@@ -283,13 +283,10 @@ auto_menu_loop() {
 
 # ==================== 环境设置 ====================
 
-# 设置临时目录和信号处理
+# 设置临时目录（复用 tempfile.sh 集中管理，不再覆盖 EXIT/INT trap）
 setup_environment() {
   init_temp_dir
-  _MENU_TMP_DIR=$(mktemp -d "${DEBNAS_TMP_BASE}/menu.XXXXXX")
-  chmod 700 "$_MENU_TMP_DIR"
-  trap 'if [[ ! -f /tmp/.debnas_signal_handled ]]; then touch /tmp/.debnas_signal_handled 2>/dev/null; log_warning "用户中断操作"; fi; rm -rf "$_MENU_TMP_DIR"; exit 1' INT
-  trap 'rm -rf "$_MENU_TMP_DIR"' EXIT
+  _MENU_TMP_DIR=$(create_temp_dir "menu")
 }
 
 # ==================== 主入口 ====================

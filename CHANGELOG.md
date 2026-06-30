@@ -111,6 +111,9 @@
 - 统一 `service-query.sh` 直接 `systemctl start` 调用为 `service_ensure`，去掉 `|| true` 吞错（P2-7）
 - 清理 4 处旧项目名 `HomeNAS` 残留（cockpit.sh ×2、wallpaper/module.sh ×2），统一为 `DebNAS`（P2-8）
 - 统一 `wallpaper/module.sh` 中 2 处 `echo >`/`printf >` 直接文件写入为 `write_file_if_changed` 幂等写入（P2-9）
+- 修复 `tempfile.sh` 权限注释与代码不一致：`chmod 700` → `755`，匹配注释中的 0755 声明；`init_temp_dir` 新增幂等权限修正（目录已存在时也确保 755），移除 `hosts-sync/module.sh` 中的 workaround `chmod 755`
+- 修复 `/tmp/.debnas_signal_handled` 哨兵文件泄漏：`_debnas_cleanup_on_exit` 退出时自动清理，避免残留文件抑制后续运行的异常退出警告
+- 统一临时文件管理：`menu.sh` 移除自建 EXIT/INT trap，改用 `create_temp_dir` 纳入集中跟踪；`hosts-sync` 子模块 5 处手动 `mktemp` → `create_temp_file`；`login-mail-on.sh` 裸 `mktemp` → `create_temp_file`；`cockpit-45drives.sh` 移除双重清理
 
 ---
 

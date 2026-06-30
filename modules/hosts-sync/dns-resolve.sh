@@ -73,7 +73,7 @@ resolve_domain_ips() {
   
   for dns in "${dns_servers_ref[@]}"; do
     local tmp_file
-    tmp_file=$(mktemp "${TMP_DIR}/dns-${dns}-${safe_domain_hash}.XXXXXX") || continue
+    tmp_file=$(create_temp_file "dns-${dns}-${safe_domain_hash}") || continue
     tmp_files+=("$tmp_file")
     
     (

@@ -59,8 +59,6 @@ done
 setup_temp_environment() {
   # 复用 lib/system/tempfile.sh 的 init_temp_dir，创建并初始化 /tmp/debnas
   init_temp_dir || return 1
-  # 权限 755 允许 _apt 等系统用户遍历访问（兼容并行子 shell 场景）
-  chmod 755 "${DEBNAS_TMP_BASE}" 2>/dev/null || true
   export TMP_DIR="${DEBNAS_TMP_BASE}"
 }
 

@@ -174,7 +174,7 @@ test_ips_concurrently() {
     IFS='|' read -r ip _ <<< "$ip_dns"
     safe_ip_hash=$(get_domain_hash "$ip")
     local tmp_file
-    tmp_file=$(mktemp "${TMP_DIR}/test-${safe_ip_hash}.XXXXXX") || continue
+    tmp_file=$(create_temp_file "test-${safe_ip_hash}") || continue
     tmp_files+=("$tmp_file")
   done
   

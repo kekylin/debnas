@@ -112,8 +112,6 @@ select_best_github_proxy() {
 		fi
 	done
 
-	rm -rf "${temp_dir}"
-
 	local best_entry
 	best_entry=$(printf '%s\n' "${measurements[@]}" | sort -t'|' -k1,1g | head -n1)
 	local best_prefix="${best_entry#*|}"

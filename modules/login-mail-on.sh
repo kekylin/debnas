@@ -46,7 +46,7 @@ log_info "通知邮箱地址：$notify_email"
 
 # 生成 PAM 登录通知脚本（仅在内容变更时写入）
 NOTIFY_SCRIPT="/etc/pam.d/login-notify.sh"
-NOTIFY_SCRIPT_TMP=$(mktemp)
+NOTIFY_SCRIPT_TMP=$(create_temp_file "notify-script" ".sh")
 cat > "$NOTIFY_SCRIPT_TMP" << 'EOF'
 #!/bin/bash
 # PAM 登录会话开启时发送邮件通知（UTF-8，带地理位置与处置指引）
