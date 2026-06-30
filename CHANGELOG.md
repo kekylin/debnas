@@ -66,6 +66,7 @@
 - 删除 DEBUG 日志等级和 `log_debug` 函数
 
 ### Fixed
+- 修复一键部署方案 `execute_solution()` stdin 污染：`while read` 使用 fd 3 读取方案文件，避免交互式模块（如 mail-account）的 `read` 读到方案文件的下一行模块名
 - 修复 `bootstrap.sh` 重复加载导致 `_DEBNAS_BOOTSTRAPPED` 变量泄漏
 - 修复菜单清理陷阱中 `tmp_dir` 未绑定变量
 - 修复 `doctor` 脚本在 `set -e` 下的算术退出错误

@@ -75,7 +75,9 @@ execute_solution() {
   }
 
   local failed=0 module_name
-  while IFS= read -r line; do
+  # 使用 fd 3 读取方案文件，避免 stdin 被重定向污染子进程
+  # （否则交互式模块如 mail-account 的 read 会读到方案文件的下一行模块名）
+  while IFS= read -r line <&3; do
     [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
     module_name="${line#"${line%%[![:space:]]*}"}"
     module_name="${module_name%"${module_name##*[![:space:]]}"}"
@@ -86,7 +88,7 @@ execute_solution() {
       failed=1
       break
     fi
-  done < "$solution_file"
+  done 3< "$solution_file"
 
   [[ $failed -eq 0 ]] && log_success "部署完成"
   return $failed
