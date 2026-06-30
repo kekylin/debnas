@@ -27,7 +27,7 @@
 - 新增统一 Cron 管理（`cron_register/cron_unregister`，含表达式校验 + 冲突去重）
 - 新增 `doctor` 诊断子命令
 - 新增 BATS 测试框架和单元/集成测试
-- 新增 `tests/check.sh` 统一质量检查入口（ShellCheck + 语法 + 测试）
+- 新增 `tests/check.sh` 统一质量检查入口（ShellCheck + 语法 + 测试 + 元数据冒烟）
 - 新增 `mail-account.sh` SMTP 多提供商支持（QQ/163/126/新浪/阿里云/Gmail/Outlook/Yahoo）
 - 新增 `hosts-sync` 域名配置文件支持（`/etc/debnas/conf.d/hosts-sync-domains.conf`）
 - 新增 `wallpaper` API 地址配置化支持（`debnas.conf` + 自包含副本兼容）
@@ -67,6 +67,9 @@
 - 修复最小化 Debian 安装兼容性（无 APT 源、无 wget）
 - 修复 `install.sh` 和 `README.md` 中过时的路径引用
 - 修复 `wallpaper` 模块中残留的死代码
+- 修复 `tailscale.sh`、`firewall.sh`、`wallpaper/module.sh` 中 `write_file_if_changed` 裸调用未处理返回值（内容不变时 `set -e` 导致脚本退出）
+- 修复 `sys-patches` 和 `hosts-sync` 交互菜单不支持 `--yes` 模式（`DEBNAS_FORCE_YES` 已定义但无模块消费）
+- 实际创建 `tests/check.sh` 统一质量检查入口（此前仅记录在 CHANGELOG 中，文件未创建）
 - 修复 `threat-ips/cron.sh` 中 `update_threat_ips` 函数重复定义（B1）
 - 修复 `threat-ips/module.sh` 中与 `ipset.sh` 重复的 6 个函数定义（B2）
 - 修复 `threat-ips` 未声明 `@depend_modules: firewall` 依赖（D1）

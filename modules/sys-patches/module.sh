@@ -114,6 +114,12 @@ if [[ "${DEBNAS_CRON_MODE:-0}" -eq 1 ]]; then
   if [[ $security_update_count -gt 0 || $regular_update_count -gt 0 ]]; then
     send_email_notification
   fi
+elif [[ "${DEBNAS_FORCE_YES:-0}" -eq 1 ]]; then
+  # --yes 模式：跳过菜单，直接执行检测
+  if ! verify_system_support; then
+    exit "${ERROR_UNSUPPORTED_OS}"
+  fi
+  execute_update_check
 else
   # 交互模式：显示菜单
   main_menu

@@ -44,7 +44,7 @@ firewall_config='<?xml version="1.0" encoding="utf-8"?>
 
 if [ ! -f "$CONFIG_FILE" ]; then
   log_info "配置防火墙规则..."
-  write_file_if_changed "$CONFIG_FILE" "$firewall_config"
+  write_file_if_changed "$CONFIG_FILE" "$firewall_config" || true
 else
   # 如已存在，检查并补充 cockpit 配置
   if ! grep -q '<service name="cockpit"/>' "$CONFIG_FILE"; then

@@ -98,7 +98,7 @@ update_wallpaper() {
 
   if curl --fail --location --silent --show-error --max-time 60 --connect-timeout 10 -o "${WALLPAPER_FILE}.tmp" "$full_url"; then
     mv -f "${WALLPAPER_FILE}.tmp" "$WALLPAPER_FILE"
-    write_file_if_changed "$ISSUE_FILE" "$(printf '%s\n%s\n' "$bing_title" "$bing_copyright")"
+    write_file_if_changed "$ISSUE_FILE" "$(printf '%s\n%s\n' "$bing_title" "$bing_copyright")" || true
     mark_initialized
     return 0
   else
@@ -256,7 +256,7 @@ enable_bing_wallpaper() {
 disable_bing_wallpaper() {
   cron_unregister "wallpaper" 2>/dev/null || true
   rm -rf "$BRANDING_DIR"
-  write_file_if_changed "$ISSUE_FILE" "基于Debian搭建 DebNAS"
+  write_file_if_changed "$ISSUE_FILE" "基于Debian搭建 DebNAS" || true
   restart_cockpit
   log_success "壁纸已禁用"
 }

@@ -55,7 +55,7 @@ fi
 local list_content
 list_content=$(curl -fsSL --max-time 30 --connect-timeout 10 \
   "https://pkgs.tailscale.com/stable/debian/${CODENAME}.tailscale-keyring.list")
-write_file_if_changed "/etc/apt/sources.list.d/tailscale.list" "$list_content"
+write_file_if_changed "/etc/apt/sources.list.d/tailscale.list" "$list_content" || true
 
 # 安装 Tailscale
 log_info "安装 Tailscale 组件..."

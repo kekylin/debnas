@@ -118,7 +118,12 @@ main() {
       log_warning "缺失依赖: ${missing[*]}，尝试安装..."
       install_missing_dependencies "${missing[@]}" 2>/dev/null || true
     fi
-    menu
+    if [[ "${DEBNAS_FORCE_YES:-0}" -eq 1 ]]; then
+      # --yes 模式：跳过菜单，直接执行单次更新
+      update_hosts
+    else
+      menu
+    fi
   else
     setup_temp_environment
     update_hosts
