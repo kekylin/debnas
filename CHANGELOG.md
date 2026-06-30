@@ -62,6 +62,7 @@
 - 修复菜单清理陷阱中 `tmp_dir` 未绑定变量
 - 修复 `doctor` 脚本在 `set -e` 下的算术退出错误
 - 修复 `module-runner` 递归依赖调用时的环境变量污染
+- 修复非 root 用户执行 `debnas` 时显示 `mktemp` 权限错误而非 root 权限提示
 - 修复 CLI 参数序列化问题（IFS 分隔符与参数拼接）
 - 修复 `bin/debnas` 符号链接路径解析
 - 修复最小化 Debian 安装兼容性（无 APT 源、无 wget）
