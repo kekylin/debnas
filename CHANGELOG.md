@@ -31,14 +31,12 @@
 - 新增 `mail-account.sh` SMTP 多提供商支持（QQ/163/126/新浪/阿里云/Gmail/Outlook/Yahoo）
 - 新增 `hosts-sync` 域名配置文件支持（`/etc/debnas/conf.d/hosts-sync-domains.conf`）
 - 新增 `wallpaper` API 地址配置化支持（`debnas.conf` + 自包含副本兼容）
-- 新增 `docs/API_REFERENCE.md` 公共 API 参考文档（14 个 lib 文件，100+ 函数签名）
-- 新增 `docs/ADR/` 架构决策记录（5 个：版本策略、目录结构、幂等性、状态管理、自包含模块）
-- 新增 `docs/TROUBLESHOOTING.md` 故障排除指南（10 个分类，40+ 常见问题）
 - 新增 3 个 BATS 单元测试文件（cron/tempfile/utils），覆盖率从 9 个文件提升至 12 个
 - 修复 `tests/run.sh` 缺少 `--recursive` 标志导致子目录测试未被发现
 - 新增日志等级标签（4 级：INFO/WARN/ERROR/FATAL），全部直接输出不做阈值过滤
 
 ### Changed
+- 重构测试报告模板（§十二）：新增执行摘要、测试仪表盘、P0/P1/P2 失败分级、9 维度失败详情、发布门禁逐项判定、跳过解除条件、建议与后续行动等章节，支持三类读者（领导/开发者/AI）分层阅读
 - 项目结构从单体脚本重构为模块化架构（`modules/` + `lib/` + `bin/`）
 - 28 个模块全部重命名为行业标准短名称（如 `install-docker` → `docker-ce`）
 - 4 个复杂模块拆分为目录模块：`sys-patches/`、`hosts-sync/`、`threat-ips/`、`wallpaper/`
@@ -79,6 +77,7 @@
 - 清理 wallpaper 自包含副本设计（项目永久安装于 /opt/，不再需要 /etc/cockpit/branding/ 副本）
 - 清理 sys-patches 独立脚本生成（`~/.system-update-checker.sh`）和旧版 `/etc/cron.d/` 机制
 - 清理 threat-ips cron 模式下重复的 tempfile 函数定义（统一使用 lib/system/tempfile.sh）
+- 修复 `docker-ce.sh` 幂等性失败：`write_file_if_changed` 返回值未处理，文件内容不变时 `set -e` 下脚本异常退出
 - 修复配置文件 `log_level=` 不生效的问题（`CURRENT_LOG_LEVEL` 初始化早于配置读取，导致快照不同步）
 - 修复 `log_fatal` 仅打印消息不退出程序的问题
 - 统一 `systemctl` 直接调用 → `service_ensure`（bbr/wallpaper/docker-mirror/firewall 共 5 处，P1-1）

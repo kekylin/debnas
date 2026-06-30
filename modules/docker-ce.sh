@@ -172,7 +172,7 @@ write_docker_apt_source() {
   local codename
   codename=$(. /etc/os-release && echo "$VERSION_CODENAME")
   local docker_sources_content="Types: deb"$'\n'"URIs: ${docker_mirror}"$'\n'"Suites: ${codename}"$'\n'"Components: stable"$'\n'"Signed-By: /etc/apt/keyrings/docker.asc"
-  write_file_if_changed "/etc/apt/sources.list.d/docker.sources" "$docker_sources_content"
+  write_file_if_changed "/etc/apt/sources.list.d/docker.sources" "$docker_sources_content" || true
 
   apt_update_safe
 }
