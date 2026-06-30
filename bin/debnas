@@ -256,7 +256,7 @@ main() {
 
 	# 权限检查（除 --help/--version 外，所有操作都需要 root）
 	if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
-		log_error "需要 root 权限（使用 sudo debnas 或以 root 用户执行）"
+		log_error "需要 root 权限（请使用 su - 切换到 root 用户后执行）"
 		exit "${ERROR_PERMISSION:-4}"
 	fi
 
