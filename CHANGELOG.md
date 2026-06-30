@@ -114,6 +114,7 @@
 - 修复 `tempfile.sh` 权限注释与代码不一致：`chmod 700` → `755`，匹配注释中的 0755 声明；`init_temp_dir` 新增幂等权限修正（目录已存在时也确保 755），移除 `hosts-sync/module.sh` 中的 workaround `chmod 755`
 - 修复 `/tmp/.debnas_signal_handled` 哨兵文件泄漏：`_debnas_cleanup_on_exit` 退出时自动清理，避免残留文件抑制后续运行的异常退出警告
 - 统一临时文件管理：`menu.sh` 移除自建 EXIT/INT trap，改用 `create_temp_dir` 纳入集中跟踪；`hosts-sync` 子模块 5 处手动 `mktemp` → `create_temp_file`；`login-mail-on.sh` 裸 `mktemp` → `create_temp_file`；`cockpit-45drives.sh` 移除双重清理
+- 修复临时文件追踪失效问题：`create_temp_file`/`create_temp_dir` 通过命令替换 `$()` 调用时在子 shell 中运行，内存数组 `_DEBNAS_TEMP_FILES` 的修改在子 shell 退出后丢失，导致 EXIT trap 无法清理临时文件。重构为进程 PID 目录隔离方案（`/tmp/debnas/pid-$$/`），退出时 `rm -rf` 整个 PID 目录，无需依赖内存数组追踪，天然免疫子 shell 问题
 
 ---
 

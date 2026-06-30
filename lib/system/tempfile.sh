@@ -1,9 +1,11 @@
 #!/bin/bash
 # 功能：临时文件集中管理模块
 #
-# 提供统一的临时文件与目录的创建、跟踪及自动清理机制。
-# 所有临时资源存放于 /tmp/debnas/，通过 mktemp 生成唯一文件名，
-# 基目录权限设置为 0755，脚本退出时自动清理已跟踪的资源。
+# 提供统一的临时文件与目录的创建及自动清理机制。
+# 每个进程使用独立的 PID 子目录（/tmp/debnas/pid-$$/），
+# 退出时 rm -rf 整个进程目录即可，无需追踪单个文件。
+# 此设计天然免疫命令替换子 shell 导致的数组修改丢失问题，
+# 因为文件系统操作在子 shell 中同样持久。
 #
 # 用法：
 #   source lib/system/tempfile.sh
@@ -16,13 +18,13 @@ IFS=$'\n\t'
 
 # ==================== 常量定义 ====================
 
-# 临时文件基目录（所有模块共享）
+# 临时文件基目录（所有进程共享）
 readonly DEBNAS_TMP_BASE="${DEBNAS_TMP_BASE:-/tmp/debnas}"
 
-# ==================== 内部状态 ====================
+# 当前进程的 PID 临时子目录（进程隔离，退出时整体移除）
+readonly _DEBNAS_PID_DIR="${DEBNAS_TMP_BASE}/pid-$$"
 
-# 已创建的临时资源路径列表（用于退出时逆序清理）
-declare -a _DEBNAS_TEMP_FILES=()
+# ==================== 内部状态 ====================
 
 # 清理 trap 注册标志（防止重复注册）
 declare -g _DEBNAS_CLEANUP_REGISTERED=0
@@ -39,10 +41,11 @@ readonly _DEBNAS_INTENTIONAL_EXIT_MAX=6
 
 # ==================== 核心函数 ====================
 
-# 初始化临时文件基目录
-# 若目录不存在则创建，权限强制为 0755（允许 _apt 等系统用户遍历访问）
+# 初始化临时文件目录
+# 创建基目录（755，允许 _apt 等系统用户遍历访问）和进程 PID 子目录（700）
 # 返回：0 成功，1 失败
 init_temp_dir() {
+  # 基目录
   if [[ ! -d "$DEBNAS_TMP_BASE" ]]; then
     mkdir -p "$DEBNAS_TMP_BASE" || {
       echo "临时目录失败: ${DEBNAS_TMP_BASE}" >&2
@@ -53,9 +56,19 @@ init_temp_dir() {
     echo "临时目录权限设置失败：${DEBNAS_TMP_BASE}" >&2
     return 1
   }
+
+  # PID 子目录（进程隔离）
+  if [[ ! -d "$_DEBNAS_PID_DIR" ]]; then
+    mkdir -p "$_DEBNAS_PID_DIR" || {
+      echo "PID临时目录失败: ${_DEBNAS_PID_DIR}" >&2
+      return 1
+    }
+    chmod 700 "$_DEBNAS_PID_DIR"
+  fi
 }
 
-# 创建临时文件并纳入跟踪列表
+# 创建临时文件
+# 文件创建在当前进程的 PID 子目录下，退出时自动随目录移除。
 # 参数：
 #   $1 - 文件名前缀（必填）
 #   $2 - 文件扩展名（可选，默认 .tmp）
@@ -68,16 +81,16 @@ create_temp_file() {
 
   init_temp_dir || return 1
 
-  temp_file=$(mktemp "${DEBNAS_TMP_BASE}/${prefix}.XXXXXX${suffix}") || {
-    echo "临时文件失败: ${DEBNAS_TMP_BASE}/${prefix}.XXXXXX${suffix}" >&2
+  temp_file=$(mktemp "${_DEBNAS_PID_DIR}/${prefix}.XXXXXX${suffix}") || {
+    echo "临时文件失败: ${_DEBNAS_PID_DIR}/${prefix}.XXXXXX${suffix}" >&2
     return 1
   }
 
-  _DEBNAS_TEMP_FILES+=("$temp_file")
   echo "$temp_file"
 }
 
-# 创建临时目录并纳入跟踪列表
+# 创建临时目录
+# 目录创建在当前进程的 PID 子目录下，退出时自动随目录移除。
 # 参数：
 #   $1 - 目录名前缀（必填）
 # 输出：临时目录绝对路径
@@ -88,31 +101,22 @@ create_temp_dir() {
 
   init_temp_dir || return 1
 
-  temp_dir=$(mktemp -d "${DEBNAS_TMP_BASE}/${prefix}.XXXXXXXX") || {
-    echo "临时目录失败: ${DEBNAS_TMP_BASE}" >&2
+  temp_dir=$(mktemp -d "${_DEBNAS_PID_DIR}/${prefix}.XXXXXXXX") || {
+    echo "临时目录失败: ${_DEBNAS_PID_DIR}" >&2
     return 1
   }
 
   chmod 700 "$temp_dir"
-  _DEBNAS_TEMP_FILES+=("$temp_dir")
   echo "$temp_dir"
 }
 
-# 清理当前脚本已跟踪的所有临时资源
-# 仅移除通过 create_temp_file / create_temp_dir 创建的条目，
-# 不影响其他并发脚本的临时数据。基目录为空时自动移除。
+# 清理当前进程的所有临时资源
+# 移除 PID 子目录及其下所有内容。基目录为空时自动移除。
+# 不影响其他并发脚本的 PID 子目录。
 cleanup_temp_files() {
-  local item i
-  # 逆序清理：确保子资源先于父目录移除
-  for (( i=${#_DEBNAS_TEMP_FILES[@]}-1; i>=0; i-- )); do
-    item="${_DEBNAS_TEMP_FILES[$i]}"
-    if [[ -d "$item" ]]; then
-      rm -rf "$item" 2>/dev/null || true
-    elif [[ -f "$item" ]]; then
-      rm -f "$item" 2>/dev/null || true
-    fi
-  done
-  _DEBNAS_TEMP_FILES=()
+  if [[ -d "$_DEBNAS_PID_DIR" ]]; then
+    rm -rf "$_DEBNAS_PID_DIR" 2>/dev/null || true
+  fi
 
   # 基目录为空时自动移除
   if [[ -d "$DEBNAS_TMP_BASE" ]] && [[ -z "$(ls -A "$DEBNAS_TMP_BASE" 2>/dev/null)" ]]; then
