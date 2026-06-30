@@ -183,15 +183,24 @@ parse_ip_range() {
 # ==================== 核心功能 ====================
 check_services() {
   local missing=0
-  if ! systemctl is-active firewalld &>/dev/null; then
-    log_message "ERROR" \
-      "Firewalld 服务未运行（请执行 systemctl start firewalld）"
+  # firewalld：已安装但未运行时自动启动
+  if systemctl is-active firewalld &>/dev/null; then
+    log_info "Firewalld 服务已在运行"
+  elif command -v firewall-cmd &>/dev/null; then
+    log_info "Firewalld 已安装但未运行，正在自动启动..."
+    service_ensure firewalld started || missing=1
+  else
+    log_message "ERROR" "Firewalld 未安装，请先执行 debnas run firewall"
     missing=1
   fi
-  if ! systemctl is-active cron &>/dev/null; then
-    log_message "ERROR" \
-      "Cron 服务未运行（请执行 systemctl start cron）"
-    missing=1
+  # cron：已安装但未运行时自动启动
+  if systemctl is-active cron &>/dev/null; then
+    log_info "Cron 服务已在运行"
+  elif command -v cron &>/dev/null || dpkg -l cron &>/dev/null 2>&1; then
+    log_info "Cron 已安装但未运行，正在自动启动..."
+    service_ensure cron started || missing=1
+  else
+    log_message "WARNING" "Cron 未安装，定时任务功能可能不可用"
   fi
   return "${missing}"
 }
