@@ -28,7 +28,14 @@ declare -a _DEBNAS_TEMP_FILES=()
 declare -g _DEBNAS_CLEANUP_REGISTERED=0
 
 # 正常退出标志（区分正常退出与异常退出的日志输出）
+# 0 = 未标记，1 = 已标记正常退出
 declare -g _DEBNAS_NORMAL_EXIT=0
+
+# 有意退出码范围（constants.sh 中定义的错误码 2-6）
+# 退出码 1 是歧义的：可能是 ERROR_GENERAL（有意），也可能是 set -e 意外杀进程
+# 因此 2-6 始终视为有意退出，退出码 1 需通过 mark_normal_exit 标记来区分
+readonly _DEBNAS_INTENTIONAL_EXIT_MIN=2
+readonly _DEBNAS_INTENTIONAL_EXIT_MAX=6
 
 # ==================== 核心函数 ====================
 
@@ -114,6 +121,9 @@ cleanup_temp_files() {
 }
 
 # EXIT 信号回调：执行清理并在异常退出时记录日志
+# 已知错误码（2-6）视为有意退出，不输出警告
+# 退出码 1 需配合 mark_normal_exit 标记区分有意/意外
+# 其他非零退出码（7-127, 128+信号）视为异常退出
 _debnas_cleanup_on_exit() {
   local exit_code=$?
   cleanup_temp_files
@@ -121,10 +131,15 @@ _debnas_cleanup_on_exit() {
   if [[ -f /tmp/.debnas_signal_handled ]]; then
     return 0
   fi
-  if [[ $_DEBNAS_NORMAL_EXIT -eq 0 ]] && [[ $exit_code -ne 0 ]]; then
-    if declare -f log_warning >/dev/null 2>&1; then
-      log_warning "异常退出 (${exit_code})，临时文件已清理"
-    fi
+  # 退出码 0：成功，不报警
+  [[ $exit_code -eq 0 ]] && return 0
+  # 退出码 2-6：已知的有意退出码（ERROR_DEPENDENCY/ERROR_CONFIG/ERROR_PERMISSION 等）
+  [[ $exit_code -ge $_DEBNAS_INTENTIONAL_EXIT_MIN && $exit_code -le $_DEBNAS_INTENTIONAL_EXIT_MAX ]] && return 0
+  # 退出码 1：如果已标记正常退出，视为有意；否则可能是 set -e 意外杀进程
+  [[ $exit_code -eq 1 && $_DEBNAS_NORMAL_EXIT -eq 1 ]] && return 0
+  # 其余情况：真正意外的退出，输出警告
+  if declare -f log_warning >/dev/null 2>&1; then
+    log_warning "异常退出 (${exit_code})，临时文件已清理"
   fi
 }
 
