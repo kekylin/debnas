@@ -38,6 +38,7 @@
 - 新增模块依赖就绪检查函数 `check_module_deps_ready()`（检查依赖模块是否已完成，不自动执行）
 - 新增 `ensure_module_deps()` 组合依赖检查函数（供模块在操作时调用，合并命令依赖+模块依赖检查）
 - 新增 `@interactive: true` 模块元数据标记（区分交互式/非交互式模块）
+- 新增部署方案集成测试 `tests/integration/test-solution.bats`（8 个用例：方案解析、模块排序、stdin 隔离、失败中断、空格 trim）
 
 ### Changed
 - 依赖安装改为三级分类处理：Tier 0 系统命令仅检查、Tier 1 工具依赖自动安装、Tier 2 服务依赖提示用户（不再自动安装 firewalld/docker.io/exim4 等）
