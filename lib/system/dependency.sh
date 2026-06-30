@@ -8,7 +8,7 @@ IFS=$'\n\t'
 
 # 命令到包名映射表
 # 空字符串表示系统自带命令，无需安装
-declare -A cmd_to_pkg=(
+declare -gA cmd_to_pkg=(
   ["grep"]=""
   ["awk"]="gawk"
   ["sed"]=""
