@@ -7,6 +7,7 @@
 # @order: 71
 # @cron: true
 # @cron_schedule: 0 6 * * *
+# @interactive: true
 # 功能：系统更新检查与邮件通知（目录模块入口）
 
 set -euo pipefail

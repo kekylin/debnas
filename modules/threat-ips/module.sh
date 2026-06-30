@@ -4,6 +4,7 @@
 # @category: 安全防护
 # @depends: firewall-cmd,ipset,wget,sipcalc
 # @depend_modules: firewall
+# @interactive: true
 # @version: 2.0.0
 # @order: 43
 # @cron: true
@@ -254,24 +255,7 @@ init_cron() {
 }
 
 
-# ==================== 菜单函数 ====================
 # ==================== 菜单函数（仅交互模式使用） ====================
-# 依赖检查包装函数：先检查后尝试自动安装
-check_required_dependencies() {
-  if ! check_dependencies "${REQUIRED_CMDS[@]}"; then
-    log_message "INFO" "检测到部分依赖未安装，尝试自动安装..."
-    if ! install_missing_dependencies "${REQUIRED_CMDS[@]}"; then
-      log_message "ERROR" "依赖安装失败，请手动安装缺失的依赖"
-      list_missing_dependencies "${REQUIRED_CMDS[@]}"
-      return 1
-    fi
-    if ! check_dependencies "${REQUIRED_CMDS[@]}"; then
-      log_message "ERROR" "依赖安装后仍有缺失，请手动安装"
-      list_missing_dependencies "${REQUIRED_CMDS[@]}"
-      return 1
-    fi
-  fi
-}
 
 show_menu() {
   local ipv4_count=0 ipv6_count=0
@@ -321,7 +305,7 @@ show_menu() {
 
   case "${choice}" in
     1)
-      check_required_dependencies || return 1
+      ensure_module_deps threat-ips || return 1
       check_services || return 1
       validate_zone
       enable_auto_update || {

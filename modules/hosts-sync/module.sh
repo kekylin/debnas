@@ -3,6 +3,7 @@
 # @name: Hosts 优化
 # @category: 系统工具
 # @depends: dig,ping
+# @interactive: true
 # @version: 2.0.0
 # @order: 73
 # @cron: true
@@ -81,6 +82,7 @@ menu() {
 
     case "$choice" in
       1)
+        ensure_module_deps hosts-sync || return 1
         log_info "更新 Hosts..."
         update_hosts
         ;;

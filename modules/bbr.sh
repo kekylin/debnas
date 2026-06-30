@@ -5,6 +5,7 @@
 # @depends:
 # @version: 1.0.0
 # @order: 76
+# @interactive: true
 # BBR 拥塞控制算法管理工具
 
 set -euo pipefail

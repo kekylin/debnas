@@ -303,6 +303,56 @@ check_dependencies_by_level() {
   return 0
 }
 
+# 确保模块依赖全部就绪（命令依赖 + 模块依赖的组合入口）
+# 供交互式模块在具体操作前调用，实现延迟依赖检查
+# 参数：$1 - 模块名
+# 返回：0 全部就绪，1 有缺失
+ensure_module_deps() {
+  local module_name="${1:?ensure_module_deps: 缺少模块名}"
+
+  # ── 命令依赖（@depends）──
+  local depends_str
+  depends_str=$(get_module_field "$module_name" "depends" "" 2>/dev/null) || depends_str=""
+  if [[ -n "$depends_str" ]]; then
+    local -a dep_cmds=()
+    IFS=' ,' read -ra dep_cmds <<< "$depends_str"
+    local -a clean_cmds=()
+    local cmd
+    for cmd in "${dep_cmds[@]}"; do
+      cmd="${cmd#"${cmd%%[![:space:]]*}"}"
+      cmd="${cmd%"${cmd##*[![:space:]]}"}"
+      [[ -n "$cmd" ]] || continue
+      clean_cmds+=("$cmd")
+    done
+    if [[ ${#clean_cmds[@]} -gt 0 ]]; then
+      log_info "检查依赖命令：${depends_str}"
+      check_dependencies_by_level "${clean_cmds[@]}" || return 1
+    fi
+  fi
+
+  # ── 模块依赖（@depend_modules）──
+  local dep_modules
+  dep_modules=$(get_module_field "$module_name" "depend_modules" "" 2>/dev/null) || dep_modules=""
+  if [[ -n "$dep_modules" ]]; then
+    log_info "检查依赖模块：${dep_modules}"
+    local -a not_ready=()
+    mapfile -t not_ready < <(check_module_deps_ready "$module_name" 2>/dev/null) || not_ready=()
+    if [[ ${#not_ready[@]} -gt 0 ]]; then
+      log_error "以下依赖模块尚未完成，请先执行："
+      local nd
+      for nd in "${not_ready[@]}"; do
+        local nd_name
+        nd_name=$(get_module_field "$nd" "name" "$nd" 2>/dev/null) || nd_name="$nd"
+        echo "  debnas run ${nd}   # ${nd_name}"
+      done
+      return 1
+    fi
+    log_info "依赖模块已全部就绪：${dep_modules}"
+  fi
+
+  return 0
+}
+
 # 自动安装缺失依赖（兼容旧接口，仅安装 Tier 1 工具依赖，Tier 2 只检查不安装）
 # 参数：命令列表
 # 返回：0 全部就绪，1 有缺失

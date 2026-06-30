@@ -85,6 +85,7 @@ _parse_single_file() {
   _MODULE_REGISTRY["${module_name}.cron_schedule"]=""
   _MODULE_REGISTRY["${module_name}.author"]=""
   _MODULE_REGISTRY["${module_name}.since"]=""
+  _MODULE_REGISTRY["${module_name}.interactive"]="false"
 
   # 从文件头部提取元数据（只扫描前 30 行，避免性能问题）
   local line key value
@@ -104,7 +105,7 @@ _parse_single_file() {
           # 清除以文件名为键的旧条目（防止 module.sh 残留 "module" 幽灵条目）
           if [[ "$old_name" != "$module_name" ]]; then
             local suffix
-            for suffix in module name category description depends depend_modules version debian_min order path type cron cron_schedule author since; do
+            for suffix in module name category description depends depend_modules version debian_min order path type cron cron_schedule author since interactive; do
               unset "_MODULE_REGISTRY[${old_name}.${suffix}]"
             done
           fi
@@ -123,6 +124,7 @@ _parse_single_file() {
           _MODULE_REGISTRY["${module_name}.cron_schedule"]=""
           _MODULE_REGISTRY["${module_name}.author"]=""
           _MODULE_REGISTRY["${module_name}.since"]=""
+          _MODULE_REGISTRY["${module_name}.interactive"]="false"
           ;;
         name)          _MODULE_REGISTRY["${module_name}.name"]="$value" ;;
         category)      _MODULE_REGISTRY["${module_name}.category"]="$value" ;;
@@ -136,6 +138,7 @@ _parse_single_file() {
         cron_schedule) _MODULE_REGISTRY["${module_name}.cron_schedule"]="$value" ;;
         author)        _MODULE_REGISTRY["${module_name}.author"]="$value" ;;
         since)         _MODULE_REGISTRY["${module_name}.since"]="$value" ;;
+        interactive)   _MODULE_REGISTRY["${module_name}.interactive"]="$value" ;;
       esac
       has_metadata=1
     fi

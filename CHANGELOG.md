@@ -36,10 +36,13 @@
 - 新增日志等级标签（4 级：INFO/WARN/ERROR/FATAL），全部直接输出不做阈值过滤
 - 新增依赖分级检查函数 `check_dependencies_by_level()` / `get_dependency_level()` / `check_system_deps()` / `check_and_install_tool_deps()` / `check_service_deps()`
 - 新增模块依赖就绪检查函数 `check_module_deps_ready()`（检查依赖模块是否已完成，不自动执行）
+- 新增 `ensure_module_deps()` 组合依赖检查函数（供模块在操作时调用，合并命令依赖+模块依赖检查）
+- 新增 `@interactive: true` 模块元数据标记（区分交互式/非交互式模块）
 
 ### Changed
 - 依赖安装改为三级分类处理：Tier 0 系统命令仅检查、Tier 1 工具依赖自动安装、Tier 2 服务依赖提示用户（不再自动安装 firewalld/docker.io/exim4 等）
 - 模块依赖（`@depend_modules`）改为检查+提示模式：依赖模块未就绪时报错提示用户先运行，不再自动递归执行
+- 交互式模块依赖检查改为延迟模式：进入菜单时不再显示依赖检查信息，仅在用户选择具体操作时才执行检查（threat-ips、hosts-sync、sys-patches、bbr）
 - 重构测试报告模板（§十二）：新增执行摘要、测试仪表盘、P0/P1/P2 失败分级、9 维度失败详情、发布门禁逐项判定、跳过解除条件、建议与后续行动等章节，支持三类读者（领导/开发者/AI）分层阅读
 - 项目结构从单体脚本重构为模块化架构（`modules/` + `lib/` + `bin/`）
 - 28 个模块全部重命名为行业标准短名称（如 `install-docker` → `docker-ce`）

@@ -141,8 +141,6 @@ execute_module() {
 run_preflight() {
   local module_name="$1"
 
-  log_info "开始 preflight 检查：${module_name}"
-
   # dry-run
   if ! preflight_dry_run "$module_name"; then
     return 2
@@ -159,6 +157,15 @@ run_preflight() {
   if ! preflight_debian_version "$debian_min"; then
     return 1
   fi
+
+  # 交互式模块跳过依赖检查（由模块在操作时自行调用 ensure_module_deps）
+  local interactive
+  interactive=$(get_module_field "$module_name" "interactive" "false" 2>/dev/null) || interactive="false"
+  if [[ "$interactive" == "true" ]]; then
+    return 0
+  fi
+
+  log_info "开始 preflight 检查：${module_name}"
 
   # 依赖命令
   if ! preflight_dependencies "$module_name"; then
