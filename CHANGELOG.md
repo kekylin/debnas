@@ -71,6 +71,7 @@
 - 修复 `sys-patches` 和 `hosts-sync` 交互菜单不支持 `--yes` 模式（`DEBNAS_FORCE_YES` 已定义但无模块消费）
 - 实际创建 `tests/check.sh` 统一质量检查入口（此前仅记录在 CHANGELOG 中，文件未创建）
 - 修复 `threat-ips/cron.sh` 中 `update_threat_ips` 函数重复定义（B1）
+- 修复 `tailscale.sh` 函数名错误：`tempfile_create` → `create_temp_file`（F-80）
 - 修复 `threat-ips/module.sh` 中与 `ipset.sh` 重复的 6 个函数定义（B2）
 - 修复 `threat-ips` 未声明 `@depend_modules: firewall` 依赖（D1）
 - 修复 4 个交互模块缺少 `DEBNAS_CRON_MODE` 守卫的问题（C3）

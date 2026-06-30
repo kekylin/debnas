@@ -41,7 +41,7 @@ log_info "安装 Tailscale..."
 log_info "配置 Tailscale 源..."
 # GPG 密钥：下载到临时文件后比较写入（幂等）
 local keyring_tmp
-keyring_tmp=$(tempfile_create "tailscale-keyring" ".gpg")
+keyring_tmp=$(create_temp_file "tailscale-keyring" ".gpg")
 curl -fsSL --max-time 30 --connect-timeout 10 \
   "https://pkgs.tailscale.com/stable/debian/${CODENAME}.noarmor.gpg" -o "$keyring_tmp"
 if [[ -f /usr/share/keyrings/tailscale-archive-keyring.gpg ]] \
