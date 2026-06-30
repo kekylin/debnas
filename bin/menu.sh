@@ -174,7 +174,7 @@ show_auto_sub_menu() {
     local display_name
     display_name=$(get_module_field "$module_name" "name" "$module_name" 2>/dev/null) || display_name="$module_name"
     print_menu_item "$idx" "$display_name"
-    ((idx++))
+    ((idx++)) || true
   done
   print_menu_item "0" "${MSG_BACK}" "true"
   print_separator "-"

@@ -91,6 +91,7 @@
 - 修复 `verify_architecture_support` 因 `IFS=$'\n\t'` 导致空格分隔参数无法正确分词
 - 修复 `cron_register` 未传递 `DEBNAS_CRON_MODE=1` 导致 cron 执行与交互模式无法区分
 - 清理 wallpaper 自包含副本设计（项目永久安装于 /opt/，不再需要 /etc/cockpit/branding/ 副本）
+- 修复 `docker-ce.sh`、`docker-apps.sh`、`bin/menu.sh`、`lib/ui/menu.sh` 中裸 `((var++))` 触发 `set -e` 退出（变量为 0 时表达式值为 0 即 falsy，返回退出码 1）
 - 清理 sys-patches 独立脚本生成（`~/.system-update-checker.sh`）和旧版 `/etc/cron.d/` 机制
 - 清理 threat-ips cron 模式下重复的 tempfile 函数定义（统一使用 lib/system/tempfile.sh）
 - 修复 `docker-ce.sh` 幂等性失败：`write_file_if_changed` 返回值未处理，文件内容不变时 `set -e` 下脚本异常退出

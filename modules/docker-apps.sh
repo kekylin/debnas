@@ -67,7 +67,7 @@ main() {
   local failed=0
   for key in "${container_order[@]}"; do
     if ! deploy_container "$key"; then
-      ((failed++))
+      ((failed++)) || true
     fi
   done
 

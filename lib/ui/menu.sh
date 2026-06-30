@@ -23,7 +23,7 @@ show_menu() {
   local idx=1
   for option in "${options[@]}"; do
     print_menu_item "${idx}" "${option}"
-    ((idx++))
+    ((idx++)) || true
   done
   print_menu_item "0" "${MSG_BACK:-返回}" "true"
 }

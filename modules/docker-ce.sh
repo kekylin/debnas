@@ -139,7 +139,7 @@ download_docker_gpg_key() {
         rm -f /etc/apt/keyrings/docker.asc
       fi
     fi
-    ((retry_count++))
+    ((retry_count++)) || true
     if [[ $retry_count -lt $max_retries ]]; then
       log_warning "GPG 密钥下载失败，重试中 ($retry_count/$max_retries)"
       sleep 2
