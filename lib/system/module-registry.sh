@@ -425,6 +425,43 @@ module_exists() {
   [[ -n "${_MODULE_REGISTRY["${module_name}.path"]:-}" ]]
 }
 
+# 检查依赖模块是否已就绪（全部成功完成）
+# 参数：$1 - 目标模块名
+# 输出：未就绪的依赖模块名列表（每行一个，为空则全部就绪）
+# 返回：0 全部就绪，1 有未就绪的依赖
+check_module_deps_ready() {
+  local target="${1:?check_module_deps_ready: 缺少模块名}"
+
+  if [[ "$_MODULES_DISCOVERED" -eq 0 ]]; then
+    discover_modules
+  fi
+
+  local deps_str="${_MODULE_REGISTRY["${target}.depend_modules"]:-}"
+  if [[ -z "$deps_str" ]]; then
+    return 0
+  fi
+
+  local -a not_ready=()
+  local dep
+  local -a dep_list=()
+  IFS=' ,' read -ra dep_list <<< "$deps_str"
+  for dep in "${dep_list[@]}"; do
+    dep="${dep#"${dep%%[![:space:]]*}"}"
+    dep="${dep%"${dep##*[![:space:]]}"}"
+    [[ -n "$dep" ]] || continue
+
+    if ! state_is_installed "$dep" 2>/dev/null; then
+      not_ready+=("$dep")
+    fi
+  done
+
+  if [[ ${#not_ready[@]} -gt 0 ]]; then
+    printf '%s\n' "${not_ready[@]}"
+    return 1
+  fi
+  return 0
+}
+
 # 获取模块入口文件路径
 # 参数：$1 - 模块名
 # 输出：文件绝对路径

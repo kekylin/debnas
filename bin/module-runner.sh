@@ -40,7 +40,7 @@ preflight_debian_version() {
   fi
 }
 
-# Preflight: 依赖命令检查
+# Preflight: 依赖命令检查（按 Tier 0/1/2 分级处理）
 preflight_dependencies() {
   local module_name="$1"
   local depends_str
@@ -50,39 +50,27 @@ preflight_dependencies() {
     return 0
   fi
 
-  local -a missing_cmds=()
   local -a dep_cmds=()
-  local cmd
-  # 使用 read -ra 拆分逗号/空格分隔的依赖列表（IFS=$'\n\t' 下 $(...|tr) 分词不可靠）
   IFS=' ,' read -ra dep_cmds <<< "$depends_str"
+
+  # 去空格、去空元素
+  local -a clean_cmds=()
+  local cmd
   for cmd in "${dep_cmds[@]}"; do
     cmd="${cmd#"${cmd%%[![:space:]]*}"}"
     cmd="${cmd%"${cmd##*[![:space:]]}"}"
     [[ -n "$cmd" ]] || continue
-    if ! command -v "$cmd" &>/dev/null; then
-      missing_cmds+=("$cmd")
-    fi
+    clean_cmds+=("$cmd")
   done
 
-  if [[ ${#missing_cmds[@]} -eq 0 ]]; then
-    log_info "所有依赖命令已就绪：${depends_str}"
+  if [[ ${#clean_cmds[@]} -eq 0 ]]; then
     return 0
   fi
 
-  log_warning "缺少 ${missing_cmds[*]}"
-  install_missing_dependencies "${missing_cmds[@]}" || true
+  log_info "检查依赖命令：${depends_str}"
 
-  # 再次检查（安装失败只警告，不阻断 — 模块自身会处理缺失依赖）
-  local -a still_missing=()
-  for cmd in "${missing_cmds[@]}"; do
-    if ! command -v "$cmd" &>/dev/null; then
-      still_missing+=("$cmd")
-    fi
-  done
-
-  if [[ ${#still_missing[@]} -gt 0 ]]; then
-    log_warning "${still_missing[*]} 未装，模块自行处理"
-  fi
+  # 按级别分流处理
+  check_dependencies_by_level "${clean_cmds[@]}"
 }
 
 # Preflight: dry-run 模式
@@ -177,49 +165,25 @@ run_preflight() {
     return 1
   fi
 
-  # 依赖模块（始终自动执行，依赖模块自身负责幂等优化）
+  # 依赖模块（检查是否已就绪，不自动执行）
+  # 例外：部署方案中批量执行时，依赖模块由方案编排顺序保证
   local dep_modules
   dep_modules=$(get_module_field "$module_name" "depend_modules" "" 2>/dev/null) || dep_modules=""
   if [[ -n "$dep_modules" ]]; then
-    log_info "解析模块依赖：${dep_modules}"
-    local -a exec_order=()
-    mapfile -t exec_order < <(resolve_module_deps "$module_name" 2>/dev/null) || exec_order=()
-    if [[ ${#exec_order[@]} -eq 0 ]]; then
-      # 回退解析：统一将逗号替换为空格后按空格拆分，兼容 "a,b" / "a, b" / "a b" 格式
-      read -ra exec_order <<< "${dep_modules//,/ }"
-    fi
-
-    local dep single_dep
-    local -a split_deps=()
-    for dep in "${exec_order[@]+"${exec_order[@]}"}"; do
-      split_deps=()
-      IFS=' ,' read -ra split_deps <<< "$dep"
-      for single_dep in "${split_deps[@]+"${split_deps[@]}"}"; do
-        single_dep="${single_dep#"${single_dep%%[![:space:]]*}"}"
-        single_dep="${single_dep%"${single_dep##*[![:space:]]}"}"
-        [[ -n "$single_dep" ]] || continue
-        [[ "$single_dep" == "$module_name" ]] && continue
-        # 会话级去重：同一会话内依赖模块只执行一次
-        local dep_stamp="/tmp/.debnas_dep_${single_dep}"
-        if [[ -f "$dep_stamp" ]]; then
-          log_info "依赖模块 ${single_dep} 已在本会话内执行过，跳过"
-          continue
-        fi
-        # 幂等检查：如果依赖模块已安装，跳过
-        if state_is_installed "$single_dep" 2>/dev/null; then
-          log_info "${single_dep} 已完成，跳过"
-          touch "$dep_stamp" 2>/dev/null || true
-          continue
-        fi
-
-        log_action "→ ${single_dep}"
-        if ! (unset _DEBNAS_BOOTSTRAPPED; bash "${_DEBNAS_ROOT}/bin/module-runner.sh" "$single_dep"); then
-          log_error "${single_dep} 失败，跳过后续"
-          return 1
-        fi
-        touch "$dep_stamp" 2>/dev/null || true
+    log_info "检查依赖模块：${dep_modules}"
+    local -a not_ready=()
+    mapfile -t not_ready < <(check_module_deps_ready "$module_name" 2>/dev/null) || not_ready=()
+    if [[ ${#not_ready[@]} -gt 0 ]]; then
+      log_error "以下依赖模块尚未完成，请先执行："
+      local nd
+      for nd in "${not_ready[@]}"; do
+        local nd_name
+        nd_name=$(get_module_field "$nd" "name" "$nd" 2>/dev/null) || nd_name="$nd"
+        echo "  debnas run ${nd}   # ${nd_name}"
       done
-    done
+      return 1
+    fi
+    log_info "依赖模块已全部就绪：${dep_modules}"
   fi
 
   return 0
