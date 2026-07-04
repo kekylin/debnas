@@ -45,16 +45,23 @@ check_system_services() {
   fi
 }
 
-# 检查 Docker 容器模块，列出正在运行的容器及其访问地址
+# 检查 Docker 容器模块，自动发现 compose 目录下声明了 @web_port 的容器
 check_docker_containers() {
   local host_ip="$1"
-  declare -A docker_containers=(
-    ["portainer"]="https://${host_ip}:9443"
-  )
+  local compose_dir="${SCRIPT_DIR}/compose"
 
-  for container in "${!docker_containers[@]}"; do
-    if docker inspect -f '{{.State.Running}}' "$container" 2>/dev/null | grep -q "true"; then
-      print_service_status "$container" "${docker_containers[$container]}"
+  [[ -d "$compose_dir" ]] || return 0
+
+  local yaml_file key web_port
+  for yaml_file in "$compose_dir"/*.yaml "$compose_dir"/*.yml; do
+    [[ -f "$yaml_file" ]] || continue
+    key=$(basename "$yaml_file" | sed 's/\.\(yaml\|yml\)$//')
+    # 提取 Web 访问端口（可选元数据），无声明则跳过（非 Web 容器）
+    web_port=$(grep -m1 '^# *@web_port:' "$yaml_file" 2>/dev/null | sed 's/^# *@web_port: *//' || true)
+    [[ -n "$web_port" ]] || continue
+
+    if docker inspect -f '{{.State.Running}}' "$key" 2>/dev/null | grep -q "true"; then
+      print_service_status "$key" "https://${host_ip}:${web_port}"
     fi
   done
 }
