@@ -20,9 +20,9 @@ readonly -a CATEGORY_ORDER=(
   "${MSG_CAT_SECURITY:-安全防护}"
   "${MSG_CAT_CONTAINER:-容器管理}"
   "${MSG_CAT_NOTIFY:-通知服务}"
+  "${MSG_CAT_MAINTENANCE:-系统维护}"
   "${MSG_CAT_TOOLS:-系统工具}"
   "${MSG_CAT_DEPLOY:-一键部署}"
-  "系统维护"
 )
 
 # 默认 order 值（未声明时排在最后）
@@ -78,6 +78,7 @@ _parse_single_file() {
   _MODULE_REGISTRY["${module_name}.depend_modules"]=""
   _MODULE_REGISTRY["${module_name}.version"]="1.0.0"
   _MODULE_REGISTRY["${module_name}.debian_min"]="bookworm"
+  _MODULE_REGISTRY["${module_name}.arch"]=""
   _MODULE_REGISTRY["${module_name}.order"]="$DEFAULT_ORDER"
   _MODULE_REGISTRY["${module_name}.path"]="$file_path"
   _MODULE_REGISTRY["${module_name}.type"]="file"
@@ -119,6 +120,7 @@ _parse_single_file() {
           _MODULE_REGISTRY["${module_name}.depend_modules"]=""
           _MODULE_REGISTRY["${module_name}.version"]="1.0.0"
           _MODULE_REGISTRY["${module_name}.debian_min"]="bookworm"
+  _MODULE_REGISTRY["${module_name}.arch"]=""
           _MODULE_REGISTRY["${module_name}.order"]="$DEFAULT_ORDER"
           _MODULE_REGISTRY["${module_name}.cron"]="false"
           _MODULE_REGISTRY["${module_name}.cron_schedule"]=""
@@ -133,6 +135,7 @@ _parse_single_file() {
         depend_modules) _MODULE_REGISTRY["${module_name}.depend_modules"]="$value" ;;
         version)       _MODULE_REGISTRY["${module_name}.version"]="$value" ;;
         debian_min)    _MODULE_REGISTRY["${module_name}.debian_min"]="$value" ;;
+        arch)          _MODULE_REGISTRY["${module_name}.arch"]="$value" ;;
         order)         _MODULE_REGISTRY["${module_name}.order"]="$value" ;;
         cron)          _MODULE_REGISTRY["${module_name}.cron"]="$value" ;;
         cron_schedule) _MODULE_REGISTRY["${module_name}.cron_schedule"]="$value" ;;

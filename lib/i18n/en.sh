@@ -8,6 +8,7 @@ MSG_CAT_SECURITY="Security"
 MSG_CAT_CONTAINER="Containers"
 MSG_CAT_NOTIFY="Notifications"
 MSG_CAT_TOOLS="System Tools"
+MSG_CAT_MAINTENANCE="System Maintenance"
 MSG_CAT_DEPLOY="One-Click Deploy"
 
 # Common messages

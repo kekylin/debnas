@@ -1,7 +1,7 @@
 #!/bin/bash
 # @module: sys-check
 # @name: 兼容性检查
-# @category: 系统工具
+# @category: 系统维护
 # @version: 1.0.0
 # @order: 70
 # 功能：系统兼容性检查工具（检查系统是否满足项目脚本运行要求）

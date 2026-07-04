@@ -32,10 +32,17 @@ preflight_root() {
 }
 
 # Preflight: Debian 版本检查
-preflight_debian_version() {
+preflight_environment_check() {
   local debian_min="${1:-bookworm}"
-  if ! verify_system_support 2>/dev/null; then
-    log_error "需要 Debian 12+"
+  local required_arch="${2:-}"
+  if ! verify_debian_12_13_support 2>/dev/null; then
+    log_error "系统版本不满足运行基础环境 (需 Debian 12+)"
+    return 1
+  fi
+
+  # 若模块有具体架构要求
+  if [[ -n "$required_arch" ]] && ! verify_architecture_support "$required_arch" 2>/dev/null; then
+    log_error "此模块不支持当前 CPU 架构，所需架构: $required_arch"
     return 1
   fi
 }
@@ -153,8 +160,10 @@ run_preflight() {
 
   # Debian 版本
   local debian_min
+  local arch_req
   debian_min=$(get_module_field "$module_name" "debian_min" "bookworm" 2>/dev/null) || debian_min="bookworm"
-  if ! preflight_debian_version "$debian_min"; then
+  arch_req=$(get_module_field "$module_name" "arch" "" 2>/dev/null) || arch_req=""
+  if ! preflight_environment_check "$debian_min" "$arch_req"; then
     return 1
   fi
 

@@ -8,6 +8,7 @@ MSG_CAT_SECURITY="安全防护"
 MSG_CAT_CONTAINER="容器管理"
 MSG_CAT_NOTIFY="通知服务"
 MSG_CAT_TOOLS="系统工具"
+MSG_CAT_MAINTENANCE="系统维护"
 MSG_CAT_DEPLOY="一键部署"
 
 # 通用消息
