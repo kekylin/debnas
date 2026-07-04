@@ -26,10 +26,6 @@ if ! command -v wget &>/dev/null && ! command -v curl &>/dev/null; then
   _HAS_PROBE_TOOL=0
 fi
 
-if ! verify_debian_12_13_support; then
-  exit 0
-fi
-
 CODENAME=$(get_system_codename)
 
 # 检测 APT 镜像站连通性（基于 urls.sh 的 probe_url，追加 Release 路径验证）
@@ -133,6 +129,10 @@ main() {
   local selected_mirror
   local mirror_name
   local new_content
+
+  if ! verify_debian_12_13_support; then
+    return 0
+  fi
 
   selected_mirror=$(detect_best_mirror)
   mirror_name=$(get_mirror_name "${selected_mirror}")
