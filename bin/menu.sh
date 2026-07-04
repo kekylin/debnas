@@ -15,16 +15,6 @@ source "${_DEBNAS_ROOT}/lib/bootstrap.sh"
 
 # ==================== 常量定义 ====================
 
-# 分类显示顺序（使用 i18n 变量，支持多语言）
-declare -a MENU_CATEGORY_ORDER=(
-  "${MSG_CAT_BASIC}"
-  "${MSG_CAT_PANEL}"
-  "${MSG_CAT_SECURITY}"
-  "${MSG_CAT_CONTAINER}"
-  "${MSG_CAT_NOTIFY}"
-  "${MSG_CAT_TOOLS}"
-  "${MSG_CAT_DEPLOY}"
-)
 
 # ==================== 横幅显示 ====================
 
@@ -137,7 +127,7 @@ declare -a ACTIVE_CATEGORIES=()
 
 build_active_categories() {
   ACTIVE_CATEGORIES=()
-  for category in "${MENU_CATEGORY_ORDER[@]}"; do
+  for category in "${CATEGORY_ORDER[@]}"; do
     if [[ "$category" == "${MSG_CAT_DEPLOY}" ]]; then
       # 部署分类：有方案文件即有内容
       [[ ${#SOLUTION_NAMES[@]} -gt 0 ]] && ACTIVE_CATEGORIES+=("$category")
