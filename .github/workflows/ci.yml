@@ -10,27 +10,17 @@ jobs:
   shellcheck:
     name: ShellCheck
     runs-on: ubuntu-latest
+    container: debian:bookworm-slim
     steps:
       - uses: actions/checkout@v4
 
-      - name: Run ShellCheck (error)
-        uses: ludeeus/action-shellcheck@master
-        with:
-          severity: error
-          scandir: '.'
-          additional_files: 'bin/debnas'
-        env:
-          SHELLCHECK_OPTS: -x
+      - name: Install ShellCheck
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq shellcheck
 
-      - name: Run ShellCheck (warning report)
-        uses: ludeeus/action-shellcheck@master
-        continue-on-error: true
-        with:
-          severity: warning
-          scandir: '.'
-          additional_files: 'bin/debnas'
-        env:
-          SHELLCHECK_OPTS: -x
+      - name: Run ShellCheck (error severity)
+        run: bash tests/run.sh static
 
   syntax:
     name: Bash Syntax
