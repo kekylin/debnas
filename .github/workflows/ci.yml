@@ -22,39 +22,47 @@ jobs:
       - name: Run ShellCheck (error severity)
         run: bash tests/run.sh static
 
-  syntax:
-    name: Bash Syntax
+  smoke:
+    name: Smoke Test (${{ matrix.debian }})
     runs-on: ubuntu-latest
-    container: debian:bookworm-slim
+    strategy:
+      fail-fast: false
+      matrix:
+        debian: [bookworm, trixie]
+    container: debian:${{ matrix.debian }}-slim
     steps:
       - uses: actions/checkout@v4
 
-      - name: Check bash -n on all .sh files
+      - name: Install dependencies
         run: |
-          errors=0
-          while IFS= read -r f; do
-            if ! bash -n "$f" 2>/dev/null; then
-              echo "FAIL: $f"
-              errors=$((errors + 1))
-            fi
-          done < <(find . -name '*.sh' -not -path './.git/*' -type f)
+          apt-get update -qq
+          apt-get install -y -qq shellcheck bats
 
-          # Also check bin/debnas (no .sh extension)
-          if ! bash -n bin/debnas 2>/dev/null; then
-            echo "FAIL: bin/debnas"
-            errors=$((errors + 1))
-          fi
+      - name: Run quality gate
+        run: bash tests/check.sh
 
-          if [ "$errors" -gt 0 ]; then
-            echo "$errors file(s) have syntax errors"
-            exit 1
-          fi
-          echo "All files pass syntax check"
+  syntax:
+    name: Bash Syntax (${{ matrix.debian }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        debian: [bookworm, trixie]
+    container: debian:${{ matrix.debian }}-slim
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check bash -n on all files
+        run: bash tests/run.sh syntax
 
   bats-unit:
-    name: BATS Unit Tests
+    name: BATS Unit Tests (${{ matrix.debian }})
     runs-on: ubuntu-latest
-    container: debian:bookworm-slim
+    strategy:
+      fail-fast: false
+      matrix:
+        debian: [bookworm, trixie]
+    container: debian:${{ matrix.debian }}-slim
     steps:
       - uses: actions/checkout@v4
 
