@@ -10,26 +10,26 @@ download_threat_list() {
 
   if ! [[ "${threat_level}" =~ ^[0-9]+$ ]] \
     || [[ "${threat_level}" -lt 0 || "${threat_level}" -gt 100 ]]; then
-    log_message "WARNING" \
+    log_warning \
       "无效威胁等级：${threat_level}，使用默认：${DEFAULT_THREAT_LEVEL}"
     threat_level=${DEFAULT_THREAT_LEVEL}
   fi
 
   local download_url
   download_url=$(get_threat_list_url "${threat_level}")
-  log_message "INFO" "下载威胁等级 ${threat_level} 的 IP 列表"
+  log_info "下载威胁等级 ${threat_level} 的 IP 列表"
 
   if ! wget -q --timeout=60 "${download_url}" -O "${temp_gz}"; then
-    log_message "ERROR" \
+    log_error \
       "下载威胁 IP 列表失败（威胁等级：${threat_level}）"
     return 1
   fi
   if ! gzip -dc "${temp_gz}" > "${temp_txt}"; then
-    log_message "ERROR" "解压威胁 IP 列表失败"
+    log_error "解压威胁 IP 列表失败"
     return 1
   fi
   rm -f "${temp_gz}"
-  log_message "SUCCESS" "威胁 IP 列表下载完成（威胁等级：${threat_level}）"
+  log_success "威胁 IP 列表下载完成（威胁等级：${threat_level}）"
 }
 
 
@@ -38,7 +38,7 @@ prepare_input_file() {
   local temp_input
   temp_input=$(create_temp_file "processed_input" ".txt")
   grep -v '^\s*$' "${input_file}" | grep -v '^\s*#' > "${temp_input}" || {
-    log_message "INFO" "IP 列表为空或仅包含注释，无需处理"
+    log_info "IP 列表为空或仅包含注释，无需处理"
     return 1
   }
   printf "%s" "${temp_input}"
@@ -50,7 +50,7 @@ parse_ip_entries() {
   local total_count valid_count=0 invalid_count=0 ip
 
   total_count=$(wc -l < "${temp_input}")
-  log_message "INFO" "解析 IP 列表中..."
+  log_info "解析 IP 列表中..."
 
   while IFS= read -r ip; do
     [[ -z "${ip}" ]] && continue
@@ -62,11 +62,11 @@ parse_ip_entries() {
   done < "${temp_input}"
 
   if [[ ${valid_count} -gt 0 ]]; then
-    log_message "INFO" \
+    log_info \
       "解析 IP 列表：${valid_count} 条有效，${invalid_count} 条无效"
   fi
   if [[ ${invalid_count} -eq ${total_count} ]]; then
-    log_message "INFO" "所有输入 IP (${invalid_count} 条) 无效，已跳过"
+    log_info "所有输入 IP (${invalid_count} 条) 无效，已跳过"
     return 1
   fi
 }
@@ -81,7 +81,7 @@ check_and_limit_ip_count() {
   local count
   count=$(wc -l < "${ip_file}")
   if [[ ${count} -gt ${MAX_IP_LIMIT} ]]; then
-    log_message "WARNING" \
+    log_warning \
       "${ip_type} IP 数量超出上限 ${MAX_IP_LIMIT}，截取前 ${MAX_IP_LIMIT} 条"
     head -n "${MAX_IP_LIMIT}" "${ip_file}" > "${ip_file}.tmp" \
       && mv "${ip_file}.tmp" "${ip_file}"

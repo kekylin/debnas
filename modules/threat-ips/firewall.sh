@@ -9,10 +9,10 @@ reload_firewalld() {
   if [[ ${need_reload} -eq 1 ]]; then
     local cmd_output
     if ! cmd_output=$(firewall-cmd --reload 2>&1); then
-      log_message "ERROR" "Firewalld 规则重载失败：${cmd_output}"
+      log_error "Firewalld 规则重载失败：${cmd_output}"
       return 1
     fi
-    log_message "SUCCESS" "Firewalld 规则重载成功"
+    log_success "Firewalld 规则重载成功"
   fi
 }
 
@@ -25,7 +25,7 @@ apply_ips_to_single_ipset() {
     return 0
   fi
   if ! apply_ip_changes "${ip_file}" "${ipset_name}" "${mode}"; then
-    log_message "ERROR" "应用 ${ip_type} IP 变更失败"
+    log_error "应用 ${ip_type} IP 变更失败"
     return 1
   fi
   printf "%s" "${count}"
@@ -41,10 +41,10 @@ apply_ips_to_ipsets() {
     "${output_file_ipv6}" "${IPSET_NAME_IPV6}" "IPv6" "${mode}") || return 1
 
   if [[ -z "${ipv4_count}" ]] && [[ -z "${ipv6_count}" ]]; then
-    log_message "INFO" "无 IP 需要处理"
+    log_info "无 IP 需要处理"
     return 0
   fi
-  log_message "SUCCESS" \
+  log_success \
     "已处理 IPv4: ${ipv4_count:-0} 条 IPv6: ${ipv6_count:-0} 条"
 }
 
@@ -75,7 +75,7 @@ process_ip_list() {
   fi
 
   if [[ ! -s "${temp_file_ipv4}" && ! -s "${temp_file_ipv6}" ]]; then
-    log_message "ERROR" "无有效 IP（请检查输入格式）"
+    log_error "无有效 IP（请检查输入格式）"
     return 1
   fi
 
@@ -92,39 +92,39 @@ apply_ip_changes() {
   local ip_count_before
 
   if ! check_ipset_exists "${ipset_name}"; then
-    log_message "ERROR" "IPSet 不存在：${ipset_name}"
+    log_error "IPSet 不存在：${ipset_name}"
     return 1
   fi
 
   if ! sort -u "${ip_file}" > "${ip_file}.tmp" 2>/dev/null; then
-    log_message "ERROR" "去重失败：${ip_file}"
+    log_error "去重失败：${ip_file}"
     return 1
   fi
   mv "${ip_file}.tmp" "${ip_file}"
   ip_count_before=$(wc -l < "${ip_file}")
 
   if [[ ${ip_count_before} -eq 0 ]]; then
-    log_message "INFO" "输入文件为空，无需${mode}操作"
+    log_info "输入文件为空，无需${mode}操作"
     return 0
   fi
 
   if [[ "${mode}" == "add" ]]; then
     if [[ ${ip_count_before} -gt ${MAX_IP_LIMIT} ]]; then
-      log_message "WARNING" \
+      log_warning \
         "输入条目数超过 IPSet 上限：${ipset_name}（${ip_count_before} > ${MAX_IP_LIMIT}）"
       return 1
     fi
     if ! firewall-cmd --permanent \
       --ipset="${ipset_name}" \
       --add-entries-from-file="${ip_file}" &>/dev/null; then
-      log_message "ERROR" "添加 IP 到 IPSet 失败：${ipset_name}"
+      log_error "添加 IP 到 IPSet 失败：${ipset_name}"
       return 1
     fi
   elif [[ "${mode}" == "remove" ]]; then
     if ! firewall-cmd --permanent \
       --ipset="${ipset_name}" \
       --remove-entries-from-file="${ip_file}" &>/dev/null; then
-      log_message "ERROR" "从 IPSet 移除 IP 失败：${ipset_name}"
+      log_error "从 IPSet 移除 IP 失败：${ipset_name}"
       return 1
     fi
   fi
@@ -141,7 +141,7 @@ remove_ips_from_single_ipset() {
   fi
   printf "%s" "${sources}" | tr ' ' '\n' > "${temp_file}"
   apply_ip_changes "${temp_file}" "${ipset_name}" "remove" || {
-    log_message "WARNING" "移除 ${ip_type} IP 失败，继续执行清理"
+    log_warning "移除 ${ip_type} IP 失败，继续执行清理"
   }
 }
 
@@ -162,12 +162,12 @@ unbind_single_ipset_from_zone() {
   if [[ -z "${ipset_bound}" ]]; then
     return 0
   fi
-  log_message "INFO" "从 drop 区域解绑 ${ip_type} IPSet"
+  log_info "从 drop 区域解绑 ${ip_type} IPSet"
   if firewall-cmd --permanent --zone=drop \
     --remove-source="ipset:${ipset_name}" &>/dev/null; then
     need_reload=1
   else
-    log_message "WARNING" "解绑 ${ip_type} IPSet 失败，继续执行清理"
+    log_warning "解绑 ${ip_type} IPSet 失败，继续执行清理"
   fi
   [[ ${need_reload} -eq 1 ]]
 }
@@ -193,14 +193,14 @@ delete_single_ipset() {
     fi
     return 0
   fi
-  log_message "INFO" "删除 ${ip_type} IPSet：${ipset_name}"
+  log_info "删除 ${ip_type} IPSet：${ipset_name}"
   if firewall-cmd --permanent --delete-ipset="${ipset_name}" &>/dev/null; then
     need_reload=1
     if [[ -f "${ipset_old_file}" ]]; then
       rm -f "${ipset_old_file}" 2>/dev/null || true
     fi
   else
-    log_message "WARNING" "删除 ${ip_type} IPSet 失败，继续执行清理"
+    log_warning "删除 ${ip_type} IPSet 失败，继续执行清理"
   fi
   [[ ${need_reload} -eq 1 ]]
 }
@@ -240,7 +240,7 @@ cleanup_drop_zone_config() {
     && [[ -z "${has_ports}" ]] && [[ -z "${has_protocols}" ]] \
     && [[ -z "${has_rich_rules}" ]]; then
     if [[ -f "${drop_xml_file}" ]]; then
-      log_message "INFO" \
+      log_info \
         "drop 区域已清空，删除自定义配置文件：${drop_xml_file}"
       if rm -f "${drop_xml_file}"; then
         need_reload=1
@@ -249,12 +249,12 @@ cleanup_drop_zone_config() {
           rm -f "${drop_old_file}" 2>/dev/null || true
         fi
       else
-        log_message "WARNING" \
+        log_warning \
           "删除 drop 区域配置文件失败：${drop_xml_file}，继续执行清理"
       fi
     fi
   elif [[ -n "${remaining_sources}" ]]; then
-    log_message "INFO" "drop 区域仍有其他 sources，保留配置文件"
+    log_info "drop 区域仍有其他 sources，保留配置文件"
   fi
   [[ ${need_reload} -eq 1 ]]
 }
@@ -264,7 +264,7 @@ remove_all_ips() {
 
   if ! check_ipset_exists "${IPSET_NAME_IPV4}" \
     && ! check_ipset_exists "${IPSET_NAME_IPV6}"; then
-    log_message "INFO" "未配置 IPSet"
+    log_info "未配置 IPSet"
     return 0
   fi
 
@@ -281,9 +281,9 @@ remove_all_ips() {
   fi
 
   reload_firewalld ${need_reload} || {
-    log_message "WARNING" "Firewalld 重载失败，但继续执行清理"
+    log_warning "Firewalld 重载失败，但继续执行清理"
   }
-  log_message "SUCCESS" "已移除所有封禁 IP"
+  log_success "已移除所有封禁 IP"
 }
 
 
@@ -292,7 +292,7 @@ filter_and_add_ips() {
   local need_reload=0
 
   [[ ! -f "${temp_txt}" ]] && {
-    log_message "ERROR" "IP 列表文件不存在：${temp_txt}"
+    log_error "IP 列表文件不存在：${temp_txt}"
     return 1
   }
 
@@ -302,7 +302,7 @@ filter_and_add_ips() {
   clear_all_ipsets
 
   if ! process_ip_list "${temp_txt}" "${temp_file_ipv4}" "${temp_file_ipv6}" "add"; then
-    log_message "ERROR" "处理 IP 列表失败"
+    log_error "处理 IP 列表失败"
     return 1
   fi
 
@@ -310,7 +310,7 @@ filter_and_add_ips() {
   need_reload=1
 
   if ! reload_firewalld ${need_reload}; then
-    log_message "ERROR" "Firewalld 重载失败"
+    log_error "Firewalld 重载失败"
     return 1
   fi
 }

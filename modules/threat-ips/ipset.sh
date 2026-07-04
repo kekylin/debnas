@@ -94,7 +94,7 @@ configure_single_ipset() {
       --type=hash:net \
       --option=family="${ip_family}" \
       --option=maxelem=${MAX_IP_LIMIT} &>/dev/null; then
-      log_message "ERROR" "配置 ${ip_type} IPSet 失败（请检查 Firewalld 配置）"
+      log_error "配置 ${ip_type} IPSet 失败（请检查 Firewalld 配置）"
       exit "${ERROR_GENERAL}"
     fi
     need_reload=1
@@ -104,13 +104,13 @@ configure_single_ipset() {
     if ! firewall-cmd --permanent \
       --zone="${ZONE}" \
       --add-source="ipset:${ipset_name}" &>/dev/null; then
-      log_message "ERROR" "配置 ${ip_type} IPSet 失败"
+      log_error "配置 ${ip_type} IPSet 失败"
       exit "${ERROR_GENERAL}"
     fi
     need_reload=1
   fi
   if [[ ${need_log} -eq 1 ]]; then
-    log_message "INFO" "配置 ${ip_type} IPSet 于 drop 区域"
+    log_info "配置 ${ip_type} IPSet 于 drop 区域"
   fi
   [[ ${need_reload} -eq 1 ]]
 }
@@ -128,7 +128,7 @@ configure_ipset() {
 
 validate_zone() {
   if ! firewall-cmd --get-zones | grep -qw "${ZONE}"; then
-    log_message "ERROR" "无效 Firewalld 区域：${ZONE}"
+    log_error "无效 Firewalld 区域：${ZONE}"
     exit "${ERROR_GENERAL}"
   fi
 }
@@ -150,7 +150,7 @@ clear_single_ipset_entries() {
   printf "%s" "${existing_entries}" | tr ' ' '\n' > "${temp_file}" 2>/dev/null
   if [[ -s "${temp_file}" ]]; then
     apply_ip_changes "${temp_file}" "${ipset_name}" "remove" || {
-      log_message "WARNING" "清空 ${ip_type} IPSet 时出现警告，继续执行"
+      log_warning "清空 ${ip_type} IPSet 时出现警告，继续执行"
     }
   fi
 }

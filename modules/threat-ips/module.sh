@@ -29,22 +29,6 @@ source "${MODULE_DIR}/ipset.sh"
 source "${MODULE_DIR}/firewall.sh"
 source "${MODULE_DIR}/cron.sh"
 
-# ==================== 日志输出模块 ====================
-# 统一通过 lib/core/logging.sh 输出，文件日志由 log_to_file 统一管理
-log_message() {
-  local level="${1}" message="${2}"
-
-  case "${level}" in
-    SUCCESS) log_success "${message}" ;;
-    INFO)    log_info "${message}" ;;
-    WARNING) log_warning "${message}" ;;
-    ERROR)   log_error "${message}" ;;
-    FATAL)   log_fatal "${message}" ;;
-    *)       log_info "${message}" ;;
-  esac
-}
-
-
 # ==================== IP 解析处理模块 ====================
 # 清理输入：移除注释和空白字符
 normalize_ip_input() {
@@ -70,11 +54,11 @@ process_ipv6_cidr() {
     ipv6_mask=${BASH_REMATCH[2]}
     if [[ ! "${ipv6_mask}" =~ ^[0-9]+$ ]] \
       || [[ "${ipv6_mask}" -gt 128 ]] || [[ "${ipv6_mask}" -lt 0 ]]; then
-      log_message "WARNING" "无效 IPv6 CIDR 掩码：${cidr}"
+      log_warning "无效 IPv6 CIDR 掩码：${cidr}"
       return 1
     fi
     if ! validate_ipv6 "${cidr}"; then
-      log_message "WARNING" "无效 IPv6 CIDR 格式：${cidr}"
+      log_warning "无效 IPv6 CIDR 格式：${cidr}"
       return 1
     fi
     printf "%s\n" "${cidr}" >> "${output_file}"
@@ -104,7 +88,7 @@ process_ipv4_range() {
     start_ip=${BASH_REMATCH[1]}
     end_ip=${BASH_REMATCH[2]}
     if ! validate_ipv4 "${start_ip}" || ! validate_ipv4 "${end_ip}"; then
-      log_message "WARNING" "无效 IPv4 范围地址：${range}"
+      log_warning "无效 IPv4 范围地址：${range}"
       return 1
     fi
     IFS='.' read -r a b c d <<< "${start_ip}"
@@ -112,18 +96,18 @@ process_ipv4_range() {
     IFS='.' read -r a b c d <<< "${end_ip}"
     end_num=$(( (a * 16777216) + (b * 65536) + (c * 256) + d ))
     if [[ ${start_num} -gt ${end_num} ]]; then
-      log_message "WARNING" "无效 IPv4 范围：${range}（起始地址大于结束地址）"
+      log_warning "无效 IPv4 范围：${range}（起始地址大于结束地址）"
       return 1
     fi
     ip_count=$((end_num - start_num + 1))
     if [[ ${ip_count} -gt ${MAX_RANGE_SIZE} ]]; then
-      log_message "WARNING" \
+      log_warning \
         "IPv4 范围过大：${range}（${ip_count} 条，建议使用 CIDR 格式）"
       return 1
     fi
     local awk_output
     if ! awk_output=$(expand_ipv4_range "${start_num}" "${end_num}" 2>&1); then
-      log_message "ERROR" "解析 IPv4 范围失败：${range}"
+      log_error "解析 IPv4 范围失败：${range}"
       return 1
     fi
     printf "%s\n" "${awk_output}" >> "${output_file}"
@@ -139,7 +123,7 @@ process_ipv6_range() {
     start_ip=${BASH_REMATCH[1]}
     end_ip=${BASH_REMATCH[2]}
     if ! validate_ipv6 "${start_ip}" || ! validate_ipv6 "${end_ip}"; then
-      log_message "WARNING" "无效 IPv6 范围：${range}"
+      log_warning "无效 IPv6 范围：${range}"
       return 1
     fi
     printf "%s\n%s\n" "${start_ip}" "${end_ip}" >> "${output_file}"
@@ -175,7 +159,7 @@ parse_ip_range() {
   process_ipv6_range "${clean_ip}" "${output_file_ipv6}" && return 0
   process_single_ip "${clean_ip}" "${output_file_ipv4}" "${output_file_ipv6}" && return 0
 
-  log_message "WARNING" "无效输入：${input}"
+  log_warning "无效输入：${input}"
   return 1
 }
 
@@ -190,7 +174,7 @@ check_services() {
     log_info "Firewalld 已安装但未运行，正在自动启动..."
     service_ensure firewalld started || missing=1
   else
-    log_message "ERROR" "Firewalld 未安装，请先执行 debnas run firewall"
+    log_error "Firewalld 未安装，请先执行 debnas run firewall"
     missing=1
   fi
   # cron：已安装但未运行时自动启动
@@ -200,7 +184,7 @@ check_services() {
     log_info "Cron 已安装但未运行，正在自动启动..."
     service_ensure cron started || missing=1
   else
-    log_message "WARNING" "Cron 未安装，定时任务功能可能不可用"
+    log_warning "Cron 未安装，定时任务功能可能不可用"
   fi
   return "${missing}"
 }
@@ -209,9 +193,9 @@ check_services() {
 # ==================== 初始化函数 ====================
 init_data_dir() {
   if [[ ! -d "${DATA_DIR}" ]]; then
-    log_message "INFO" "创建数据目录：${DATA_DIR}"
+    log_info "创建数据目录：${DATA_DIR}"
     mkdir -p "${DATA_DIR}" || {
-      log_message "ERROR" "创建数据目录失败：${DATA_DIR}"
+      log_error "创建数据目录失败：${DATA_DIR}"
       exit "${ERROR_GENERAL}"
     }
     chmod 755 "${DATA_DIR}"
@@ -231,7 +215,7 @@ init_cron() {
   init_data_dir
 
   if [[ ! -f "${CONFIG_FILE}" ]]; then
-    log_message "ERROR" "配置文件不存在：${CONFIG_FILE}"
+    log_error "配置文件不存在：${CONFIG_FILE}"
     exit "${ERROR_GENERAL}"
   fi
   while IFS='=' read -r key value; do
@@ -241,7 +225,7 @@ init_cron() {
           && [[ "${value}" -ge 0 ]] && [[ "${value}" -le 100 ]]; then
           THREAT_LEVEL="${value}"
         else
-          log_message "WARNING" \
+          log_warning \
             "配置文件中的威胁等级无效：${value}，使用默认值"
           THREAT_LEVEL=${DEFAULT_THREAT_LEVEL}
         fi
@@ -257,7 +241,7 @@ init_cron() {
   if ! [[ "${THREAT_LEVEL}" =~ ^[0-9]+$ ]] \
     || [[ "${THREAT_LEVEL}" -lt 0 || "${THREAT_LEVEL}" -gt 100 ]]; then
     THREAT_LEVEL=${DEFAULT_THREAT_LEVEL}
-    log_message "WARNING" \
+    log_warning \
       "配置文件中的威胁等级无效，使用默认值：${THREAT_LEVEL}"
   fi
   export THREAT_LEVEL
@@ -306,7 +290,7 @@ show_menu() {
   local choice
   print_prompt "请选择编号: "
   read -r choice || {
-    log_message "INFO" "输入流结束，退出脚本"
+    log_info "输入流结束，退出脚本"
     mark_normal_exit
     exit 0
   }
@@ -318,14 +302,14 @@ show_menu() {
       check_services || return 1
       validate_zone
       enable_auto_update || {
-        log_message "ERROR" "启用自动更新失败"
+        log_error "启用自动更新失败"
         return 1
       }
       ;;
     2) disable_auto_update ;;
     3) view_cron_jobs ;;
     0) mark_normal_exit; exit 0 ;;
-    *) log_message "WARNING" "无效选项：${choice}" ;;
+    *) log_warning "无效选项：${choice}" ;;
   esac
 }
 
@@ -335,7 +319,7 @@ main() {
   register_temp_cleanup
 
   if ! [[ "${MAX_IP_LIMIT}" =~ ^[0-9]+$ ]]; then
-    log_message "ERROR" "无效 MAX_IP_LIMIT：${MAX_IP_LIMIT}"
+    log_error "无效 MAX_IP_LIMIT：${MAX_IP_LIMIT}"
     exit "${ERROR_GENERAL}"
   fi
 
