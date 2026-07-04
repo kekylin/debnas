@@ -1,3 +1,4 @@
+# @name: Portainer
 services:
   portainer-ce:
     ports:

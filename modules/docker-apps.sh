@@ -30,33 +30,49 @@ if [[ ! -d "$COMPOSE_DIR" ]]; then
   exit "${ERROR_GENERAL}"
 fi
 
-# 容器定义（内联，扩展时在此添加新条目）
-declare -A container_desc=(
-  ["portainer"]="Portainer"
-)
-declare -A container_compose=(
-  ["portainer"]="portainer.yaml"
-)
-declare -a container_order=("portainer")
+# 自动发现 compose 目录下的容器应用
+# 约定：compose/<key>.yaml（或 .yml），文件名即容器 key
+# 可选元数据（YAML 注释）：# @name: 显示名称
+discover_containers() {
+  CONTAINER_KEYS=()
+  declare -g -A CONTAINER_NAMES=()
+  declare -g -A CONTAINER_FILES=()
+
+  local yaml_file key display_name
+  for yaml_file in "$COMPOSE_DIR"/*.yaml "$COMPOSE_DIR"/*.yml; do
+    [[ -f "$yaml_file" ]] || continue
+    key=$(basename "$yaml_file" | sed 's/\.\(yaml\|yml\)$//')
+    # 尝试从 YAML 文件头部注释提取显示名称
+    display_name=$(grep -m1 '^# *@name:' "$yaml_file" 2>/dev/null | sed 's/^# *@name: *//' || true)
+    if [[ -z "$display_name" ]]; then
+      display_name="${key^}"
+    fi
+    CONTAINER_KEYS+=("$key")
+    CONTAINER_NAMES["$key"]="$display_name"
+    CONTAINER_FILES["$key"]="$(basename "$yaml_file")"
+  done
+}
+
+discover_containers
 
 # 部署指定容器
 deploy_container() {
   local key="$1"
-  local yaml_file="$COMPOSE_DIR/${container_compose[$key]}"
+  local yaml_file="$COMPOSE_DIR/${CONTAINER_FILES[$key]}"
   if ! docker ps -a --format '{{.Names}}' | grep -qw "$key"; then
-    log_info "部署 ${container_desc[$key]}..."
+    log_info "部署 ${CONTAINER_NAMES[$key]}..."
     if [[ ! -f "$yaml_file" ]]; then
       log_error "compose 文件不存在：$yaml_file，跳过该容器。"
       return 1
     fi
     if docker compose -p "$key" -f "$yaml_file" up -d; then
-      log_success "${container_desc[$key]} 就绪"
+      log_success "${CONTAINER_NAMES[$key]} 就绪"
     else
-      log_error "${container_desc[$key]} 失败"
+      log_error "${CONTAINER_NAMES[$key]} 失败"
       return 1
     fi
   else
-    log_info "${container_desc[$key]} 已存在，跳过部署。"
+    log_info "${CONTAINER_NAMES[$key]} 已存在，跳过部署。"
   fi
   return 0
 }
@@ -65,7 +81,7 @@ deploy_container() {
 main() {
   log_info "部署 Docker 容器应用..."
   local failed=0
-  for key in "${container_order[@]}"; do
+  for key in "${CONTAINER_KEYS[@]}"; do
     if ! deploy_container "$key"; then
       ((failed++)) || true
     fi
