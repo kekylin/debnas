@@ -1,53 +1,34 @@
 #!/bin/bash
-# @module: login-mail-on
-# @name: 登录通知（开）
-# @category: 通知服务
-# @depends: exim4
-# @depend_modules: mail-account
-# @version: 1.0.0
-# @order: 61
-# 功能：启用用户登录邮件通知（通过 PAM 脚本，登录时自动发送邮件）
+# 登录通知 — 启用逻辑
 
-set -euo pipefail
-IFS=$'\n\t'
+enable_login_mail() {
+  REQUIRED_CMDS=(exim4)
+  if ! check_dependencies "${REQUIRED_CMDS[@]}"; then
+    log_error "缺少 exim4 依赖，请先配置邮件账户并安装 exim4。"
+    return 1
+  fi
 
-# 加载公共模块，确保依赖函数和常量可用
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-source "${SCRIPT_DIR}/lib/bootstrap.sh"
-main() {
-source "${SCRIPT_DIR}/lib/system/state.sh"
+  EMAIL_FILE="/etc/exim4/notify_email"
+  if [[ ! -f "$EMAIL_FILE" ]]; then
+    log_error "未检测到 $EMAIL_FILE，请先通过「设置发送邮件账户」模块完成配置。"
+    return 1
+  fi
 
-# 检查 exim4 依赖，确保邮件发送功能可用
-REQUIRED_CMDS=(exim4)
-if ! check_dependencies "${REQUIRED_CMDS[@]}"; then
-  log_error "缺少 exim4 依赖，请先配置邮件账户并安装 exim4。"
-  exit "${ERROR_DEPENDENCY}"
-fi
+  read -r notify_email < "$EMAIL_FILE" || {
+    log_error "无法读取通知邮箱地址，请检查 $EMAIL_FILE 权限及内容。"
+    return 1
+  }
 
-# 检查邮件通知配置文件是否存在
-EMAIL_FILE="/etc/exim4/notify_email"
-if [[ ! -f "$EMAIL_FILE" ]]; then
-  log_error "未检测到 $EMAIL_FILE，请先通过「设置发送邮件账户」模块完成配置。"
-  exit "${ERROR_DEPENDENCY}"
-fi
+  if [[ -z "$notify_email" ]]; then
+    log_error "通知邮箱地址为空，请先通过「设置发送邮件账户」模块完成配置。"
+    return 1
+  fi
 
-# 读取通知邮箱地址，若读取失败则退出
-read -r notify_email < "$EMAIL_FILE" || {
-  log_error "无法读取通知邮箱地址，请检查 $EMAIL_FILE 权限及内容。"
-  exit "${ERROR_GENERAL}"
-}
+  log_info "通知邮箱地址：$notify_email"
 
-if [[ -z "$notify_email" ]]; then
-  log_error "通知邮箱地址为空，请先通过「设置发送邮件账户」模块完成配置。"
-  exit "${ERROR_DEPENDENCY}"
-fi
-
-log_info "通知邮箱地址：$notify_email"
-
-# 生成 PAM 登录通知脚本（仅在内容变更时写入）
-NOTIFY_SCRIPT="/etc/pam.d/login-notify.sh"
-NOTIFY_SCRIPT_TMP=$(create_temp_file "notify-script" ".sh")
-cat > "$NOTIFY_SCRIPT_TMP" << 'EOF'
+  NOTIFY_SCRIPT="/etc/pam.d/login-notify.sh"
+  NOTIFY_SCRIPT_TMP=$(create_temp_file "notify-script" ".sh")
+  cat > "$NOTIFY_SCRIPT_TMP" << 'EOF'
 #!/bin/bash
 # PAM 登录会话开启时发送邮件通知（UTF-8，带地理位置与处置指引）
 
@@ -149,25 +130,20 @@ fi
 } | /usr/sbin/exim4 -t || true
 EOF
 
-# 仅在内容变更时写入文件
-if [[ ! -f "$NOTIFY_SCRIPT" ]] || ! cmp -s "$NOTIFY_SCRIPT_TMP" "$NOTIFY_SCRIPT"; then
-  mv "$NOTIFY_SCRIPT_TMP" "$NOTIFY_SCRIPT"
-  chmod 755 "$NOTIFY_SCRIPT"
-  chown root:root "$NOTIFY_SCRIPT"
-  log_info "登录通知脚本已更新。"
-else
-  rm -f "$NOTIFY_SCRIPT_TMP"
-fi
+  if [[ ! -f "$NOTIFY_SCRIPT" ]] || ! cmp -s "$NOTIFY_SCRIPT_TMP" "$NOTIFY_SCRIPT"; then
+    mv "$NOTIFY_SCRIPT_TMP" "$NOTIFY_SCRIPT"
+    chmod 755 "$NOTIFY_SCRIPT"
+    chown root:root "$NOTIFY_SCRIPT"
+    log_info "登录通知脚本已更新。"
+  else
+    rm -f "$NOTIFY_SCRIPT_TMP"
+  fi
 
-# 配置 pam.d/common-session，集成登录通知脚本
-PAM_FILE="/etc/pam.d/common-session"
-if ! grep -Fxq "session optional pam_exec.so debug /bin/bash $NOTIFY_SCRIPT" "$PAM_FILE" 2>/dev/null; then
-  echo "session optional pam_exec.so debug /bin/bash $NOTIFY_SCRIPT" >> "$PAM_FILE"
-  log_success "登录通知已配置"
-else
-  log_info "登录通知已配置"
-fi
-
+  PAM_FILE="/etc/pam.d/common-session"
+  if ! grep -Fxq "session optional pam_exec.so debug /bin/bash $NOTIFY_SCRIPT" "$PAM_FILE" 2>/dev/null; then
+    echo "session optional pam_exec.so debug /bin/bash $NOTIFY_SCRIPT" >> "$PAM_FILE"
+    log_success "登录通知已启用"
+  else
+    log_info "登录通知已配置，无需重复操作"
+  fi
 }
-
-main "$@"
