@@ -20,6 +20,12 @@ main() {
   fi
   source "${SCRIPT_DIR}/lib/system/state.sh"
 
+  # 幂等性检查：已配置则跳过交互
+  if state_is_installed "mail-account"; then
+    log_info "邮件账户已配置，跳过"
+    return 0
+  fi
+
 # 检查 exim4、update-exim4.conf、systemctl 依赖，确保后续操作可用
 REQUIRED_CMDS=(exim4 update-exim4.conf systemctl)
 if ! check_dependencies "${REQUIRED_CMDS[@]}"; then

@@ -136,7 +136,7 @@ print_submenu_title() {
 # 参数：$1 - 文本内容
 # 返回值：无
 print_prompt() {
-  print_colored "COLOR_BLUE" "$1"
+  print_colored "COLOR_BLUE" "$1" >&2
 }
 
 # 多选提示信息样式函数
