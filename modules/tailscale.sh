@@ -23,12 +23,7 @@ if ! check_dependencies "${REQUIRED_CMDS[@]}"; then
   exit "${ERROR_DEPENDENCY}"
 fi
 
-# 检查系统兼容性，防止在不支持的平台运行
-if ! verify_system_support; then
-  exit "${ERROR_UNSUPPORTED_OS}"
-fi
-
-# 动态获取系统代号，避免硬编码导致跨版本不兼容
+# 检查系统兼容性，防止在不支持的平台运行# 动态获取系统代号，避免硬编码导致跨版本不兼容
 CODENAME=$(get_system_codename)
 if [[ -z "${CODENAME}" ]]; then
   log_error "无法获取系统版本代号。"

@@ -193,10 +193,6 @@ main() {
     log_info "cron 模式下不支持交互操作，已跳过"
     return 0
   fi
-  if ! verify_system_support; then
-    log_fail "当前系统不支持此功能。"
-    exit "${ERROR_UNSUPPORTED_OS}"
-  fi
 
   # 非交互模式：通过参数指定操作（1=启用临时 2=启用永久 3=禁用临时 4=禁用永久 5=状态）
   if [[ ! -t 0 ]] || [[ -n "${1:-}" ]]; then

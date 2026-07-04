@@ -208,12 +208,7 @@ add_user_to_docker_group() {
 
 # ==================== 主入口 ====================
 
-main() {
-  if ! verify_system_support; then
-    exit "${ERROR_UNSUPPORTED_OS}"
-  fi
-
-  . /etc/os-release
+main() {  . /etc/os-release
 
   log_info "检测镜像源"
   local DOCKER_MIRROR

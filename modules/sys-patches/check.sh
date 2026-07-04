@@ -86,9 +86,6 @@ run_update_check() {
 # 发送邮件通知
 
 execute_update_check() {
-  if ! verify_system_support; then
-    exit "${ERROR_UNSUPPORTED_OS}"
-  fi
   run_update_check
 
   local total=$((security_update_count + regular_update_count))

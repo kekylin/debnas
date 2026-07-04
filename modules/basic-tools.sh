@@ -23,12 +23,7 @@ if ! check_dependencies "${REQUIRED_CMDS[@]}"; then
   exit "${ERROR_DEPENDENCY}"
 fi
 
-# 检查系统兼容性，防止在不支持的平台运行
-if ! verify_system_support; then
-  exit "${ERROR_UNSUPPORTED_OS}"
-fi
-
-# 安装基础软件包（智能过滤已装包 + apt update 去重 + 锁等待）
+# 检查系统兼容性，防止在不支持的平台运行# 安装基础软件包（智能过滤已装包 + apt update 去重 + 锁等待）
 log_info "安装基础工具包..."
 
 if apt_install_packages sudo curl git vim wget exim4 gnupg apt-transport-https ca-certificates udisks2-lvm2 smartmontools; then
