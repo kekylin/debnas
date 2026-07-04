@@ -117,6 +117,45 @@ show_confirm() {
   fi
 }
 
+# 运行交互式子菜单循环（统一渲染 + 输入验证 + 函数调度）
+# 参数：$1 - 菜单标题，后续参数为 "函数名" "显示标签" 交替对
+# 返回值：0（用户选择 0 返回时）
+# 说明：被调度的函数应 return（而非 exit），以保持菜单循环继续
+run_submenu() {
+  local title="$1"
+  shift
+
+  local -a labels=()
+  local -a funcs=()
+  while [[ $# -gt 0 ]]; do
+    funcs+=("$1")
+    labels+=("$2")
+    shift 2
+  done
+
+  local max="${#labels[@]}"
+
+  while true; do
+    print_separator "-"
+    local idx=1
+    for label in "${labels[@]}"; do
+      print_menu_item "$idx" "$label"
+      ((idx++)) || true
+    done
+    print_menu_item "0" "${MSG_BACK:-返回}" "true"
+    print_separator "-"
+
+    local choice
+    choice=$(get_user_choice "$max") || continue
+
+    if [[ "$choice" -eq 0 ]]; then
+      return 0
+    fi
+
+    "${funcs[$((choice-1))]}"
+  done
+}
+
 # 显示带说明的菜单
 # 参数：$1 - 菜单标题，$2 - 说明文字，$3... - 菜单选项数组
 # 返回值：无

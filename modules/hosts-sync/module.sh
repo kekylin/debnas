@@ -66,43 +66,20 @@ setup_temp_environment() {
 # 参数：$1 - 域名
 # 返回：MD5 哈希值（32 字符）
 
-menu() {
-  while true; do
-    print_separator "-"
-    print_menu_item "1" "单次更新"
-    print_menu_item "2" "定时更新"
-    print_menu_item "3" "删除定时任务"
-    print_menu_item "4" "查询定时任务"
-    print_menu_item "0" "返回" "true"
-    print_separator "-"
-    print_prompt "请选择编号: "
-    read -r choice
+_menu_update() {
+  ensure_module_deps hosts-sync || return 1
+  log_info "更新 Hosts..."
+  update_hosts
+}
+_menu_create_cron() { log_info "创建定时任务..."; create_cron_job; }
+_menu_remove_cron() { log_info "删除定时任务..."; remove_cron_job; }
 
-    case "$choice" in
-      1)
-        ensure_module_deps hosts-sync || return 1
-        log_info "更新 Hosts..."
-        update_hosts
-        ;;
-      2)
-        log_info "创建定时任务..."
-        create_cron_job
-        ;;
-      3)
-        log_info "删除定时任务..."
-        remove_cron_job
-        ;;
-      4)
-        list_cron_jobs
-        ;;
-      0)
-        return 0
-        ;;
-      *)
-        log_fail "无效选择，请重新输入。"
-        ;;
-    esac
-  done
+menu() {
+  run_submenu "Hosts 优化" \
+    "_menu_update" "单次更新" \
+    "_menu_create_cron" "定时更新" \
+    "_menu_remove_cron" "删除定时任务" \
+    "list_cron_jobs" "查询定时任务"
 }
 
 main() {

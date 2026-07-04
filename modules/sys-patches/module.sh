@@ -1,7 +1,7 @@
 #!/bin/bash
 # @module: sys-patches
 # @name: 系统更新
-# @category: 系统工具
+# @category: 系统维护
 # @depends:
 # @version: 1.0.0
 # @order: 71
@@ -39,70 +39,22 @@ main_menu() {
   if ! verify_system_support; then
     return 1
   fi
-  while true; do
-    print_separator "-"
-    print_menu_item "1" "立即执行检测"
-    print_menu_item "2" "设置定时检测"
-    print_menu_item "3" "查看定时任务"
-    print_menu_item "4" "移除定时任务"
-    print_menu_item "0" "返回" "true"
-    print_separator "-"
-    print_prompt "请选择编号: "
-    read -r choice
-    
-    # 验证输入
-    if [[ ! "$choice" =~ ^[0-9]+$ ]]; then
-      log_error "请输入数字编号"
-      continue
-    fi
-    
-    if [[ "$choice" -lt 0 ]] || [[ "$choice" -gt 4 ]]; then
-      log_error "无效选择，请输入 0-4"
-      continue
-    fi
-    
-    case $choice in
-      1) execute_update_check ;;
-      2) schedule_menu ;;
-      3) list_cron_tasks ;;
-      4) remove_cron_task ;;
-      0) log_action "返回"; return 0 ;;
-      *) log_error "无效的操作选项，请重新选择。" ;;
-    esac
-  done
+  run_submenu "系统更新" \
+    "execute_update_check" "立即执行检测" \
+    "schedule_menu" "设置定时检测" \
+    "list_cron_tasks" "查看定时任务" \
+    "remove_cron_task" "移除定时任务"
 }
 
 # 显示定时检测子菜单并处理用户选择
+_schedule_daily() { set_cron_task "daily"; }
+_schedule_weekly() { set_cron_task "weekly"; }
+
 schedule_menu() {
-  while true; do
-    print_separator "-"
-    print_menu_item "1" "每日检测（00:00）"
-    print_menu_item "2" "每周检测（周一00:00）"
-    print_menu_item "3" "自定义定时检测"
-    print_menu_item "0" "返回" "true"
-    print_separator "-"
-    print_prompt "请选择编号: "
-    read -r subchoice
-    
-    # 验证输入
-    if [[ ! "$subchoice" =~ ^[0-9]+$ ]]; then
-      log_error "请输入数字编号"
-      continue
-    fi
-    
-    if [[ "$subchoice" -lt 0 ]] || [[ "$subchoice" -gt 3 ]]; then
-      log_error "无效选择，请输入 0-3"
-      continue
-    fi
-    
-    case $subchoice in
-      1) set_cron_task "daily"; return ;;
-      2) set_cron_task "weekly"; return ;;
-      3) set_custom_cron_task; return ;;
-      0) log_action "返回"; return ;;
-      *) log_error "无效的操作选项，请重新选择。" ;;
-    esac
-  done
+  run_submenu "定时检测" \
+    "_schedule_daily" "每日检测（00:00）" \
+    "_schedule_weekly" "每周检测（周一00:00）" \
+    "set_custom_cron_task" "自定义定时检测"
 }
 
 # 主程序入口
