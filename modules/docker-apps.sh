@@ -32,48 +32,96 @@ fi
 
 # 自动发现 compose 目录下的容器应用
 # 约定：compose/<key>.yaml（或 .yml），文件名即容器 key
-# 可选元数据（YAML 注释）：# @name: 显示名称
+# 可选元数据（YAML 注释）：
+#   # @name: 显示名称
+#   # @description: 简要描述
+#   # @category: 分类标签
+#   # @require: 前置依赖容器 key（逗号或空格分隔）
 discover_containers() {
   CONTAINER_KEYS=()
   declare -g -A CONTAINER_NAMES=()
   declare -g -A CONTAINER_FILES=()
+  declare -g -A CONTAINER_DESCRIPTIONS=()
+  declare -g -A CONTAINER_CATEGORIES=()
+  declare -g -A CONTAINER_REQUIRES=()
 
-  local yaml_file key display_name
+  local yaml_file key display_name desc cat require
   for yaml_file in "$COMPOSE_DIR"/*.yaml "$COMPOSE_DIR"/*.yml; do
     [[ -f "$yaml_file" ]] || continue
     key=$(basename "$yaml_file" | sed 's/\.\(yaml\|yml\)$//')
-    # 尝试从 YAML 文件头部注释提取显示名称
+    # 尝试从 YAML 文件头部注释提取元数据
     display_name=$(grep -m1 '^# *@name:' "$yaml_file" 2>/dev/null | sed 's/^# *@name: *//' || true)
+    desc=$(grep -m1 '^# *@description:' "$yaml_file" 2>/dev/null | sed 's/^# *@description: *//' || true)
+    cat=$(grep -m1 '^# *@category:' "$yaml_file" 2>/dev/null | sed 's/^# *@category: *//' || true)
+    require=$(grep -m1 '^# *@require:' "$yaml_file" 2>/dev/null | sed 's/^# *@require: *//' || true)
     if [[ -z "$display_name" ]]; then
       display_name="${key^}"
     fi
     CONTAINER_KEYS+=("$key")
     CONTAINER_NAMES["$key"]="$display_name"
     CONTAINER_FILES["$key"]="$(basename "$yaml_file")"
+    CONTAINER_DESCRIPTIONS["$key"]="$desc"
+    CONTAINER_CATEGORIES["$key"]="$cat"
+    CONTAINER_REQUIRES["$key"]="$require"
   done
 }
 
 discover_containers
 
-# 部署指定容器
+# 递归部署追踪栈（全局，用于循环依赖检测）
+declare -g -A _DEPLOY_STACK=()
+
+# 部署指定容器（含描述输出与递归依赖解析）
 deploy_container() {
   local key="$1"
+
+  # 循环依赖检测
+  if [[ -n "${_DEPLOY_STACK[$key]:-}" ]]; then
+    log_error "${CONTAINER_NAMES[$key]}: 检测到循环依赖，跳过。"
+    return 1
+  fi
+  _DEPLOY_STACK["$key"]=1
+
+  # 解析 @require 前置依赖，递归部署
+  local requires="${CONTAINER_REQUIRES[$key]:-}"
+  if [[ -n "$requires" ]]; then
+    local -a dep_list=()
+    local dep
+    IFS=', ' read -ra dep_list <<< "$requires"
+    for dep in "${dep_list[@]}"; do
+      [[ -z "$dep" ]] && continue
+      if [[ -n "${CONTAINER_FILES[$dep]:-}" ]]; then
+        deploy_container "$dep" || log_warning "${CONTAINER_NAMES[$key]}: 依赖 ${dep} 部署失败"
+      else
+        log_warning "${CONTAINER_NAMES[$key]}: 未知依赖 ${dep}，跳过。"
+      fi
+    done
+  fi
+
   local yaml_file="$COMPOSE_DIR/${CONTAINER_FILES[$key]}"
   if ! docker ps -a --format '{{.Names}}' | grep -qw "$key"; then
+    local desc="${CONTAINER_DESCRIPTIONS[$key]:-}"
+    if [[ -n "$desc" ]]; then
+      log_info "${CONTAINER_NAMES[$key]}: ${desc}"
+    fi
     log_info "部署 ${CONTAINER_NAMES[$key]}..."
     if [[ ! -f "$yaml_file" ]]; then
       log_error "compose 文件不存在：$yaml_file，跳过该容器。"
+      unset "_DEPLOY_STACK[$key]"
       return 1
     fi
     if docker compose -p "$key" -f "$yaml_file" up -d; then
       log_success "${CONTAINER_NAMES[$key]} 就绪"
     else
       log_error "${CONTAINER_NAMES[$key]} 失败"
+      unset "_DEPLOY_STACK[$key]"
       return 1
     fi
   else
     log_info "${CONTAINER_NAMES[$key]} 已存在，跳过部署。"
   fi
+
+  unset "_DEPLOY_STACK[$key]"
   return 0
 }
 

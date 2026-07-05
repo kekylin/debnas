@@ -1,4 +1,6 @@
 # @name: Portainer
+# @description: Web-based Docker management UI (HTTPS)
+# @category: 管理面板
 # @web_port: 9443
 services:
   portainer-ce:
