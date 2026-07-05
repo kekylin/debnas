@@ -17,6 +17,10 @@
 > 当前开发分支：`refactor/debnas-v2`
 
 ### Added
+- 扩展 Docker Compose 元数据系统：新增 `@description`、`@category`、`@require` 字段，支持递归依赖解析与循环依赖检测
+- 新增 `run_submenu()` 统一交互式子菜单循环，消除 4 个模块中的重复菜单逻辑
+- 新增模块注册表架构检测（`arch` 字段），自动跳过不兼容当前 CPU 架构的模块
+- 新增 GitHub Actions CI：Debian 版本矩阵（12/13）、集成测试、Smoke 质量门禁
 - 新增 CLI 调度器 `bin/debnas`，支持子命令路由（`list`、`run`、`menu`、`doctor`、`help` 等）
 - 新增 `debnas run <模块>` 子命令，支持直接执行模块
 - 新增模块短名称支持（如 `cockpit` 代替 `install-cockpit`）
@@ -41,6 +45,13 @@
 - 新增部署方案集成测试 `tests/integration/test-solution.bats`（8 个用例：方案解析、模块排序、stdin 隔离、失败中断、空格 trim）
 
 ### Changed
+- `install.sh` 编码规范对齐主工程：`set -eo pipefail` → `set -euo pipefail` + `IFS=$'\n\t'`
+- `hosts-sync` 依赖检查统一为 `install_missing_dependencies` 单次调用，移除最后的手动 `command -v` 循环
+- `cockpit-ext`、`login-mail` 从单文件模块迁移为目录模块（`actions.sh` 拆分交互逻辑）
+- `docker-apps`、`service-query` 自动发现 `compose/` 目录，消除硬编码容器列表与 URL 映射
+- `threat-ips` 移除 `log_message()` 过度封装，直接使用 `log_*` 标准函数
+- 模块菜单分类排序统一为单一数据源（`CATEGORY_ORDER` 数组）
+- CLAUDE.md 深度精简，收缩职责范围，减少与架构文档的事实重复
 - 依赖安装改为三级分类处理：Tier 0 系统命令仅检查、Tier 1 工具依赖自动安装、Tier 2 服务依赖提示用户（不再自动安装 firewalld/docker.io/exim4 等）
 - 模块依赖（`@depend_modules`）改为检查+提示模式：依赖模块未就绪时报错提示用户先运行，不再自动递归执行
 - 交互式模块依赖检查改为延迟模式：进入菜单时不再显示依赖检查信息，仅在用户选择具体操作时才执行检查（threat-ips、hosts-sync、sys-patches、bbr）
@@ -67,6 +78,10 @@
 - 删除 DEBUG 日志等级和 `log_debug` 函数
 
 ### Fixed
+- 修复 Cockpit 模块组 `@order` 冲突（vm-components 31→33），恢复菜单正确排序
+- 修复 P1-4（login-mail 依赖声明补全）、P2-8（旧项目名 HomeNAS→DebNAS 残留）、P2-10（代码风格统一）、P2-12（重复函数定义清理）、P2-18（缺失依赖声明补全）
+- 修复 `print_prompt` 输出到 stderr + `mail-account` 幂等性检查
+- 修复 `sources.sh` 顶层 `verify_debian_12_13_support` 调用导致 source 时副作用，移入 `main()` 函数
 - 修复一键部署方案 `execute_solution()` stdin 污染：`while read` 使用 fd 3 读取方案文件，避免交互式模块（如 mail-account）的 `read` 读到方案文件的下一行模块名
 - 修复 `bootstrap.sh` 重复加载导致 `_DEBNAS_BOOTSTRAPPED` 变量泄漏
 - 修复菜单清理陷阱中 `tmp_dir` 未绑定变量
