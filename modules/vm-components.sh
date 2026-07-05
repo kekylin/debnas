@@ -5,7 +5,7 @@
 # @depends:
 # @depend_modules: cockpit
 # @version: 1.0.0
-# @order: 31
+# @order: 33
 # 功能：安装虚拟机管理组件
 
 set -euo pipefail
