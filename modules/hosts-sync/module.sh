@@ -86,15 +86,7 @@ main() {
   if [[ $CRON_MODE -eq 0 ]]; then
     setup_temp_environment
     init_domains_config
-    # 检查必要依赖
-    local missing=()
-    for cmd in dig ping curl; do
-      command -v "$cmd" &>/dev/null || missing+=("$cmd")
-    done
-    if [[ ${#missing[@]} -gt 0 ]]; then
-      log_warning "缺失依赖: ${missing[*]}，尝试安装..."
-      install_missing_dependencies "${missing[@]}" || true
-    fi
+    install_missing_dependencies dig ping curl || true
     if [[ "${DEBNAS_FORCE_YES:-0}" -eq 1 ]]; then
       # --yes 模式：跳过菜单，直接执行单次更新
       update_hosts
