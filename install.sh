@@ -12,7 +12,8 @@
 #   # 卸载
 #   bash install.sh --uninstall
 
-set -eo pipefail
+set -euo pipefail
+IFS=$'\n\t'
 
 # ==================== 常量 ====================
 
@@ -195,7 +196,7 @@ download_repo() {
   fi
 
   local tmpdir
-  tmpdir=$(mktemp -d "${DEBNAS_TMP_DIR}/install.XXXXXX")
+  tmpdir=$(mktemp -d "${DEBNAS_TMP_DIR:-/tmp}/install.XXXXXX")
   chmod 700 "$tmpdir"
 
   local tarball="${tmpdir}/debnas.tar.gz"
