@@ -157,8 +157,8 @@ check_system_deps() {
   done
 
   if [[ ${#missing[@]} -gt 0 ]]; then
-    log_fatal "系统基础命令缺失：${missing[*]}"
-    log_fatal "这些命令应由 Debian 最小化安装提供，系统可能已损坏"
+    log_fatal_return "系统基础命令缺失：${missing[*]}"
+    log_fatal_return "这些命令应由 Debian 最小化安装提供，系统可能已损坏"
     return 1
   fi
   return 0
@@ -399,7 +399,7 @@ install_missing_dependencies() {
 
   # Tier 0 系统命令缺失 → 致命
   if [[ ${#system_cmds[@]} -gt 0 ]]; then
-    log_fatal "系统基础命令缺失：${system_cmds[*]}，系统可能已损坏"
+    log_fatal_return "系统基础命令缺失：${system_cmds[*]}，系统可能已损坏"
     return 1
   fi
 

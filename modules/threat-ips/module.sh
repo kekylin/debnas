@@ -196,7 +196,7 @@ init_data_dir() {
     log_info "创建数据目录：${DATA_DIR}"
     mkdir -p "${DATA_DIR}" || {
       log_error "创建数据目录失败：${DATA_DIR}"
-      exit "${ERROR_GENERAL}"
+      return 1
     }
     chmod 755 "${DATA_DIR}"
   fi
@@ -212,11 +212,11 @@ init_cron() {
   # 文件日志由 lib/core/logging.sh 统一管理（main() 中调用 log_to_file）
   log_to_file "threat-ips" 2>/dev/null || true
 
-  init_data_dir
+  init_data_dir || return 1
 
   if [[ ! -f "${CONFIG_FILE}" ]]; then
     log_error "配置文件不存在：${CONFIG_FILE}"
-    exit "${ERROR_GENERAL}"
+    return 1
   fi
   while IFS='=' read -r key value; do
     case "${key}" in
@@ -292,7 +292,7 @@ show_menu() {
   read -r choice || {
     log_info "输入流结束，退出脚本"
     mark_normal_exit
-    exit 0
+    return 0
   }
   choice=$(printf "%s" "${choice}" | tr -d '[:space:]')
 
@@ -308,7 +308,7 @@ show_menu() {
       ;;
     2) disable_auto_update ;;
     3) view_cron_jobs ;;
-    0) mark_normal_exit; exit 0 ;;
+    0) mark_normal_exit; return 0 ;;
     *) log_warning "无效选项：${choice}" ;;
   esac
 }
@@ -325,11 +325,9 @@ main() {
 
   if [[ "${DEBNAS_CRON_MODE:-0}" -eq 0 ]]; then
     init_manual
-    while true; do
-      show_menu
-    done
+    while show_menu; do :; done
   else
-    init_cron
+    init_cron || exit "${ERROR_GENERAL}"
     validate_zone
     update_threat_ips
     mark_normal_exit

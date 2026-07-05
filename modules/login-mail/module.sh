@@ -18,8 +18,7 @@ source "${SCRIPT_DIR}/lib/bootstrap.sh"
 
 main() {
   source "${SCRIPT_DIR}/lib/system/state.sh"
-  source "${MODULE_DIR}/on.sh"
-  source "${MODULE_DIR}/off.sh"
+  source "${MODULE_DIR}/actions.sh"
 
   run_submenu "登录通知" \
     "enable_login_mail" "启用登录通知" \

@@ -18,8 +18,7 @@ source "${SCRIPT_DIR}/lib/bootstrap.sh"
 
 main() {
   source "${SCRIPT_DIR}/lib/system/state.sh"
-  source "${MODULE_DIR}/on.sh"
-  source "${MODULE_DIR}/off.sh"
+  source "${MODULE_DIR}/actions.sh"
 
   run_submenu "外网访问" \
     "enable_cockpit_ext" "启用外网访问" \

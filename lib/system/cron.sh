@@ -61,7 +61,6 @@ cron_register() {
   local field_count
   field_count=$(echo "$schedule" | awk '{print NF}')
   if [[ "$field_count" -ne 5 ]]; then
-    log_error "Cron 表达式无效: '${schedule}'"
     return 1
   fi
 
@@ -86,10 +85,8 @@ ${cron_cmd}"
 
   # 写入 crontab
   if echo "$new_crontab" | _set_crontab; then
-    log_success "${module_name}（${schedule}）"
     return 0
   else
-    log_error "定时注册失败${module_name}"
     return 1
   fi
 }
@@ -120,12 +117,10 @@ cron_unregister() {
     crontab -r 2>/dev/null || true
   else
     if ! echo "$new_crontab" | _set_crontab; then
-      log_error "定时取消失败${module_name}"
       return 1
     fi
   fi
 
-  log_success "定时已取消${module_name}"
   return 0
 }
 
@@ -138,7 +133,7 @@ cron_list() {
   current_crontab=$(_get_current_crontab)
 
   if [[ -z "$current_crontab" ]]; then
-    log_info "无定时任务"
+    echo "无定时任务"
     return 0
   fi
 
@@ -146,7 +141,7 @@ cron_list() {
   debnas_entries=$(echo "$current_crontab" | grep "${CRON_MARKER}" || true)
 
   if [[ -z "$debnas_entries" ]]; then
-    log_info "无定时任务"
+    echo "无定时任务"
     return 0
   fi
 

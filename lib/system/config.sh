@@ -33,7 +33,7 @@ _config_file() {
 _ensure_conf_dir() {
   if [[ ! -d "$DEBNAS_CONF_DIR" ]]; then
     mkdir -p "$DEBNAS_CONF_DIR" 2>/dev/null || {
-      log_error "无法创建配置目录：${DEBNAS_CONF_DIR}"
+      echo "debNAS: 无法创建配置目录：${DEBNAS_CONF_DIR}" >&2
       return 1
     }
     chmod 755 "$DEBNAS_CONF_DIR"

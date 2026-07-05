@@ -215,8 +215,8 @@ restart_cockpit() {
 # ==================== Cron 管理 ====================
 show_cron_jobs() {
   log_info "当前定时任务："
-  if cron_is_registered "wallpaper" 2>/dev/null; then
-    cron_list 2>/dev/null | grep "wallpaper" || log_info "已注册（使用 debnas cron list 查看）"
+  if cron_is_registered "wallpaper"; then
+    cron_list | grep "wallpaper" || log_info "已注册（使用 debnas cron list 查看）"
   else
     echo "(无定时任务)"
   fi
@@ -237,7 +237,7 @@ enable_bing_wallpaper() {
   fi
 
   prepare_env
-  if ! cron_register "wallpaper" "$cron_expr" 2>/dev/null; then
+  if ! cron_register "wallpaper" "$cron_expr"; then
     log_error "定时注册失败"
     return 1
   fi
@@ -254,7 +254,7 @@ enable_bing_wallpaper() {
 }
 
 disable_bing_wallpaper() {
-  cron_unregister "wallpaper" 2>/dev/null || true
+  cron_unregister "wallpaper" || true
   rm -rf "$BRANDING_DIR"
   write_file_if_changed "$ISSUE_FILE" "基于Debian搭建 DebNAS" || true
   restart_cockpit

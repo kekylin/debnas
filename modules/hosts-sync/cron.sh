@@ -9,7 +9,7 @@ create_cron_job() {
   fi
 
   # 使用统一 cron 框架注册定时任务
-  if cron_register "hosts-sync" "0 0,6,12,18 * * *" 2>/dev/null; then
+  if cron_register "hosts-sync" "0 0,6,12,18 * * *"; then
     log_success "定时 0,6,12,18"
   else
     log_fail "定时任务注册失败。"
@@ -19,7 +19,7 @@ create_cron_job() {
 }
 
 remove_cron_job() {
-  if cron_unregister "hosts-sync" 2>/dev/null; then
+  if cron_unregister "hosts-sync"; then
     log_success "定时已取消"
   else
     log_info "未找到定时任务。"
@@ -28,8 +28,8 @@ remove_cron_job() {
 
 list_cron_jobs() {
   log_info "定时任务如下："
-  if cron_is_registered "hosts-sync" 2>/dev/null; then
-    cron_list 2>/dev/null | grep "hosts-sync" || log_info "已注册（使用 debnas cron list 查看）"
+  if cron_is_registered "hosts-sync"; then
+    cron_list | grep "hosts-sync" || log_info "已注册（使用 debnas cron list 查看）"
   else
     log_info "当前没有 hosts 更新定时任务。"
   fi

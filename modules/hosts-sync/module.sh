@@ -93,7 +93,7 @@ main() {
     done
     if [[ ${#missing[@]} -gt 0 ]]; then
       log_warning "缺失依赖: ${missing[*]}，尝试安装..."
-      install_missing_dependencies "${missing[@]}" 2>/dev/null || true
+      install_missing_dependencies "${missing[@]}" || true
     fi
     if [[ "${DEBNAS_FORCE_YES:-0}" -eq 1 ]]; then
       # --yes 模式：跳过菜单，直接执行单次更新

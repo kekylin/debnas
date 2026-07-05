@@ -11,7 +11,8 @@ if [[ "${_DEBNAS_CORE_LOADED:-0}" -eq 1 ]]; then
   return 0 2>/dev/null || true
 fi
 
-_DEBNAS_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export DEBNAS_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+_DEBNAS_ROOT="$DEBNAS_ROOT"  # 向后兼容旧代码
 
 # 确保系统关键路径在 PATH 中（非登录 shell / cron 环境下 /usr/sbin 可能缺失）
 PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH}"

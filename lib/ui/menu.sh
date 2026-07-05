@@ -46,10 +46,23 @@ show_menu_with_border() {
 get_user_choice() {
   local max_options="$1"
   local choice
-  
+
   print_prompt "请选择编号: "
-  read -r choice
-  
+  read -r choice || {
+    # EOF / CTRL-D：视为用户选择退出
+    echo ""
+    echo "0"
+    return 0
+  }
+
+  # 清理空白字符（对齐 threat-ips 行为）
+  choice=$(printf "%s" "${choice}" | tr -d '[:space:]')
+
+  if [[ -z "$choice" ]]; then
+    log_error "${MSG_INVALID_INPUT:-请输入数字编号}"
+    return 1
+  fi
+
   # 验证输入
   if [[ ! "$choice" =~ ^[0-9]+$ ]]; then
     log_error "${MSG_INVALID_INPUT:-请输入数字编号}"
@@ -60,7 +73,7 @@ get_user_choice() {
     log_error "${MSG_INVALID_CHOICE:-无效选择}，请输入 0-$max_options"
     return 1
   fi
-  
+
   echo "$choice"
   return 0
 }

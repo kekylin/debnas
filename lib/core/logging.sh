@@ -105,6 +105,14 @@ log_fatal() {
   exit 1
 }
 
+# 库层专用：记录 FATAL 日志并返回 1（不退出进程）
+# 调用方负责决定是否 exit，入口层（bin/）通常 || exit 1
+log_fatal_return() {
+  log_status "[FATAL]"   "$1" "$COLOR_MAGENTA"
+  _log_to_file "[FATAL]" "$1"
+  return 1
+}
+
 # ==================== 文件日志功能 ====================
 
 # 初始化文件日志
