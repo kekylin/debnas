@@ -17,6 +17,7 @@
 > 当前开发分支：`refactor/debnas-v2`
 
 ### Added
+- 新增 3 个模块集成测试文件（test-docker-ce.bats、test-firewall.bats、test-sources.bats），集成测试从 3 文件 35 用例扩展至 6 文件 108 用例（P3-2）
 - 扩展 Docker Compose 元数据系统：新增 `@description`、`@category`、`@require` 字段，支持递归依赖解析与循环依赖检测
 - 新增 `run_submenu()` 统一交互式子菜单循环，消除 4 个模块中的重复菜单逻辑
 - 新增模块注册表架构检测（`arch` 字段），自动跳过不兼容当前 CPU 架构的模块
@@ -45,6 +46,7 @@
 - 新增部署方案集成测试 `tests/integration/test-solution.bats`（8 个用例：方案解析、模块排序、stdin 隔离、失败中断、空格 trim）
 
 ### Changed
+- 质量门禁 check.sh 整合第 5 层集成测试，实现本地一键完整质量闭环（P3-5）
 - `install.sh` 编码规范对齐主工程：`set -eo pipefail` → `set -euo pipefail` + `IFS=$'\n\t'`
 - `hosts-sync` 依赖检查统一为 `install_missing_dependencies` 单次调用，移除最后的手动 `command -v` 循环
 - `cockpit-ext`、`login-mail` 从单文件模块迁移为目录模块（`actions.sh` 拆分交互逻辑）
