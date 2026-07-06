@@ -13,6 +13,10 @@ IFS=$'\n\t'
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${SCRIPT_DIR}/lib/bootstrap.sh"
 
+# 可覆盖路径（测试时可注入临时目录）
+DOCKER_KEYRINGS_DIR="${DOCKER_KEYRINGS_DIR:-/etc/apt/keyrings}"
+DOCKER_SOURCES_DIR="${DOCKER_SOURCES_DIR:-/etc/apt/sources.list.d}"
+
 # ==================== 函数定义 ====================
 
 # 检测镜像站连通性（基于 urls.sh 的 probe_url）
@@ -23,7 +27,7 @@ probe_mirror() {
 # 从 debian.sources 文件中提取镜像源基础 URL
 # 返回：镜像源基础 URL（不含路径），失败返回非 0
 extract_mirror_from_sources() {
-  local sources_file="/etc/apt/sources.list.d/debian.sources"
+  local sources_file="${DOCKER_SOURCES_DIR}/debian.sources"
 
   if [[ ! -f "$sources_file" ]] || [[ ! -r "$sources_file" ]]; then
     return 1
@@ -116,7 +120,7 @@ get_docker_mirror() {
 install_docker_prerequisites() {
   log_info "安装依赖..."
   apt_install_packages ca-certificates curl
-  install -m 0755 -d /etc/apt/keyrings
+  install -m 0755 -d "$DOCKER_KEYRINGS_DIR"
 }
 
 # 下载 Docker GPG 签名密钥（含 3 次重试）
@@ -131,12 +135,12 @@ download_docker_gpg_key() {
   local retry_count=0
 
   while [[ $retry_count -lt $max_retries ]]; do
-    if curl -fsSL --max-time 30 --connect-timeout 10 "${docker_mirror}/gpg" -o /etc/apt/keyrings/docker.asc 2>/dev/null; then
-      if [[ -s /etc/apt/keyrings/docker.asc ]] && grep -q "BEGIN PGP PUBLIC KEY BLOCK" /etc/apt/keyrings/docker.asc 2>/dev/null; then
+    if curl -fsSL --max-time 30 --connect-timeout 10 "${docker_mirror}/gpg" -o "${DOCKER_KEYRINGS_DIR}/docker.asc" 2>/dev/null; then
+      if [[ -s "${DOCKER_KEYRINGS_DIR}/docker.asc" ]] && grep -q "BEGIN PGP PUBLIC KEY BLOCK" "${DOCKER_KEYRINGS_DIR}/docker.asc" 2>/dev/null; then
         gpg_downloaded=1
         break
       else
-        rm -f /etc/apt/keyrings/docker.asc
+        rm -f "${DOCKER_KEYRINGS_DIR}/docker.asc"
       fi
     fi
     ((retry_count++)) || true
@@ -151,7 +155,7 @@ download_docker_gpg_key() {
     exit "${ERROR_DEPENDENCY}"
   fi
 
-  chmod a+r /etc/apt/keyrings/docker.asc
+  chmod a+r "${DOCKER_KEYRINGS_DIR}/docker.asc"
 }
 
 # 写入 Docker APT 软件源（DEB822 格式，幂等）
@@ -162,7 +166,7 @@ write_docker_apt_source() {
   log_info "写入 Docker 源..."
 
   # 备份旧格式文件（sources.list 格式）
-  local old_docker_list="/etc/apt/sources.list.d/docker.list"
+  local old_docker_list="${DOCKER_SOURCES_DIR}/docker.list"
   if [[ -f "$old_docker_list" ]]; then
     log_info "旧源文件已备份"
     mv "$old_docker_list" "${old_docker_list}.bak"
@@ -170,9 +174,9 @@ write_docker_apt_source() {
 
   # 使用 DEB822 格式写入软件源配置（幂等：内容未变则跳过）
   local codename
-  codename=$(. /etc/os-release && echo "$VERSION_CODENAME")
+  codename=$(get_system_codename)
   local docker_sources_content="Types: deb"$'\n'"URIs: ${docker_mirror}"$'\n'"Suites: ${codename}"$'\n'"Components: stable"$'\n'"Signed-By: /etc/apt/keyrings/docker.asc"
-  write_file_if_changed "/etc/apt/sources.list.d/docker.sources" "$docker_sources_content" || true
+  write_file_if_changed "${DOCKER_SOURCES_DIR}/docker.sources" "$docker_sources_content" || true
 
   apt_update_safe
 }
@@ -208,7 +212,7 @@ add_user_to_docker_group() {
 
 # ==================== 主入口 ====================
 
-main() {  . /etc/os-release
+main() {
 
   log_info "检测镜像源"
   local DOCKER_MIRROR

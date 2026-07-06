@@ -27,6 +27,12 @@ configure_su_restrictions() {
   local current_content
   current_content=$(cat /etc/pam.d/su 2>/dev/null) || current_content=""
 
+  # 检测 PAM 文件是否已损坏（含 NUL 字节等非文本内容）
+  if [[ -f /etc/pam.d/su ]] && grep -qP '\x00' /etc/pam.d/su 2>/dev/null; then
+    log_error "/etc/pam.d/su 已损坏（含二进制内容），请手动修复"
+    return 1
+  fi
+
   if echo "$current_content" | grep -q "pam_wheel"; then
     log_info "已配置 su 限制，跳过配置。"
     return 0
