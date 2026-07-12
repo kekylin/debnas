@@ -71,8 +71,13 @@
 - 9 处幂等跳过说明从 `log_debug` 升级为 `log_info`（"服务已在运行"、"配置未变更"等）
 - 删除日志过滤模式：移除 `LOG_LEVEL` 变量、`should_log` 门控、`set_log_level`/`get_log_level` 函数，4 级日志全部直接输出
 - 8 处内部 `log_debug` 升级为 `log_info`/`log_action`（依赖解析、安装进度），其余 18 处内部细节删除
+- `bin/doctor.sh`：`state_list_installed` 替代内联 glob 循环
+- `lib/system/args.sh`：`config_read` 替代直接 `grep` 配置文件
 
 ### Removed
+- 移除无引用的错误码常量（`ERROR_CONFIG`、`ERROR_PARAMETER`）及兼容别名（`GENERAL`/`DEPENDENCY`/`CONFIG`/`PERMISSION`/`PARAMETER`/`UNSUPPORTED_OS`）
+- 移除死函数 `config_validate`、`config_read_global`、`config_write_global`
+- 移除死函数 `get_user_multiple_choice`、`show_confirm`、`show_menu_with_description`
 - 删除 `--debug` 和 `--quiet` CLI 全局参数
 - 删除 `--xtrace` 执行跟踪模式
 - 删除 `docker-backup` 模块（高风险恢复操作，含 18 个已知 Bug）
@@ -131,6 +136,7 @@
 - 修复 `tempfile.sh` 权限注释与代码不一致：`chmod 700` → `755`，匹配注释中的 0755 声明；`init_temp_dir` 新增幂等权限修正（目录已存在时也确保 755），移除 `hosts-sync/module.sh` 中的 workaround `chmod 755`
 - 修复 `/tmp/.debnas_signal_handled` 哨兵文件泄漏：`_debnas_cleanup_on_exit` 退出时自动清理，避免残留文件抑制后续运行的异常退出警告
 - 统一临时文件管理：`menu.sh` 移除自建 EXIT/INT trap，改用 `create_temp_dir` 纳入集中跟踪；`hosts-sync` 子模块 5 处手动 `mktemp` → `create_temp_file`；`login-mail-on.sh` 裸 `mktemp` → `create_temp_file`；`cockpit-45drives.sh` 移除双重清理
+- 修复 `modules/wallpaper/module.sh` 中 `config_read` 缺少 `"global"` 命名空间参数
 - 修复临时文件追踪失效问题：`create_temp_file`/`create_temp_dir` 通过命令替换 `$()` 调用时在子 shell 中运行，内存数组 `_DEBNAS_TEMP_FILES` 的修改在子 shell 退出后丢失，导致 EXIT trap 无法清理临时文件。重构为进程 PID 目录隔离方案（`/tmp/debnas/pid-$$/`），退出时 `rm -rf` 整个 PID 目录，无需依赖内存数组追踪，天然免疫子 shell 问题
 
 ---
