@@ -17,8 +17,7 @@ source "${SCRIPT_DIR}/lib/bootstrap.sh"
 readonly BBR_MODULE="tcp_bbr"
 readonly BBR_ALGO="bbr"
 readonly DEFAULT_ALGO="cubic"
-readonly SYSCONF_DIR="/etc/sysctl.d"
-readonly SYSCONF_FILE="/etc/sysctl.d/99-debnas.conf"
+readonly SYSCONF_FILE="/etc/sysctl.d/11-debnas-bbr.conf"
 readonly SYSCONF_KEY="net.ipv4.tcp_congestion_control"
 readonly SYSCONF_QDISC_KEY="net.core.default_qdisc"
 readonly QDISC_FQ="fq"
@@ -51,16 +50,6 @@ comment_out_sysctl_conf_key() {
   fi
   return 0
 }
-ensure_sysctl_file() {
-  if [ ! -d "$SYSCONF_DIR" ]; then
-    mkdir -p "$SYSCONF_DIR"
-  fi
-  if [ ! -f "$SYSCONF_FILE" ]; then
-    touch "$SYSCONF_FILE"
-    chmod 644 "$SYSCONF_FILE"
-  fi
-}
-
 
 validate_numeric_input() {
   local input="$1"
@@ -120,11 +109,9 @@ perm_enable_bbr() {
   # 注释掉 /etc/sysctl.conf 中的同名键，避免重复配置
   comment_out_sysctl_conf_key "$SYSCONF_KEY"
   comment_out_sysctl_conf_key "$SYSCONF_QDISC_KEY"
-  ensure_sysctl_file
-  sed -i "/^${SYSCONF_KEY}[[:space:]]*=/d" "$SYSCONF_FILE" 2>/dev/null || true
-  echo "$SYSCONF_KEY = $BBR_ALGO" >> "$SYSCONF_FILE"
-  sed -i "/^${SYSCONF_QDISC_KEY}[[:space:]]*=/d" "$SYSCONF_FILE" 2>/dev/null || true
-  echo "$SYSCONF_QDISC_KEY = $QDISC_FQ" >> "$SYSCONF_FILE"
+  # 持久化到 /etc/sysctl.d/
+  sysctl_persist "$SYSCONF_KEY" "$BBR_ALGO" "${SYSCONF_FILE##*/}"
+  sysctl_persist "$SYSCONF_QDISC_KEY" "$QDISC_FQ" "${SYSCONF_FILE##*/}"
   if service_ensure systemd-sysctl restarted; then
     log_success "BBR (永久)"
   else
@@ -154,9 +141,11 @@ perm_disable_bbr() {
   # 注释掉 /etc/sysctl.conf 中的同名键，避免旧方式残留导致关闭不彻底
   comment_out_sysctl_conf_key "$SYSCONF_KEY"
   comment_out_sysctl_conf_key "$SYSCONF_QDISC_KEY"
-  ensure_sysctl_file
-  sed -i "/^${SYSCONF_KEY}[[:space:]]*=/d" "$SYSCONF_FILE" 2>/dev/null || true
-  sed -i "/^${SYSCONF_QDISC_KEY}[[:space:]]*=/d" "$SYSCONF_FILE" 2>/dev/null || true
+  # 移除 BBR 专用配置文件
+  if [[ -f "$SYSCONF_FILE" ]]; then
+    rm -f "$SYSCONF_FILE"
+    log_info "已移除 ${SYSCONF_FILE}"
+  fi
   if service_ensure systemd-sysctl restarted; then
     log_success "BBR 已关闭"
   else

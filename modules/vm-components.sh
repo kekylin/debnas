@@ -60,7 +60,7 @@ if [ -f "$sysctl_conf" ]; then
 fi
 
 # 使用 sysctl_persist 实现幂等 sysctl 配置（写入 99-debnas.conf）
-if sysctl_persist "net.ipv4.ip_forward" "1" "99-debnas.conf"; then
+if sysctl_persist "net.ipv4.ip_forward" "1" "10-debnas-network.conf"; then
   log_success "IP 包转发功能已启用。"
 else
   log_warning "IP 包转发配置已写入，但应用失败，请手动执行：systemctl restart systemd-sysctl.service"
