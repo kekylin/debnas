@@ -18,12 +18,36 @@ main() {
     log_info "cron 模式下不支持交互操作，已跳过"
     return 0
   fi
-  source "${SCRIPT_DIR}/lib/system/state.sh"
+  # 检测当前系统上的实际邮件配置（基于系统文件，非 DebNAS 内部状态标记）
+  local current_smarthost="" current_sender="" current_notify=""
+  if [[ -f /etc/exim4/update-exim4.conf.conf ]]; then
+    current_smarthost=$(grep -oP "dc_smarthost='\K[^']*" /etc/exim4/update-exim4.conf.conf 2>/dev/null || true)
+  fi
+  if [[ -f /etc/email-addresses ]]; then
+    current_sender=$(awk '{print $2}' /etc/email-addresses 2>/dev/null || true)
+  fi
+  if [[ -f /etc/exim4/notify_email ]]; then
+    current_notify=$(head -1 /etc/exim4/notify_email 2>/dev/null || true)
+  fi
 
-  # 幂等性检查：已配置则跳过交互
-  if state_is_installed "mail-account"; then
-    log_info "邮件账户已配置，跳过"
-    return 0
+  if [[ -n "${current_smarthost}" && -n "${current_sender}" && -n "${current_notify}" ]]; then
+    log_info "当前邮件配置："
+    log_info "  发件邮箱：${current_sender}"
+    log_info "  SMTP 服务器：${current_smarthost}"
+    log_info "  通知邮箱：${current_notify}"
+
+    if [[ "${DEBNAS_FORCE_YES:-0}" -eq 1 ]]; then
+      log_info "非交互模式，邮件账户已配置，跳过"
+      return 0
+    fi
+
+    local reconfigure
+    reconfigure=$(safe_read_input "是否重新配置？[y/N]：")
+    if [[ "${reconfigure,,}" != "y" && "${reconfigure,,}" != "yes" ]]; then
+      log_info "保持现有配置，跳过"
+      return 0
+    fi
+    log_info "开始重新配置邮件账户..."
   fi
 
 # 检查 exim4、update-exim4.conf、systemctl 依赖，确保后续操作可用
