@@ -17,6 +17,10 @@
 > 当前开发分支：`refactor/debnas-v2`
 
 ### Added
+- Phase 1 UI 基础层：新增 `COLOR_DIM`（亮黑/灰色）ANSI 颜色变量
+- Phase 1 UI 基础层：新增 `print_dim()` / `print_accent()` 辅助输出函数
+- Phase 1 UI 基础层：新增 `log_debug()` 调试日志（DEBNAS_DEBUG=1 时输出）
+- Phase 1 UI 基础层：新增 `lib/ui/footer.sh` — `ui_footer()` 底栏组件
 - 新增 3 个模块集成测试文件（test-docker-ce.bats、test-firewall.bats、test-sources.bats），集成测试从 3 文件 35 用例扩展至 6 文件 108 用例（P3-2）
 - 扩展 Docker Compose 元数据系统：新增 `@description`、`@category`、`@require` 字段，支持递归依赖解析与循环依赖检测
 - 新增 `run_submenu()` 统一交互式子菜单循环，消除 4 个模块中的重复菜单逻辑
@@ -46,6 +50,10 @@
 - 新增部署方案集成测试 `tests/integration/test-solution.bats`（8 个用例：方案解析、模块排序、stdin 隔离、失败中断、空格 trim）
 
 ### Changed
+- Phase 1 UI 基础层：日志标签统一为 7 字符宽度（`[SUCCESS]→[OK]`、`[FAIL]→[ERROR]`、`[WARNING]→[WARN]`、`[ACTION]→[INFO]`）
+- Phase 1 UI 基础层：`get_ui_color highlight` 从 COLOR_MAGENTA 迁移为 COLOR_CYAN
+- Phase 1 UI 基础层：`log_fatal` / `log_fatal_return` 颜色从 COLOR_MAGENTA 改为 COLOR_RED
+- Phase 1 UI 基础层：`bin/menu.sh` 横幅精简（移除 QQ/作者/GitHub/温馨提示）
 - 质量门禁 check.sh 整合第 5 层集成测试，实现本地一键完整质量闭环（P3-5）
 - `install.sh` 编码规范对齐主工程：`set -eo pipefail` → `set -euo pipefail` + `IFS=$'\n\t'`
 - `hosts-sync` 依赖检查统一为 `install_missing_dependencies` 单次调用，移除最后的手动 `command -v` 循环
@@ -73,6 +81,13 @@
 - 8 处内部 `log_debug` 升级为 `log_info`/`log_action`（依赖解析、安装进度），其余 18 处内部细节删除
 - `bin/doctor.sh`：`state_list_installed` 替代内联 glob 循环
 - `lib/system/args.sh`：`config_read` 替代直接 `grep` 配置文件
+
+### Deprecated
+- Phase 1 UI 基础层：`print_highlight()` 弃用（MAGENTA 已禁用，改用 `print_accent`）
+- Phase 1 UI 基础层：`print_separator()` 弃用（设计规范：用空行呼吸感替代分隔线）
+- Phase 1 UI 基础层：`print_submenu_title()` 弃用（Phase 2 由 `ui_header` + 面包屑替代）
+- Phase 1 UI 基础层：`print_menu_item()` / `print_main_menu_item()` 弃用（Phase 2 由 `ui_menu` 替代）
+- Phase 1 UI 基础层：`print_banner_text()` 弃用（Phase 2 由 `ui_header` 替代）
 
 ### Removed
 - 移除无引用的错误码常量（`ERROR_CONFIG`、`ERROR_PARAMETER`）及兼容别名（`GENERAL`/`DEPENDENCY`/`CONFIG`/`PERMISSION`/`PARAMETER`/`UNSUPPORTED_OS`）

@@ -18,6 +18,7 @@ if [[ "${NO_COLOR:-0}" -eq 1 ]] || [[ ! -t 2 ]]; then
   COLOR_MAGENTA=""
   COLOR_CYAN=""
   COLOR_WHITE=""
+  COLOR_DIM=""
 else
   # 启用颜色时的ANSI转义序列（全部使用普通字体，非粗体）
   COLOR_RESET=$'\e[0m'         # 重置颜色
@@ -30,4 +31,5 @@ else
   COLOR_MAGENTA=$'\e[0;35m'    # 紫色（普通字体）
   COLOR_CYAN=$'\e[0;36m'       # 青色（普通字体）
   COLOR_WHITE=$'\e[0;37m'      # 白色（普通字体）
+  COLOR_DIM=$'\e[0;90m'        # 亮黑 = 灰色（辅助文字/Footer/版本号）
 fi 

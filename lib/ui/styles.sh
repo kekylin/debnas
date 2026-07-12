@@ -10,14 +10,16 @@ IFS=$'\n\t'
 get_ui_color() {
   local type="$1"
   case "$type" in
-    primary)   echo "$COLOR_CYAN" ;;
-    secondary) echo "$COLOR_WHITE" ;;
+    accent)    echo "$COLOR_CYAN" ;;     # 新增：强调色（替代 primary）
+    primary)   echo "$COLOR_CYAN" ;;     # 向后兼容旧名
+    secondary) echo "$COLOR_WHITE" ;;    # 向后兼容旧名
+    dim)       echo "$COLOR_DIM" ;;      # 新增：灰色辅助文字
     success)   echo "$COLOR_GREEN" ;;
     warning)   echo "$COLOR_YELLOW" ;;
     error)     echo "$COLOR_RED" ;;
     info)      echo "$COLOR_BLUE" ;;
-    highlight) echo "$COLOR_MAGENTA" ;;
-    *)         echo "$COLOR_WHITE" ;;
+    highlight) echo "$COLOR_CYAN" ;;     # 迁移 MAGENTA→CYAN（设计规范 §2.1.3）
+    *)         echo "$COLOR_RESET" ;;    # 默认返回 RESET
   esac
 }
 
@@ -31,7 +33,17 @@ print_colored() {
   printf "%s%s%s\n" "$color" "$text" "$COLOR_RESET"
 }
 
-# 横幅样式函数
+# 灰色辅助文字输出（用于 Footer、版本号、面包屑）
+print_dim() {
+  print_colored "COLOR_DIM" "$1"
+}
+
+# 青色强调文字输出（用于选中菜单项、快捷键）
+print_accent() {
+  print_colored "COLOR_CYAN" "$1"
+}
+
+# @deprecated Phase 1: 横幅样式函数（Phase 2 由 ui_header 替代）
 # 参数：$1 - 文本内容
 # 返回值：无
 print_banner_text() {
@@ -73,14 +85,14 @@ print_info() {
   print_colored "COLOR_BLUE" "$1"
 }
 
-# 高亮样式函数
+# @deprecated Phase 1: 高亮样式函数（MAGENTA 已禁用，改用 print_accent）
 # 参数：$1 - 文本内容
 # 返回值：无
 print_highlight() {
-  print_colored "COLOR_MAGENTA" "$1"
+  print_colored "COLOR_CYAN" "$1"
 }
 
-# 分隔线样式函数
+# @deprecated Phase 1: 分隔线样式函数（设计规范：用空行呼吸感替代分隔线）
 # 参数：$1 - 分隔线字符（可选，默认=）
 # 返回值：无
 print_separator() {
@@ -90,7 +102,7 @@ print_separator() {
   print_colored "COLOR_CYAN" "$line"
 }
 
-# 菜单项样式函数
+# @deprecated Phase 1: 菜单项样式函数（Phase 2 由 ui_menu 替代）
 # 参数：$1 - 编号，$2 - 文本内容，$3 - 是否为退出选项（可选）
 # 返回值：无
 print_menu_item() {
@@ -107,7 +119,7 @@ print_menu_item() {
   fi
 }
 
-# 主菜单项样式函数（用于主菜单，提供更强的视觉层次）
+# @deprecated Phase 1: 主菜单项样式函数（Phase 2 由 ui_menu 替代）
 # 参数：$1 - 编号，$2 - 文本内容
 # 返回值：无
 print_main_menu_item() {
@@ -116,7 +128,7 @@ print_main_menu_item() {
   printf "%s%s.%s%s\n" "$COLOR_WHITE" "$number" "$text" "$COLOR_RESET"
 }
 
-# 子菜单标题样式函数
+# @deprecated Phase 1: 子菜单标题样式函数（Phase 2 由 ui_header + 面包屑替代）
 # 参数：$1 - 标题文本
 # 返回值：无
 print_submenu_title() {

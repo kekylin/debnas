@@ -19,16 +19,9 @@ source "${_DEBNAS_ROOT}/lib/bootstrap.sh"
 # ==================== 横幅显示 ====================
 
 print_banner() {
-  print_separator "="
+  # Phase 1: 移除非必要信息（QQ/作者/GitHub/温馨提示）
+  # Phase 2 将替换为 ui_header
   print_banner_text "                     DebNAS"
-  print_banner_text "                                  QQ群：339169752"
-  print_banner_text "作者：kekylin"
-  print_banner_text "项目：https://github.com/kekylin/debnas"
-  print_separator "-"
-  print_title "温馨提示"
-  print_title "·一键部署适合自动配置环境，也可按选择单项功能"
-  print_title "·安装防火墙后需重启系统以确保服务正常"
-  print_separator "="
 }
 
 # ==================== 部署方案 ====================
