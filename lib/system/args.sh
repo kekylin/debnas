@@ -80,9 +80,9 @@ parse_global_args() {
 
 	# 第1步：从配置文件读取持久化设置
 	local _cfg_region _cfg_lang _cfg_file_logging
-	_cfg_region=$(grep -oP '^region=\K.*' /etc/debnas/debnas.conf 2>/dev/null || true)
-	_cfg_lang=$(grep -oP '^lang=\K.*'    /etc/debnas/debnas.conf 2>/dev/null || true)
-	_cfg_file_logging=$(grep -oP '^file_logging=\K.*' /etc/debnas/debnas.conf 2>/dev/null || true)
+	_cfg_region=$(config_read "global" "region" "" 2>/dev/null || true)
+	_cfg_lang=$(config_read "global" "lang" "" 2>/dev/null || true)
+	_cfg_file_logging=$(config_read "global" "file_logging" "" 2>/dev/null || true)
 
 	# 第2步：初始化环境变量（配置文件 > 环境变量 > 默认值）
 	export DEBNAS_DRY_RUN="${DEBNAS_DRY_RUN:-0}"

@@ -28,7 +28,7 @@ readonly DEFAULT_WALLPAPER_API_URL="https://www.bing.com/HPImageArchive.aspx?for
 # 获取壁纸 API 地址（优先级：debnas.conf > 默认值）
 get_wallpaper_api_url() {
   local api_url
-  api_url=$(config_read "WALLPAPER_API_URL" 2>/dev/null || true)
+  api_url=$(config_read "global" "WALLPAPER_API_URL" 2>/dev/null || true)
   if [[ -n "$api_url" ]]; then
     printf '%s' "$api_url"
     return 0

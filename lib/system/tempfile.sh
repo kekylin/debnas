@@ -142,7 +142,7 @@ _debnas_cleanup_on_exit() {
   fi
   # 退出码 0：成功，不报警
   [[ $exit_code -eq 0 ]] && return 0
-  # 退出码 2-6：已知的有意退出码（ERROR_DEPENDENCY/ERROR_CONFIG/ERROR_PERMISSION 等）
+  # 退出码 2-6：已知的有意退出码（ERROR_DEPENDENCY/ERROR_PERMISSION 等）
   [[ $exit_code -ge $_DEBNAS_INTENTIONAL_EXIT_MIN && $exit_code -le $_DEBNAS_INTENTIONAL_EXIT_MAX ]] && return 0
   # 退出码 1：如果已标记正常退出，视为有意；否则可能是 set -e 意外杀进程
   [[ $exit_code -eq 1 && $_DEBNAS_NORMAL_EXIT -eq 1 ]] && return 0

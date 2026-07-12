@@ -133,19 +133,11 @@ check_debnas_status() {
   # 已安装模块
   local installed_count=0
   local -a installed_modules=()
-  if [[ -d "/var/lib/debnas/state" ]]; then
-    for state_file in /var/lib/debnas/state/*.state; do
-      [[ -f "$state_file" ]] || continue
-      local mod_name
-      mod_name=$(basename "$state_file" .state)
-      local result
-      result=$(grep "^last_result=" "$state_file" 2>/dev/null | cut -d= -f2-)
-      if [[ "$result" == "success" ]]; then
-        installed_count=$(( installed_count + 1 ))
-        installed_modules+=("$mod_name")
-      fi
-    done
-  fi
+  while IFS= read -r mod_name; do
+    [[ -n "$mod_name" ]] || continue
+    installed_count=$(( installed_count + 1 ))
+    installed_modules+=("$mod_name")
+  done < <(state_list_installed)
   printf "  %-20s %s 个\n" "模块:" "$installed_count"
   if [[ ${#installed_modules[@]} -gt 0 ]]; then
     printf "  %-20s %s\n" "" "$(IFS=', '; echo "${installed_modules[*]}")"
