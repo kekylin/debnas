@@ -13,6 +13,27 @@ IFS=$'\n\t'
 # 加载公共模块，确保依赖函数和常量可用
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${SCRIPT_DIR}/lib/bootstrap.sh"
+# 安全读取一行输入（兼容 set -e，read 失败不终止脚本）
+# 参数：$1 - 提示信息，$2 - 隐藏输入（hidden）
+# 输出：用户输入内容
+safe_read_input() {
+  local prompt="$1"
+  local hidden="${2:-}"
+  local input=""
+
+  if [[ -n "$prompt" ]]; then
+    printf '%s\n' "$prompt" >&2
+  fi
+
+  if [[ "$hidden" == "hidden" ]]; then
+    read -rs input 2>/dev/null || true
+    printf '\n' >&2
+  else
+    read -r input 2>/dev/null || true
+  fi
+  printf '%s' "$input"
+}
+
 main() {
   if [[ "${DEBNAS_CRON_MODE:-0}" -eq 1 ]]; then
     log_info "cron 模式下不支持交互操作，已跳过"
@@ -73,7 +94,7 @@ declare -A SMTP_MAP=(
 
 # 用户输入提示
 prompt_message() {
-  echo -e "$1"
+  printf '%b\n' "$1"
 }
 
 # 安全文件写入（避免内容出现在进程参数列表中）
@@ -114,9 +135,11 @@ dc_hide_mailname='true'
 dc_mailname_in_oh='true'
 dc_localdelivery='mail_spool'"
   write_file_if_changed "/etc/exim4/update-exim4.conf.conf" "$exim_config" || true
-  if ! update-exim4.conf >/dev/null 2>&1; then
-    log_error "更新 Exim4 配置失败，可能会影响后续操作。"
-  fi
+  local conf_err
+  conf_err=$(update-exim4.conf 2>&1) || {
+    log_error "更新 Exim4 配置失败：${conf_err}"
+    return 1
+  }
 }
 
 # 配置 SMTP 认证参数
@@ -174,30 +197,9 @@ From: ${sender_email}
 EOF
   )
   log_info "发送测试邮件..."
-  echo -e "$email_content" | exim -bm "$notify_email" && \
+  printf '%s\n' "$email_content" | exim4 -bm "$notify_email" && \
     log_success "测试邮件已发送" || \
     { log_fail "测试邮件发送失败，请查看 /var/log/exim4/mainlog。"; exit "${ERROR_GENERAL}"; }
-}
-
-# 安全读取一行输入（兼容 set -e，read 失败不终止脚本）
-# 参数：$1 - 提示信息，$2 - 隐藏输入（hidden）
-# 输出：用户输入内容
-safe_read_input() {
-  local prompt="$1"
-  local hidden="${2:-}"
-  local input=""
-
-  if [[ -n "$prompt" ]]; then
-    printf '%s\n' "$prompt" >&2
-  fi
-
-  if [[ "$hidden" == "hidden" ]]; then
-    read -rs input 2>/dev/null || true
-    printf '\n' >&2
-  else
-    read -r input 2>/dev/null || true
-  fi
-  printf '%s' "$input"
 }
 
 # 主控制流程

@@ -336,7 +336,7 @@ write_file_if_changed() {
   fi
 
   # 写入文件
-  echo "$new_content" > "$file"
+  printf '%s\n' "$new_content" > "$file"
   chmod "$file_perm" "$file"
   return 0
 }
