@@ -1,6 +1,6 @@
 #!/bin/bash
 # 功能：交互菜单系统
-# 说明：使用 discover_modules() 自动发现模块并生成菜单
+# 说明：Phase 2 — 方向键导航 + ">" 光标指示 + 局部刷新
 # 交互菜单入口
 
 set -euo pipefail
@@ -12,17 +12,6 @@ _DEBNAS_ROOT="$(cd "$(dirname "${_DEBNAS_SCRIPT}")/.." && pwd)"
 
 # 加载统一库
 source "${_DEBNAS_ROOT}/lib/bootstrap.sh"
-
-# ==================== 常量定义 ====================
-
-
-# ==================== 横幅显示 ====================
-
-print_banner() {
-  # Phase 1: 移除非必要信息（QQ/作者/GitHub/温馨提示）
-  # Phase 2 将替换为 ui_header
-  print_banner_text "                     DebNAS"
-}
 
 # ==================== 部署方案 ====================
 
@@ -77,42 +66,6 @@ execute_solution() {
   return $failed
 }
 
-# 部署方案子菜单
-show_solution_sub_menu() {
-  print_submenu_title "${MSG_CAT_DEPLOY}"
-  local i
-  for i in "${!SOLUTION_NAMES[@]}"; do
-    print_menu_item "$((i+1))" "${SOLUTION_DISPLAY_NAMES[$i]}"
-  done
-  print_menu_item "0" "${MSG_BACK}" "true"
-  print_separator "-"
-}
-
-handle_solution_sub_menu() {
-  while true; do
-    show_solution_sub_menu
-    print_prompt "${MSG_SELECT}"
-    read -r choice
-
-    if ! [[ "$choice" =~ ^[0-9]+$ ]]; then
-      log_fail "${MSG_INVALID_INPUT}"
-      continue
-    fi
-
-    if [[ "$choice" == "0" ]]; then
-      break
-    fi
-
-    if [[ "$choice" -lt 1 || "$choice" -gt "${#SOLUTION_NAMES[@]}" ]]; then
-      log_fail "${MSG_INVALID_CHOICE}"
-      continue
-    fi
-
-    execute_solution "${SOLUTION_NAMES[$((choice-1))]}"
-    break
-  done
-}
-
 # ==================== 自动发现模式菜单 ====================
 
 # 构建当前有效分类列表
@@ -132,38 +85,6 @@ build_active_categories() {
   done
 }
 
-# 显示自动发现模式的主菜单
-show_auto_main_menu() {
-  print_banner
-
-  local i
-  for i in "${!ACTIVE_CATEGORIES[@]}"; do
-    print_main_menu_item "$((i+1))" "${ACTIVE_CATEGORIES[$i]}"
-  done
-
-  print_menu_item "0" "${MSG_EXIT}" "true"
-  print_separator "="
-}
-
-# 显示自动发现模式的子菜单
-show_auto_sub_menu() {
-  local category="$1"
-  local -a modules
-  mapfile -t modules < <(get_modules_by_category "$category" 2>/dev/null)
-
-  print_submenu_title "$category"
-  local idx=1
-  for module_name in "${modules[@]}"; do
-    local display_name
-    display_name=$(get_module_field "$module_name" "name" "$module_name" 2>/dev/null) || display_name="$module_name"
-    print_menu_item "$idx" "$display_name"
-    ((idx++)) || true
-  done
-  print_menu_item "0" "${MSG_BACK}" "true"
-  print_separator "-"
-  print_multiselect_prompt
-}
-
 # 执行自动发现模式选择的模块
 execute_auto_modules() {
   local category="$1"
@@ -180,88 +101,90 @@ execute_auto_modules() {
   done
 }
 
-# 自动发现模式子菜单处理
+# ═══════════════════════════════════════════════════════════════
+# Phase 2 新菜单循环 — 方向键导航
+# ═══════════════════════════════════════════════════════════════
+
+# 部署方案子菜单（新）
+handle_solution_sub_menu() {
+  local choice exit_code
+  while true; do
+    ui_screen_init
+    choice=$(UI_MENU_BACK_LABEL="← 返回上级" ui_menu "${MSG_CAT_DEPLOY}" "${SOLUTION_DISPLAY_NAMES[@]}") || {
+      exit_code=$?
+      case $exit_code in
+        254) return 0 ;;   # Esc：返回上级
+        255) exit 0  ;;   # Q：退出程序
+        *)   return 0 ;;
+      esac
+    }
+
+    execute_solution "${SOLUTION_NAMES[$choice]}"
+    sleep 1  # 短暂停留，让用户看到最终结果
+  done
+}
+
+# 自动发现模式子菜单处理（新）
 handle_auto_sub_menu() {
   local category="$1"
   local -a modules
   mapfile -t modules < <(get_modules_by_category "$category" 2>/dev/null)
 
-  while true; do
-    show_auto_sub_menu "$category"
-    print_prompt "${MSG_SELECT}"
-    read -r sub_choices
+  # 构建显示名称数组
+  local -a display_names=()
+  local module_name display_name
+  for module_name in "${modules[@]}"; do
+    display_name=$(get_module_field "$module_name" "name" "$module_name" 2>/dev/null) || display_name="$module_name"
+    display_names+=("$display_name")
+  done
 
-    [[ -z "$sub_choices" ]] && {
-      log_fail "${MSG_INVALID_INPUT}"
-      continue
+  local choice exit_code
+  while true; do
+    ui_screen_init
+    choice=$(UI_MENU_BACK_LABEL="← 返回上级" ui_menu "$category" "${display_names[@]}") || {
+      exit_code=$?
+      case $exit_code in
+        254) return 0 ;;   # Esc：返回上级
+        255) exit 0  ;;   # Q：退出程序
+        *)   return 0 ;;
+      esac
     }
 
-    local -a choices_array
-    IFS=' ' read -ra choices_array <<< "$sub_choices"
-
-    # 验证输入
-    local valid=true
-    for choice in "${choices_array[@]}"; do
-      if ! [[ "$choice" =~ ^[0-9]+$ ]]; then
-        log_fail "${MSG_INVALID_INPUT}"
-        valid=false
-        break
-      fi
-    done
-    [[ "$valid" == "false" ]] && continue
-
-    # 处理返回
-    [[ " $sub_choices " =~ " 0 " ]] && break
-
-    # 收集选择
-    local -a selected=()
-    for choice in "${choices_array[@]}"; do
-      if [[ "$choice" -ge 1 && "$choice" -le "${#modules[@]}" ]]; then
-        selected+=("${modules[$((choice-1))]}")
-      fi
-    done
-
-    if [[ ${#selected[@]} -eq 0 ]]; then
-      log_fail "${MSG_INVALID_CHOICE}"
-      continue
-    fi
-
-    execute_auto_modules "$category" "${selected[@]}"
-    break
+    # 执行单个选中模块
+    execute_auto_modules "$category" "${modules[$choice]}"
+    sleep 1  # 短暂停留，让用户看到最终结果
   done
 }
 
-# 自动发现模式主循环
-auto_menu_loop() {
+# 主菜单循环（新）
+main_menu_loop() {
   build_active_categories
 
+  local choice exit_code
   while true; do
-    show_auto_main_menu
-    print_prompt "${MSG_SELECT}"
-    read -r main_choice
+    ui_screen_init
+    choice=$(UI_MENU_QUIT=1 ui_menu "" "${ACTIVE_CATEGORIES[@]}") || {
+      exit_code=$?
+      case $exit_code in
+        254) continue ;;   # Esc（主菜单无上级，忽略）
+        255) break   ;;   # Q：退出程序
+        *)   break   ;;
+      esac
+    }
 
-    if ! [[ "$main_choice" =~ ^[0-9]+$ ]]; then
-      log_fail "${MSG_INVALID_INPUT}"
-      continue
-    fi
-
-    if [[ "$main_choice" == "0" ]]; then
-      log_action "exit"
-      exit 0
-    fi
-
-    if [[ "$main_choice" -lt 1 || "$main_choice" -gt "${#ACTIVE_CATEGORIES[@]}" ]]; then
-      log_fail "${MSG_INVALID_CHOICE}"
-      continue
-    fi
-
-    local category="${ACTIVE_CATEGORIES[$((main_choice-1))]}"
+    local category="${ACTIVE_CATEGORIES[$choice]}"
     if [[ "$category" == "${MSG_CAT_DEPLOY}" ]]; then
       handle_solution_sub_menu
     else
       handle_auto_sub_menu "$category"
     fi
+    # 返回后不清屏 — ui_screen_init 在当前位置重绘
+    # 模块执行日志保留在上方回滚缓冲区
   done
+
+  ui_cursor_show
+  log_action "用户退出 DebNAS"
+  exit 0
 }
 
 # ==================== 环境设置 ====================
@@ -275,7 +198,8 @@ setup_environment() {
 # ==================== 主入口 ====================
 
 main() {
-  clear 2>/dev/null || true
+  ui_screen_clear    # 仅此一次清屏
+
   setup_environment
 
   # 系统检查
@@ -286,7 +210,7 @@ main() {
   # 发现模块并使用自动发现模式
   discover_modules 2>/dev/null
   load_solutions
-  auto_menu_loop
+  main_menu_loop
 }
 
 main "$@"

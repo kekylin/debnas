@@ -43,6 +43,9 @@ source "${_DEBNAS_ROOT}/lib/system/migration.sh"
 # ==================== UI layer（cron 模式下跳过） ====================
 if [[ "${DEBNAS_CRON_MODE:-0}" -eq 0 ]]; then
   source "${_DEBNAS_ROOT}/lib/ui/styles.sh"
+  source "${_DEBNAS_ROOT}/lib/ui/header.sh"
+  source "${_DEBNAS_ROOT}/lib/ui/footer.sh"
+  source "${_DEBNAS_ROOT}/lib/ui/layout.sh"
   source "${_DEBNAS_ROOT}/lib/ui/menu.sh"
 fi
 

@@ -21,6 +21,10 @@
 - Phase 1 UI 基础层：新增 `print_dim()` / `print_accent()` 辅助输出函数
 - Phase 1 UI 基础层：新增 `log_debug()` 调试日志（DEBNAS_DEBUG=1 时输出）
 - Phase 1 UI 基础层：新增 `lib/ui/footer.sh` — `ui_footer()` 底栏组件
+- Phase 2 菜单交互：新增 `lib/ui/header.sh` — `ui_header()` 居中标题组件
+- Phase 2 菜单交互：新增 `lib/ui/layout.sh` — `ui_screen_init()`/`ui_screen_clear()`/`ui_cursor_show()` 布局管理
+- Phase 2 菜单交互：新增 `read_key()` 方向键单键捕获（ANSI/应用模式/Vim jk 兼容/数字 1-9）
+- Phase 2 菜单交互：新增 `ui_menu()` 交互式菜单（方向键导航 + `>` 光标指示 + 局部刷新）
 - 新增 3 个模块集成测试文件（test-docker-ce.bats、test-firewall.bats、test-sources.bats），集成测试从 3 文件 35 用例扩展至 6 文件 108 用例（P3-2）
 - 扩展 Docker Compose 元数据系统：新增 `@description`、`@category`、`@require` 字段，支持递归依赖解析与循环依赖检测
 - 新增 `run_submenu()` 统一交互式子菜单循环，消除 4 个模块中的重复菜单逻辑
@@ -54,6 +58,8 @@
 - Phase 1 UI 基础层：`get_ui_color highlight` 从 COLOR_MAGENTA 迁移为 COLOR_CYAN
 - Phase 1 UI 基础层：`log_fatal` / `log_fatal_return` 颜色从 COLOR_MAGENTA 改为 COLOR_RED
 - Phase 1 UI 基础层：`bin/menu.sh` 横幅精简（移除 QQ/作者/GitHub/温馨提示）
+- Phase 2 菜单交互：`bin/menu.sh` 主循环重写为方向键导航（`main_menu_loop` 替代 `auto_menu_loop`）
+- Phase 2 菜单交互：`lib/bootstrap.sh` 增加 `header.sh`/`footer.sh`/`layout.sh` 加载
 - 质量门禁 check.sh 整合第 5 层集成测试，实现本地一键完整质量闭环（P3-5）
 - `install.sh` 编码规范对齐主工程：`set -eo pipefail` → `set -euo pipefail` + `IFS=$'\n\t'`
 - `hosts-sync` 依赖检查统一为 `install_missing_dependencies` 单次调用，移除最后的手动 `command -v` 循环
@@ -88,6 +94,7 @@
 - Phase 1 UI 基础层：`print_submenu_title()` 弃用（Phase 2 由 `ui_header` + 面包屑替代）
 - Phase 1 UI 基础层：`print_menu_item()` / `print_main_menu_item()` 弃用（Phase 2 由 `ui_menu` 替代）
 - Phase 1 UI 基础层：`print_banner_text()` 弃用（Phase 2 由 `ui_header` 替代）
+- Phase 2 菜单交互：`show_menu()` / `show_menu_with_border()` / `get_user_choice()` / `run_submenu()` 弃用（由 `ui_menu` 替代，旧函数保留向后兼容）
 
 ### Removed
 - 移除无引用的错误码常量（`ERROR_CONFIG`、`ERROR_PARAMETER`）及兼容别名（`GENERAL`/`DEPENDENCY`/`CONFIG`/`PERMISSION`/`PARAMETER`/`UNSUPPORTED_OS`）
