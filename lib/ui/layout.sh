@@ -71,13 +71,25 @@ ui_screen_clear() {
   printf '\033[H\033[J'
 }
 
+# 计算当前菜单区总行数（Header + 面包屑 + 菜单项 + 底部标签）
+_ui_menu_area_height() {
+  local header_height=4 breadcrumb_lines=2
+  [[ "${_UI_COMPACT_MODE:-0}" -eq 1 ]] && { header_height=3; breadcrumb_lines=1; }
+  local item_count=${#_UI_MENU_SNAPSHOT_ITEMS[@]}
+  [[ -z "${_UI_MENU_SNAPSHOT_BREADCRUMB:-}" ]] && breadcrumb_lines=0
+  echo $(( header_height + breadcrumb_lines + item_count + 1 ))
+}
+
 # 【跨级切菜单】使用光标恢复定位旧菜单区域，原地覆写
 # 光标保存/恢复比 DSR 更可靠：不受模块输出导致的终端滚动影响
 ui_screen_switch() {
   if [[ "${_UI_CURSOR_SAVED:-0}" -eq 1 ]]; then
-    # 导航模式：恢复到保存的位置（旧菜单起始行上方），擦除旧内容
-    printf '\033[u'        # 恢复光标到保存位置
-    printf '\033[J'        # 擦除从光标到屏底
+    # 恢复到菜单底部，再上移到菜单顶部，整块擦除旧菜单
+    local area_height
+    area_height=$(_ui_menu_area_height)
+    printf '\033[u'
+    printf '\033[%dA' "$area_height"
+    printf '\033[J'
     _UI_CURSOR_SAVED=0
   else
     # 无保存位置（启动/resize 等场景）：回退全清
@@ -93,7 +105,7 @@ ui_clear_menu_area() {
   [[ "$count" -gt 0 ]] || return 0
   if [[ "${_UI_CURSOR_SAVED:-0}" -eq 1 ]]; then
     printf '\033[u'
-    [[ $count -gt 1 ]] && printf '\033[%dA' "$((count - 1))"
+    printf '\033[%dA' "$count"
     printf '\033[J'
     _UI_CURSOR_SAVED=0
   fi
@@ -209,7 +221,7 @@ _ui_print_menu_snapshot() {
   else
     shortcuts+="  Q 退出"
   fi
-  local version="v${DEBNAS_VERSION:-3.0.0}"
+  local version="${DEBNAS_VERSION:-v3.0.0}"
   local margin="${_UI_BREAD_INDENT:-2}"
   local ftr_padding=$((cols - margin - ${#shortcuts} - ${#version} - 2))
   if [[ "$ftr_padding" -lt 1 ]]; then

@@ -12,7 +12,7 @@ IFS=$'\n\t'
 # 输出：左侧快捷键（灰色）+ 右侧版本号（灰色）
 ui_footer() {
   local shortcuts="${1:-}"
-  local version="v${DEBNAS_VERSION:-3.0.0}"
+  local version="${DEBNAS_VERSION:-v3.0.0}"
   local cols="${COLUMNS:-$(tput cols 2>/dev/null || echo 80)}"
 
   # 计算右侧版本号间隙（左边距 _UI_BREAD_INDENT + 快捷键 + 2 空格间距 + 版本号）

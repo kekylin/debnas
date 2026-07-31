@@ -122,7 +122,7 @@ handle_solution_sub_menu() {
       rm -f "$menu_result"
       case $exit_code in
         254) return 0 ;;   # Esc：返回上级
-        255) declare -f _ui_print_menu_snapshot >/dev/null 2>&1 && _ui_print_menu_snapshot; exit 0  ;;
+        255) ui_cursor_show; log_info "用户退出 DebNAS"; exit 0  ;;
         *)   return 0 ;;
       esac
     }
@@ -168,7 +168,7 @@ handle_auto_sub_menu() {
       rm -f "$menu_result"
       case $exit_code in
         254) return 0 ;;   # Esc：返回上级
-        255) declare -f _ui_print_menu_snapshot >/dev/null 2>&1 && _ui_print_menu_snapshot; exit 0  ;;
+        255) ui_cursor_show; log_info "用户退出 DebNAS"; exit 0  ;;
         *)   return 0 ;;
       esac
     }
@@ -231,8 +231,7 @@ main_menu_loop() {
     fi
   done
 
-  # 退出前打印最终菜单快照（记录用户从哪个界面退出）
-  declare -f _ui_print_menu_snapshot >/dev/null 2>&1 && _ui_print_menu_snapshot
+  # 当前菜单已保留在屏幕上，退出日志直接追加在菜单下方，避免重复快照
   ui_cursor_show
   log_info "用户退出 DebNAS"
   exit 0

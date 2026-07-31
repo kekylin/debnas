@@ -436,9 +436,6 @@ ui_menu() {
         if [[ "$enable_quit" -eq 1 ]]; then
           _UI_MENU_SNAPSHOT_FOCUSED=$focus_idx
           return 255
-        elif [[ -n "$back_label" ]]; then
-          _UI_MENU_SNAPSHOT_FOCUSED=$focus_idx
-          return 254
         fi
         ;;
       NUM:*)
