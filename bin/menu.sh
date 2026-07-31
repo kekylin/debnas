@@ -74,7 +74,7 @@ declare -a ACTIVE_CATEGORIES=()
 build_active_categories() {
   ACTIVE_CATEGORIES=()
   for category in "${CATEGORY_ORDER[@]}"; do
-    if [[ "$category" == "${MSG_CAT_DEPLOY}" ]]; then
+    if [[ "$category" == "一键部署" ]]; then
       # 部署分类：有方案文件即有内容
       [[ ${#SOLUTION_NAMES[@]} -gt 0 ]] && ACTIVE_CATEGORIES+=("$category")
     else
@@ -117,7 +117,7 @@ handle_solution_sub_menu() {
   local choice exit_code menu_result
   while true; do
     menu_result=$(mktemp)
-    UI_MENU_BACK_LABEL="← 返回上级" UI_MENU_RESULT_FILE="$menu_result" ui_menu "${MSG_CAT_DEPLOY}" "${SOLUTION_DISPLAY_NAMES[@]}" || {
+    UI_MENU_BACK_LABEL="← 返回上级" UI_MENU_RESULT_FILE="$menu_result" ui_menu "一键部署" "${SOLUTION_DISPLAY_NAMES[@]}" || {
       exit_code=$?
       rm -f "$menu_result"
       case $exit_code in
@@ -224,7 +224,7 @@ main_menu_loop() {
     rm -f "$menu_result"
 
     local category="${ACTIVE_CATEGORIES[$choice]}"
-    if [[ "$category" == "${MSG_CAT_DEPLOY}" ]]; then
+    if [[ "$category" == "一键部署" ]]; then
       handle_solution_sub_menu
     else
       handle_auto_sub_menu "$category"

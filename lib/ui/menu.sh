@@ -481,7 +481,7 @@ show_menu() {
     print_menu_item "${idx}" "${option}"
     ((idx++)) || true
   done
-  print_menu_item "0" "${MSG_BACK:-返回}" "true"
+  print_menu_item "0" "返回" "true"
 }
 
 # @deprecated Phase 2: 显示带分隔线的菜单（由 ui_menu 替代）
@@ -515,18 +515,18 @@ get_user_choice() {
   choice=$(printf "%s" "${choice}" | tr -d '[:space:]')
 
   if [[ -z "$choice" ]]; then
-    log_error "${MSG_INVALID_INPUT:-请输入数字编号}"
+    log_error "请输入数字编号"
     return 1
   fi
 
   # 验证输入
   if [[ ! "$choice" =~ ^[0-9]+$ ]]; then
-    log_error "${MSG_INVALID_INPUT:-请输入数字编号}"
+    log_error "请输入数字编号"
     return 1
   fi
 
   if [[ "$choice" -lt 0 ]] || [[ "$choice" -gt "$max_options" ]]; then
-    log_error "${MSG_INVALID_CHOICE:-无效选择}，请输入 0-$max_options"
+    log_error "无效选择，请输入 0-$max_options"
     return 1
   fi
 
@@ -559,7 +559,7 @@ run_submenu() {
       print_menu_item "$idx" "$label"
       ((idx++)) || true
     done
-    print_menu_item "0" "${MSG_BACK:-返回}" "true"
+    print_menu_item "0" "返回" "true"
     print_separator "-"
 
     local choice

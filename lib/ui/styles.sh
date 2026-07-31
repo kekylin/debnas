@@ -155,5 +155,5 @@ print_prompt() {
 # 参数：无
 # 返回值：无
 print_multiselect_prompt() {
-  print_colored "COLOR_GREEN" "${MSG_MULTISELECT:-支持多选，空格分隔多个编号，如：1 2 3}"
-} 
+  print_colored "COLOR_GREEN" "支持多选，空格分隔多个编号，如：1 2 3"
+}

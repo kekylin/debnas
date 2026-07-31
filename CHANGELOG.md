@@ -97,6 +97,7 @@
 - Phase 2 菜单交互：`show_menu()` / `show_menu_with_border()` / `get_user_choice()` / `run_submenu()` 弃用（由 `ui_menu` 替代，旧函数保留向后兼容）
 
 ### Removed
+- 移除多语言（i18n）支持：删除 `lib/i18n/`、`--lang` 参数与 `lang` 配置项，界面固定为中文
 - 移除无引用的错误码常量（`ERROR_CONFIG`、`ERROR_PARAMETER`）及兼容别名（`GENERAL`/`DEPENDENCY`/`CONFIG`/`PERMISSION`/`PARAMETER`/`UNSUPPORTED_OS`）
 - 移除死函数 `config_validate`、`config_read_global`、`config_write_global`
 - 移除死函数 `get_user_multiple_choice`、`show_confirm`、`show_menu_with_description`

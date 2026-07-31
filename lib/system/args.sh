@@ -45,7 +45,6 @@ DebNAS — Debian NAS 自动化部署工具
   --dry-run               仅预览，不实际操作
   --yes, -y               自动确认所有提示
   --region cn|global      指定网络环境
-  --lang zh|en            指定界面语言
 
 示例:
   debnas                                    # 启动交互菜单
@@ -79,16 +78,14 @@ parse_global_args() {
 	local -a remaining_args=()
 
 	# 第1步：从配置文件读取持久化设置
-	local _cfg_region _cfg_lang _cfg_file_logging
+	local _cfg_region _cfg_file_logging
 	_cfg_region=$(config_read "global" "region" "" 2>/dev/null || true)
-	_cfg_lang=$(config_read "global" "lang" "" 2>/dev/null || true)
 	_cfg_file_logging=$(config_read "global" "file_logging" "" 2>/dev/null || true)
 
 	# 第2步：初始化环境变量（配置文件 > 环境变量 > 默认值）
 	export DEBNAS_DRY_RUN="${DEBNAS_DRY_RUN:-0}"
 	export DEBNAS_FORCE_YES="${DEBNAS_FORCE_YES:-0}"
 	export DEBNAS_REGION="${DEBNAS_REGION:-${_cfg_region:-}}"
-	export DEBNAS_LANG="${DEBNAS_LANG:-${_cfg_lang:-zh}}"
 	export DEBNAS_FILE_LOGGING="${DEBNAS_FILE_LOGGING:-${_cfg_file_logging:-0}}"
 	export DEBNAS_CRON_MODE="${DEBNAS_CRON_MODE:-0}"
 
@@ -122,25 +119,6 @@ parse_global_args() {
 						;;
 					*)
 						echo "错误: --region 参数无效: '$1'（仅支持 cn 或 global）" >&2
-						return 1
-						;;
-				esac
-				_DEBNAS_CLI_FLAGS=1
-				shift
-				;;
-
-			--lang)
-				shift
-				if [[ $# -eq 0 ]]; then
-					echo "错误: --lang 需要参数 (zh 或 en)" >&2
-					return 1
-				fi
-				case "$1" in
-					zh|en)
-						export DEBNAS_LANG="$1"
-						;;
-					*)
-						echo "错误: --lang 参数无效: '$1'（仅支持 zh 或 en）" >&2
 						return 1
 						;;
 				esac

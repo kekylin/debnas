@@ -15,14 +15,14 @@ readonly DEBNAS_MODULES_DIR="${DEBNAS_MODULES_DIR:-}"
 
 # 分类显示顺序（硬编码，对应路线图 §7.1）
 readonly -a CATEGORY_ORDER=(
-  "${MSG_CAT_BASIC:-基础系统}"
-  "${MSG_CAT_PANEL:-管理面板}"
-  "${MSG_CAT_SECURITY:-安全防护}"
-  "${MSG_CAT_CONTAINER:-容器管理}"
-  "${MSG_CAT_NOTIFY:-通知服务}"
-  "${MSG_CAT_MAINTENANCE:-系统维护}"
-  "${MSG_CAT_TOOLS:-系统工具}"
-  "${MSG_CAT_DEPLOY:-一键部署}"
+  "基础系统"
+  "管理面板"
+  "安全防护"
+  "容器管理"
+  "通知服务"
+  "系统维护"
+  "系统工具"
+  "一键部署"
 )
 
 # 默认 order 值（未声明时排在最后）

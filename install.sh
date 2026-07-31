@@ -292,7 +292,6 @@ write_config() {
 # DebNAS 全局配置
 # 创建时间: $(date '+%Y-%m-%d %H:%M:%S')
 region=${REGION}
-lang=zh
 file_logging=1
 EOF
     _success "配置: ${conf_file}"
