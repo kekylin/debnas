@@ -314,17 +314,21 @@ main() {
   if [[ "${DEBNAS_CRON_MODE:-0}" -eq 0 ]]; then
     init_manual
     local -a items=("启用自动更新" "禁用自动更新" "查看定时任务")
-    local choice exit_code
+    local choice exit_code menu_result
     while true; do
       display_threat_status
-      choice=$(UI_MENU_BACK_LABEL="← 返回上级" ui_menu "威胁 IP 封禁" "${items[@]}") || {
+      menu_result=$(mktemp)
+      UI_MENU_BACK_LABEL="← 返回上级" UI_MENU_RESULT_FILE="$menu_result" ui_menu "威胁 IP 封禁" "${items[@]}" || {
         exit_code=$?
+        rm -f "$menu_result"
         case $exit_code in
           254) mark_normal_exit; return 0 ;;   # Esc：退出模块
           255) mark_normal_exit; return 0 ;;   # Q：退出模块
           *)   mark_normal_exit; return 0 ;;
         esac
       }
+      choice=$(cat "$menu_result")
+      rm -f "$menu_result"
       _handle_threat_action "$choice"
       sleep 1
     done

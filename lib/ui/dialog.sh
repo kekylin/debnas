@@ -222,9 +222,16 @@ ui_input() {
   local default="${2:-}"
   local hidden="${3:-}"
 
-  # 非交互模式：返回默认值
+  # 非交互模式：读取 stdin；EOF 或空行回退到默认值
   if [[ ! -t 0 ]]; then
-    if [[ -n "$default" ]]; then
+    local input
+    if IFS= read -r input; then
+      if [[ -n "$input" ]]; then
+        echo "$input"
+      else
+        echo "$default"
+      fi
+    elif [[ -n "$default" ]]; then
       echo "$default"
     fi
     return 0

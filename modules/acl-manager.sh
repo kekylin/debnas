@@ -17,6 +17,7 @@ source "${SCRIPT_DIR}/lib/bootstrap.sh"
 # 临时文件管理
 register_temp_cleanup
 ACL_OUTPUT=$(create_temp_file "acl-output")
+_ACL_FAILED=0
 
 # 日志文件路径
 LOG_FILE="/var/log/debnas/acl-manager.log"
@@ -38,6 +39,12 @@ log_acl_action() {
   local timestamp
   timestamp=$(date "+%Y-%m-%d %H:%M:%S")
   echo "[$timestamp] $action" >> "$LOG_FILE" 2>/dev/null || log_warning "无法写入日志文件 $LOG_FILE"
+}
+
+# 记录 ACL 操作失败并标记模块最终返回非零
+acl_error() {
+  log_error "$@"
+  _ACL_FAILED=1
 }
 
 # 验证权限字符串格式，防止无效输入
@@ -89,14 +96,14 @@ set_user_acl() {
       log_success "ACL: u:$username:$permissions $path"
       log_acl_action "设置用户ACL: u:$username:$permissions $path (递归: $recursive)"
     else
-      log_error "无法设置权限。请检查输入或查看 $ACL_OUTPUT。"
+      acl_error "无法设置权限。请检查输入或查看 $ACL_OUTPUT。"
     fi
   else
     if setfacl -m u:"$username":"$permissions" "$path" 2>&1 | tee "$ACL_OUTPUT"; then
       log_success "ACL: u:$username:$permissions $path"
       log_acl_action "设置用户ACL: u:$username:$permissions $path (递归: $recursive)"
     else
-      log_error "无法设置权限。请检查输入或查看 $ACL_OUTPUT。"
+      acl_error "无法设置权限。请检查输入或查看 $ACL_OUTPUT。"
     fi
   fi
 }
@@ -126,14 +133,14 @@ set_group_acl() {
       log_success "ACL: g:$groupname:$permissions $path"
       log_acl_action "设置组ACL: g:$groupname:$permissions $path (递归: $recursive)"
     else
-      log_error "无法设置权限。请检查输入或查看 $ACL_OUTPUT。"
+      acl_error "无法设置权限。请检查输入或查看 $ACL_OUTPUT。"
     fi
   else
     if setfacl -m g:"$groupname":"$permissions" "$path" 2>&1 | tee "$ACL_OUTPUT"; then
       log_success "ACL: g:$groupname:$permissions $path"
       log_acl_action "设置组ACL: g:$groupname:$permissions $path (递归: $recursive)"
     else
-      log_error "无法设置权限。请检查输入或查看 $ACL_OUTPUT。"
+      acl_error "无法设置权限。请检查输入或查看 $ACL_OUTPUT。"
     fi
   fi
 }
@@ -161,7 +168,7 @@ set_default_acl() {
     log_success "ACL 默认: $path"
     log_acl_action "设置默认ACL: $entry:$permissions $path"
   else
-    log_error "无法设置默认ACL权限。请检查输入或查看 $ACL_OUTPUT。"
+    acl_error "无法设置默认ACL权限。请检查输入或查看 $ACL_OUTPUT。"
   fi
 }
 
@@ -183,7 +190,7 @@ remove_default_acl() {
     log_success "ACL 默认取消: $path"
     log_acl_action "取消默认ACL: $path"
   else
-    log_error "无法取消默认ACL权限。请检查输入或查看 $ACL_OUTPUT。"
+    acl_error "无法取消默认ACL权限。请检查输入或查看 $ACL_OUTPUT。"
   fi
 }
 
@@ -209,14 +216,14 @@ remove_acl() {
       log_success "ACL 删除: $entry"
       log_acl_action "删除ACL: $entry $path (递归: $recursive)"
     else
-      log_error "无法删除ACL条目。请检查输入或查看 $ACL_OUTPUT。"
+      acl_error "无法删除ACL条目。请检查输入或查看 $ACL_OUTPUT。"
     fi
   else
     if setfacl -x "$entry" "$path" 2>&1 | tee "$ACL_OUTPUT"; then
       log_success "ACL 删除: $entry"
       log_acl_action "删除ACL: $entry $path (递归: $recursive)"
     else
-      log_error "无法删除ACL条目。请检查输入或查看 $ACL_OUTPUT。"
+      acl_error "无法删除ACL条目。请检查输入或查看 $ACL_OUTPUT。"
     fi
   fi
 }
@@ -248,14 +255,14 @@ batch_set_acl() {
         log_success "已为 $path 设置 $entry:$permissions"
         log_acl_action "批量设置ACL: $entry:$permissions $path (递归: $recursive)"
       else
-        log_error "无法为 $path 设置权限，请查看 $ACL_OUTPUT。"
+        acl_error "无法为 $path 设置权限，请查看 $ACL_OUTPUT。"
       fi
     else
       if setfacl -m "$entry":"$permissions" "$path" 2>&1 | tee -a "$ACL_OUTPUT"; then
         log_success "已为 $path 设置 $entry:$permissions"
         log_acl_action "批量设置ACL: $entry:$permissions $path (递归: $recursive)"
       else
-        log_error "无法为 $path 设置权限，请查看 $ACL_OUTPUT。"
+        acl_error "无法为 $path 设置权限，请查看 $ACL_OUTPUT。"
       fi
     fi
   done
@@ -277,16 +284,20 @@ main() {
     "删除ACL"
     "批量设置ACL"
   )
-  local choice exit_code
+  local choice exit_code menu_result
   while true; do
-    choice=$(UI_MENU_BACK_LABEL="← 返回上级" ui_menu "ACL 权限" "${items[@]}") || {
+    menu_result=$(mktemp)
+    UI_MENU_BACK_LABEL="← 返回上级" UI_MENU_RESULT_FILE="$menu_result" ui_menu "ACL 权限" "${items[@]}" || {
       exit_code=$?
+      rm -f "$menu_result"
       case $exit_code in
-        254) return 0 ;;   # Esc：返回上级
-        255) return 0 ;;   # Q：退出
-        *)   return 0 ;;
+        254) return "$_ACL_FAILED" ;;   # Esc：返回上级
+        255) return "$_ACL_FAILED" ;;   # Q：退出
+        *)   return "$_ACL_FAILED" ;;
       esac
     }
+    choice=$(cat "$menu_result")
+    rm -f "$menu_result"
 
     case $choice in
       0) view_acl ;;

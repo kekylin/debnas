@@ -186,7 +186,13 @@ log_info "配置邮件服务..."
 # 读取发件邮箱
 email_domain=""
 smarthost=""
+input_attempt=0
 while true; do
+  ((input_attempt++)) || true
+  if [[ $input_attempt -gt 5 ]]; then
+    log_error "发件邮箱输入无效次数过多或输入流已结束"
+    exit "${ERROR_GENERAL}"
+  fi
   email=$(ui_input "请输入 SMTP 发件邮箱地址")
   if [[ -z "$email" ]]; then
     log_error "发件邮箱不能为空"
@@ -201,7 +207,13 @@ while true; do
 done
 
 # 读取授权密码
+input_attempt=0
 while true; do
+  ((input_attempt++)) || true
+  if [[ $input_attempt -gt 5 ]]; then
+    log_error "授权密码输入无效次数过多或输入流已结束"
+    exit "${ERROR_GENERAL}"
+  fi
   password=$(ui_input "请输入 SMTP 服务授权密码" "" "hidden")
   if [[ -z "$password" ]]; then
     log_error "授权密码不能为空"
@@ -211,7 +223,13 @@ while true; do
 done
 
 # 读取通知接收邮箱
+input_attempt=0
 while true; do
+  ((input_attempt++)) || true
+  if [[ $input_attempt -gt 5 ]]; then
+    log_error "通知邮箱输入无效次数过多或输入流已结束"
+    exit "${ERROR_GENERAL}"
+  fi
   notify_email=$(ui_input "请输入系统通知接收邮箱地址")
   if [[ -z "$notify_email" ]]; then
     log_error "通知邮箱不能为空"

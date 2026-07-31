@@ -22,14 +22,19 @@ main() {
 
   local -a items=("启用登录通知" "禁用登录通知")
   while true; do
-    local choice
-    choice=$(UI_MENU_BACK_LABEL="← 返回上级" ui_menu "登录通知" "${items[@]}") || {
-      case $? in
+    local choice exit_code menu_result
+    menu_result=$(mktemp)
+    UI_MENU_BACK_LABEL="← 返回上级" UI_MENU_RESULT_FILE="$menu_result" ui_menu "登录通知" "${items[@]}" || {
+      exit_code=$?
+      rm -f "$menu_result"
+      case $exit_code in
         254) return 0 ;;   # Esc：返回上级
         255) return 0 ;;   # Q：退出
+        *)   continue ;;
       esac
-      continue
     }
+    choice=$(cat "$menu_result")
+    rm -f "$menu_result"
     case "$choice" in
       0) enable_login_mail ;;
       1) disable_login_mail ;;

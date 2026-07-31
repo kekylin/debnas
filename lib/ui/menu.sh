@@ -13,18 +13,12 @@ IFS=$'\n\t'
 
 # 读取单个键盘按键（含方向键、Vim 兼容键）
 # 输出（stdout）：UP / DOWN / ENTER / ESC / Q / REDRAW / NUM:n / OTHER:c
-# 非终端 stdin → 输出 "ESC" 并返回 1（安全降级）
+# 非终端 stdin 读到 EOF → 输出 "EOF" 并返回 1（安全退出）
 # Phase 4: SIGWINCH 感知 — 检测 _UI_NEEDS_REDRAW 标志，返回 "REDRAW"
 # 最后一次 read_key() 结果（供调用方读取，替代命令替换以规避子 shell 问题）
 _READ_KEY_RESULT=""
 
 read_key() {
-  # 非终端输入 → 安全退出
-  if [[ ! -t 0 ]]; then
-    _READ_KEY_RESULT="ESC"
-    return 1
-  fi
-
   # Phase 4: 检查是否有待处理的 SIGWINCH 重绘
   if [[ "${_UI_NEEDS_REDRAW:-0}" -eq 1 ]]; then
     _READ_KEY_RESULT="REDRAW"
@@ -32,14 +26,15 @@ read_key() {
   fi
 
   local key
-  IFS= read -r -s -n 1 key || {
-    # read 可能被 SIGWINCH 中断
+  if ! IFS= read -r -s -n 1 key; then
+    # read 可能被 SIGWINCH 中断，也可能是 stdin EOF
     if [[ "${_UI_NEEDS_REDRAW:-0}" -eq 1 ]]; then
       _READ_KEY_RESULT="REDRAW"
       return 0
     fi
-    _READ_KEY_RESULT="ESC"; return 0
-  }
+    _READ_KEY_RESULT="EOF"
+    return 1
+  fi
 
   # 空 key：用户直接按 Enter（未输入任何字符），read -n 1 遇到分隔符 \n 立即返回
   # Bash 行为：读到分隔符之前没有普通字符 → key 为空串，退出码为 0
@@ -105,6 +100,8 @@ ui_menu() {
   if [[ $item_count -eq 0 ]]; then
     return 254
   fi
+
+  ui_detect_size
 
   local focus_idx=0       # 当前焦点（items 数组索引）
   local old_focus=-1      # 上一次焦点（用于局部刷新）
@@ -368,10 +365,14 @@ ui_menu() {
   # ═══════════════ 主循环 ═══════════════
   while true; do
     local key
-    read_key || { _UI_MENU_SNAPSHOT_FOCUSED=$focus_idx; return 254; }
+    read_key
     key="$_READ_KEY_RESULT"
 
     case "$key" in
+      EOF)
+        _UI_MENU_SNAPSHOT_FOCUSED=$focus_idx
+        return 255
+        ;;
       REDRAW)
         _UI_NEEDS_REDRAW=0
         # 重新计算布局参数（紧凑模式可能随 ui_screen_init 更新，但不在 SIGWINCH 中变化）

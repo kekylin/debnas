@@ -22,14 +22,19 @@ main() {
 
   local -a items=("启用外网访问" "禁用外网访问")
   while true; do
-    local choice
-    choice=$(UI_MENU_BACK_LABEL="← 返回上级" ui_menu "外网访问" "${items[@]}") || {
-      case $? in
+    local choice exit_code menu_result
+    menu_result=$(mktemp)
+    UI_MENU_BACK_LABEL="← 返回上级" UI_MENU_RESULT_FILE="$menu_result" ui_menu "外网访问" "${items[@]}" || {
+      exit_code=$?
+      rm -f "$menu_result"
+      case $exit_code in
         254) return 0 ;;   # Esc：返回上级
         255) return 0 ;;   # Q：退出
+        *)   continue ;;
       esac
-      continue
     }
+    choice=$(cat "$menu_result")
+    rm -f "$menu_result"
     case "$choice" in
       0) enable_cockpit_ext ;;
       1) disable_cockpit_ext ;;

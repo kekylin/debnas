@@ -107,6 +107,13 @@
 - 删除 DEBUG 日志等级和 `log_debug` 函数
 
 ### Fixed
+- 修复模块内使用 `$(ui_menu)` 捕获菜单渲染导致选择失效，统一改用 `UI_MENU_RESULT_FILE`（sys-patches/wallpaper/hosts-sync/login-mail/bbr/threat-ips/cockpit-ext/acl-manager）
+- 修复非 TTY 菜单 EOF 死循环：`read_key` 返回 EOF，`ui_menu` 收到后统一退出
+- 修复 `ui_menu` 在非 TTY/模块子菜单中 `LINES` 未绑定导致崩溃
+- 修复 `ui_input` 非交互模式忽略管道输入，导致 `mail-account`、`acl-manager` 等模块自动化输入失效
+- 修复 `mail-account` 输入无效/EOF 时无限循环，增加重试上限并返回错误
+- 修复 `wallpaper` 非交互启用时 cron 表达式未使用 `@cron_schedule` 默认值
+- 修复 `acl-manager` 操作失败未传播，模块退出码与 state 误标记为成功
 - 修复菜单底部版本号显示为 `vv2026.06` 的问题：`DEBNAS_VERSION` 已含 `v` 前缀，footer/快照不再重复拼接
 - 修复快捷键语义：返回统一为 ESC，退出仅限一级菜单（子菜单按 Q 静默忽略，不再返回上级或直接退出）
 - 修复退出时重复打印菜单快照：当前菜单已保留在屏幕，退出时不再额外打印快照

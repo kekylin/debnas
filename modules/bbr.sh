@@ -180,16 +180,20 @@ main() {
   fi
 
   local -a items=("启用 BBR（临时）" "启用 BBR（永久）" "关闭 BBR（临时）" "关闭 BBR（永久）" "BBR 状态")
-  local choice exit_code
+  local choice exit_code menu_result
   while true; do
-    choice=$(ui_menu "BBR 拥塞控制" "${items[@]}") || {
+    menu_result=$(mktemp)
+    UI_MENU_RESULT_FILE="$menu_result" ui_menu "BBR 拥塞控制" "${items[@]}" || {
       exit_code=$?
+      rm -f "$menu_result"
       case $exit_code in
         254) return 0 ;;   # Esc：退出模块
         255) return 0 ;;   # Q：退出模块
         *)   return 0 ;;
       esac
     }
+    choice=$(cat "$menu_result")
+    rm -f "$menu_result"
     # ui_menu 返回 0-based 索引，handle_choice 使用 1-based
     handle_choice "$((choice + 1))"
     echo

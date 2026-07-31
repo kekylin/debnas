@@ -38,14 +38,19 @@ main_menu() {
 
   local -a items=("立即执行检测" "设置定时检测" "查看定时任务" "移除定时任务")
   while true; do
-    local choice
-    choice=$(UI_MENU_BACK_LABEL="← 返回上级" ui_menu "系统更新" "${items[@]}") || {
-      case $? in
+    local choice exit_code menu_result
+    menu_result=$(mktemp)
+    UI_MENU_BACK_LABEL="← 返回上级" UI_MENU_RESULT_FILE="$menu_result" ui_menu "系统更新" "${items[@]}" || {
+      exit_code=$?
+      rm -f "$menu_result"
+      case $exit_code in
         254) return 0 ;;   # Esc：返回上级
         255) return 0 ;;   # Q：退出
+        *)   continue ;;
       esac
-      continue
     }
+    choice=$(cat "$menu_result")
+    rm -f "$menu_result"
     case "$choice" in
       0) execute_update_check ;;
       1) schedule_menu ;;
@@ -61,14 +66,19 @@ _schedule_weekly() { set_cron_task "weekly"; }
 schedule_menu() {
   local -a items=("每日检测（00:00）" "每周检测（周一00:00）" "自定义定时检测")
   while true; do
-    local choice
-    choice=$(UI_MENU_BACK_LABEL="← 返回上级" ui_menu "定时检测" "${items[@]}") || {
-      case $? in
+    local choice exit_code menu_result
+    menu_result=$(mktemp)
+    UI_MENU_BACK_LABEL="← 返回上级" UI_MENU_RESULT_FILE="$menu_result" ui_menu "定时检测" "${items[@]}" || {
+      exit_code=$?
+      rm -f "$menu_result"
+      case $exit_code in
         254) return 0 ;;   # Esc：返回上级
         255) return 0 ;;   # Q：退出
+        *)   continue ;;
       esac
-      continue
     }
+    choice=$(cat "$menu_result")
+    rm -f "$menu_result"
     case "$choice" in
       0) _schedule_daily ;;
       1) _schedule_weekly ;;

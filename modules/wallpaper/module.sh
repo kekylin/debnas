@@ -225,9 +225,10 @@ show_cron_jobs() {
 # ==================== 启用/禁用 ====================
 enable_bing_wallpaper() {
   check_cockpit_version || return 1
-  local cron_expr
+  local cron_expr default_cron
 
-  cron_expr=$(ui_input "请输入 Cron 表达式" "0 0 * * *")
+  default_cron=$(get_module_field "wallpaper" "cron_schedule" "0 */6 * * *" 2>/dev/null) || default_cron="0 */6 * * *"
+  cron_expr=$(ui_input "请输入 Cron 表达式" "$default_cron")
 
   prepare_env
   if ! cron_register "wallpaper" "$cron_expr"; then
@@ -265,16 +266,20 @@ auto_update_mode() {
 # ==================== 交互菜单 ====================
 main_menu() {
   local -a items=("启用必应壁纸" "禁用必应壁纸" "查看壁纸计划")
-  local choice exit_code
+  local choice exit_code menu_result
   while true; do
-    choice=$(UI_MENU_BACK_LABEL="← 返回上级" ui_menu "Cockpit 必应壁纸" "${items[@]}") || {
+    menu_result=$(mktemp)
+    UI_MENU_BACK_LABEL="← 返回上级" UI_MENU_RESULT_FILE="$menu_result" ui_menu "Cockpit 必应壁纸" "${items[@]}" || {
       exit_code=$?
+      rm -f "$menu_result"
       case $exit_code in
         254) return 0 ;;   # Esc：返回上级
         255) return 0 ;;   # Q：退出
         *)   return 0 ;;
       esac
     }
+    choice=$(cat "$menu_result")
+    rm -f "$menu_result"
 
     case "$choice" in
       0) enable_bing_wallpaper ;;
