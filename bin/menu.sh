@@ -83,6 +83,7 @@ build_active_categories() {
       [[ ${#modules[@]} -gt 0 ]] && ACTIVE_CATEGORIES+=("$category")
     fi
   done
+  ACTIVE_CATEGORIES+=("关于项目")
   return 0  # 确保函数始终返回 0（避免 set -e 下因最后一个 [[ 失败而退出）
 }
 
@@ -105,6 +106,22 @@ execute_auto_modules() {
 # ═══════════════════════════════════════════════════════════════
 # Phase 2 新菜单循环 — 方向键导航
 # ═══════════════════════════════════════════════════════════════
+
+# 关于项目：直接打印概况后返回一级菜单
+handle_about_project() {
+  local separator
+  separator=$(printf '%*s' 46 '' | tr ' ' '-')
+  printf '\n'
+  printf '%s\n' "$separator"
+  printf '\n'
+  printf '    %s\n' "一个将 Debian 系统快速配置成准 NAS 系统的脚本。"
+  printf '\n'
+  printf '    作者：%b%s%b\n' "$COLOR_DIM" "kekylin" "$COLOR_RESET"
+  printf '    地址：%b%s%b\n' "$COLOR_DIM" "https://github.com/kekylin/debnas" "$COLOR_RESET"
+  printf '\n'
+  printf '%s\n' "$separator"
+  printf '\n'
+}
 
 # 部署方案子菜单（新）
 handle_solution_sub_menu() {
@@ -201,12 +218,15 @@ main_menu_loop() {
     exit "${ERROR_MODULE_NOT_FOUND:-1}"
   fi
 
-  local choice exit_code menu_result
+  local choice exit_code menu_result preserve_output=0
   local first_entry=1
   while true; do
     if [[ $first_entry -eq 1 ]]; then
       ui_screen_init    # 首次：无旧菜单需清除
       first_entry=0
+    elif [[ $preserve_output -eq 1 ]]; then
+      ui_screen_init    # 关于项目后：菜单追加在简介下方，不清除已打印内容
+      preserve_output=0
     else
       ui_screen_switch  # 从子菜单返回：清子菜单区 + 渲染 L1
     fi
@@ -224,7 +244,10 @@ main_menu_loop() {
     rm -f "$menu_result"
 
     local category="${ACTIVE_CATEGORIES[$choice]}"
-    if [[ "$category" == "一键部署" ]]; then
+    if [[ "$category" == "关于项目" ]]; then
+      handle_about_project
+      preserve_output=1
+    elif [[ "$category" == "一键部署" ]]; then
       handle_solution_sub_menu
     else
       handle_auto_sub_menu "$category"

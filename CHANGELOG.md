@@ -17,6 +17,7 @@
 > 当前开发分支：`refactor/debnas-v2`
 
 ### Added
+- 一级菜单新增“关于项目”入口，进入后展示本项目概况
 - Phase 1 UI 基础层：新增 `COLOR_DIM`（亮黑/灰色）ANSI 颜色变量
 - Phase 1 UI 基础层：新增 `print_dim()` / `print_accent()` 辅助输出函数
 - Phase 1 UI 基础层：新增 `log_debug()` 调试日志（DEBNAS_DEBUG=1 时输出）
@@ -54,6 +55,7 @@
 - 新增部署方案集成测试 `tests/integration/test-solution.bats`（8 个用例：方案解析、模块排序、stdin 隔离、失败中断、空格 trim）
 
 ### Changed
+- 关于项目改为直接打印概况后返回一级菜单，并优化终端排版
 - Phase 1 UI 基础层：日志标签统一为 7 字符宽度（`[SUCCESS]→[OK]`、`[FAIL]→[ERROR]`、`[WARNING]→[WARN]`、`[ACTION]→[INFO]`）
 - Phase 1 UI 基础层：`get_ui_color highlight` 从 COLOR_MAGENTA 迁移为 COLOR_CYAN
 - Phase 1 UI 基础层：`log_fatal` / `log_fatal_return` 颜色从 COLOR_MAGENTA 改为 COLOR_RED
