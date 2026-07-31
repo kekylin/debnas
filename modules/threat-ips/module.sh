@@ -250,7 +250,8 @@ init_cron() {
 
 # ==================== 菜单函数（仅交互模式使用） ====================
 
-show_menu() {
+# 显示威胁 IP 状态信息（动态查询，每次菜单渲染前刷新）
+display_threat_status() {
   local ipv4_count=0 ipv6_count=0
   if check_ipset_exists "${IPSET_NAME_IPV4}"; then
     ipv4_count=$(firewall-cmd --permanent \
@@ -276,28 +277,16 @@ show_menu() {
     fi
   fi
 
-  print_separator "-"
-  print_info "工作区域: ${ZONE}"
-  print_info "威胁等级: ${threat_level}"
-  print_info "IP 使用： IPv4 ${ipv4_count}/${MAX_IP_LIMIT} IPv6 ${ipv6_count}/${MAX_IP_LIMIT}"
-  print_separator "-"
-  print_menu_item "1" "启用自动更新"
-  print_menu_item "2" "禁用自动更新"
-  print_menu_item "3" "查看定时任务"
-  print_menu_item "0" "退出" "true"
-  print_separator "-"
+  log_info "工作区域: ${ZONE}"
+  log_info "威胁等级: ${threat_level}"
+  log_info "IP 使用： IPv4 ${ipv4_count}/${MAX_IP_LIMIT} IPv6 ${ipv6_count}/${MAX_IP_LIMIT}"
+}
 
-  local choice
-  print_prompt "请选择编号: "
-  read -r choice || {
-    log_info "输入流结束，退出脚本"
-    mark_normal_exit
-    return 0
-  }
-  choice=$(printf "%s" "${choice}" | tr -d '[:space:]')
-
+# 威胁 IP 菜单操作分发（从旧 show_menu 的 case 块提取）
+_handle_threat_action() {
+  local choice="$1"
   case "${choice}" in
-    1)
+    0)
       ensure_module_deps threat-ips || return 1
       check_services || return 1
       validate_zone
@@ -306,10 +295,9 @@ show_menu() {
         return 1
       }
       ;;
-    2) disable_auto_update ;;
-    3) view_cron_jobs ;;
-    0) mark_normal_exit; return 0 ;;
-    *) log_warning "无效选项：${choice}" ;;
+    1) disable_auto_update ;;
+    2) view_cron_jobs ;;
+    *) log_warning "无效选项" ;;
   esac
 }
 
@@ -325,7 +313,21 @@ main() {
 
   if [[ "${DEBNAS_CRON_MODE:-0}" -eq 0 ]]; then
     init_manual
-    while show_menu; do :; done
+    local -a items=("启用自动更新" "禁用自动更新" "查看定时任务")
+    local choice exit_code
+    while true; do
+      display_threat_status
+      choice=$(UI_MENU_BACK_LABEL="← 返回上级" ui_menu "威胁 IP 封禁" "${items[@]}") || {
+        exit_code=$?
+        case $exit_code in
+          254) mark_normal_exit; return 0 ;;   # Esc：退出模块
+          255) mark_normal_exit; return 0 ;;   # Q：退出模块
+          *)   mark_normal_exit; return 0 ;;
+        esac
+      }
+      _handle_threat_action "$choice"
+      sleep 1
+    done
   else
     init_cron || exit "${ERROR_GENERAL}"
     validate_zone

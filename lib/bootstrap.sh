@@ -47,6 +47,9 @@ if [[ "${DEBNAS_CRON_MODE:-0}" -eq 0 ]]; then
   source "${_DEBNAS_ROOT}/lib/ui/footer.sh"
   source "${_DEBNAS_ROOT}/lib/ui/layout.sh"
   source "${_DEBNAS_ROOT}/lib/ui/menu.sh"
+  source "${_DEBNAS_ROOT}/lib/ui/log.sh"
+  source "${_DEBNAS_ROOT}/lib/ui/progress.sh"
+  source "${_DEBNAS_ROOT}/lib/ui/dialog.sh"
 fi
 
 # ==================== i18n ====================

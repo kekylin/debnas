@@ -19,7 +19,7 @@ source "${SCRIPT_DIR}/lib/system/state.sh"
 # 检查 apt、awk 依赖，确保后续操作可用
 REQUIRED_CMDS=(apt awk)
 if ! check_dependencies "${REQUIRED_CMDS[@]}"; then
-  log_fail "缺少 apt 或 awk，请先手动安装。"
+  log_error "缺少 apt 或 awk，请先手动安装。"
   exit "${ERROR_DEPENDENCY}"
 fi
 
@@ -29,7 +29,7 @@ log_info "安装基础工具包..."
 if apt_install_packages sudo curl git vim wget exim4 gnupg apt-transport-https ca-certificates udisks2-lvm2 smartmontools; then
   log_success "基础工具包 就绪"
 else
-  log_fail "基础工具包 安装失败"
+  log_error "基础工具包 安装失败"
   exit "${ERROR_GENERAL}"
 fi
 

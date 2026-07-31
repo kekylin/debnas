@@ -81,7 +81,7 @@ load_bbr_module() {
     fi
   fi
 
-  log_fail "BBR 模块不可用"
+  log_error "BBR 模块不可用"
   return 1
 }
 
@@ -92,7 +92,7 @@ temp_enable_bbr() {
      sysctl -w net.core.default_qdisc="$QDISC_FQ" >/dev/null 2>&1; then
     log_success "BBR (临时)"
   else
-    log_fail "BBR 失败"
+    log_error "BBR 失败"
     return 1
   fi
 }
@@ -101,7 +101,7 @@ perm_enable_bbr() {
   log_info "永久启用 BBR..."
   if ! load_bbr_module; then return 1; fi
   if ! sysctl -w net.ipv4.tcp_congestion_control="$BBR_ALGO" >/dev/null 2>&1; then
-    log_fail "BBR 失败"
+    log_error "BBR 失败"
     return 1
   fi
   # 同步设置队列规则为 fq
@@ -125,7 +125,7 @@ temp_disable_bbr() {
      sysctl -w net.core.default_qdisc="$DEFAULT_QDISC" >/dev/null 2>&1; then
     log_success "${DEFAULT_ALGO} 已启用"
   else
-    log_fail "算法切换失败，请检查系统权限。"
+    log_error "算法切换失败，请检查系统权限。"
     return 1
   fi
 }
@@ -133,7 +133,7 @@ temp_disable_bbr() {
 perm_disable_bbr() {
   log_info "永久关闭 BBR..."
   if ! sysctl -w net.ipv4.tcp_congestion_control="$DEFAULT_ALGO" >/dev/null 2>&1; then
-    log_fail "算法切换失败，请检查系统权限。"
+    log_error "算法切换失败，请检查系统权限。"
     return 1
   fi
   # 恢复默认队列规则
@@ -153,17 +153,6 @@ perm_disable_bbr() {
   fi
 }
 
-show_menu() {
-  print_separator "-"
-  print_menu_item "1" "启用 BBR（临时）"
-  print_menu_item "2" "启用 BBR（永久）"
-  print_menu_item "3" "关闭 BBR（临时）"
-  print_menu_item "4" "关闭 BBR（永久）"
-  print_menu_item "5" "BBR 状态"
-  print_menu_item "0" "退出"
-  print_separator "-"
-}
-
 handle_choice() {
   local choice="$1"
   case "$choice" in
@@ -172,8 +161,8 @@ handle_choice() {
     3) temp_disable_bbr ;;
     4) perm_disable_bbr ;;
     5) check_current_algo ;;
-    0) log_action "退出 BBR 管理"; exit 0 ;;
-    *) log_fail "无效编号，请重新选择。"; return 1 ;;
+    0) log_info "退出 BBR 管理"; return 0 ;;
+    *) log_error "无效编号，请重新选择。"; return 1 ;;
   esac
 }
 
@@ -190,19 +179,19 @@ main() {
     return $?
   fi
 
+  local -a items=("启用 BBR（临时）" "启用 BBR（永久）" "关闭 BBR（临时）" "关闭 BBR（永久）" "BBR 状态")
+  local choice exit_code
   while true; do
-    show_menu
-    print_prompt "请选择编号："
-    read -r choice
-    if [[ -z "$choice" ]]; then
-      log_fail "输入为空，请重新选择。"
-      continue
-    fi
-    if ! validate_numeric_input "$choice"; then
-      log_fail "请输入有效编号。"
-      continue
-    fi
-    handle_choice "$choice"
+    choice=$(ui_menu "BBR 拥塞控制" "${items[@]}") || {
+      exit_code=$?
+      case $exit_code in
+        254) return 0 ;;   # Esc：退出模块
+        255) return 0 ;;   # Q：退出模块
+        *)   return 0 ;;
+      esac
+    }
+    # ui_menu 返回 0-based 索引，handle_choice 使用 1-based
+    handle_choice "$((choice + 1))"
     echo
   done
 }

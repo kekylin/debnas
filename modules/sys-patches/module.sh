@@ -35,21 +35,46 @@ main_menu() {
   if ! verify_system_support; then
     return 1
   fi
-  run_submenu "系统更新" \
-    "execute_update_check" "立即执行检测" \
-    "schedule_menu" "设置定时检测" \
-    "list_cron_tasks" "查看定时任务" \
-    "remove_cron_task" "移除定时任务"
+
+  local -a items=("立即执行检测" "设置定时检测" "查看定时任务" "移除定时任务")
+  while true; do
+    local choice
+    choice=$(UI_MENU_BACK_LABEL="← 返回上级" ui_menu "系统更新" "${items[@]}") || {
+      case $? in
+        254) return 0 ;;   # Esc：返回上级
+        255) return 0 ;;   # Q：退出
+      esac
+      continue
+    }
+    case "$choice" in
+      0) execute_update_check ;;
+      1) schedule_menu ;;
+      2) list_cron_tasks ;;
+      3) remove_cron_task ;;
+    esac
+  done
 }
 
 _schedule_daily() { set_cron_task "daily"; }
 _schedule_weekly() { set_cron_task "weekly"; }
 
 schedule_menu() {
-  run_submenu "定时检测" \
-    "_schedule_daily" "每日检测（00:00）" \
-    "_schedule_weekly" "每周检测（周一00:00）" \
-    "set_custom_cron_task" "自定义定时检测"
+  local -a items=("每日检测（00:00）" "每周检测（周一00:00）" "自定义定时检测")
+  while true; do
+    local choice
+    choice=$(UI_MENU_BACK_LABEL="← 返回上级" ui_menu "定时检测" "${items[@]}") || {
+      case $? in
+        254) return 0 ;;   # Esc：返回上级
+        255) return 0 ;;   # Q：退出
+      esac
+      continue
+    }
+    case "$choice" in
+      0) _schedule_daily ;;
+      1) _schedule_weekly ;;
+      2) set_custom_cron_task ;;
+    esac
+  done
 }
 
 # ==================== 主入口 ====================

@@ -48,9 +48,9 @@ log_status() {
   local ts
   ts=$(get_timestamp)
   if [[ -n "$ts" ]]; then
-    printf "%b%s%b %s %s\n" "$color" "$status" "$COLOR_RESET" "$ts" "$message" >&2
+    printf "%b%s%b  %s %s\n" "$color" "$status" "$COLOR_RESET" "$ts" "$message" >&2
   else
-    printf "%b%s%b %s\n" "$color" "$status" "$COLOR_RESET" "$message" >&2
+    printf "%b%s%b  %s\n" "$color" "$status" "$COLOR_RESET" "$message" >&2
   fi
 }
 
@@ -72,53 +72,45 @@ _log_to_file() {
 
 # ==================== 日志函数 ====================
 
-# 4 级日志等级，全部直接输出，不做阈值过滤
-# 等级标签作为视觉提示：OK=绿、INFO=蓝/青、WARN=黄、ERROR=红、FATAL=红、DEBUG=灰
-
+# 标准 5 级日志等级：DEBUG=灰、INFO=青、WARN=黄、ERROR=红、FATAL=红
+# log_success 是辅助标签（绿色 [DONE]），表示模块/操作的完成信号
+# 标签统一 7 字符宽（左对齐不足补空格），标签与消息间固定 2 空格分隔（§4.4.2）
 log_success() {
-  log_status "[OK]    " "$1" "$COLOR_GREEN"
-  _log_to_file "[OK]    " "$1"
-}
-log_fail() {
-  log_status "[ERROR] " "$1" "$COLOR_RED"
-  _log_to_file "[ERROR] " "$1"
+  log_status "[DONE] " "$1" "$COLOR_GREEN"
+  _log_to_file "[DONE] " "$1"
 }
 log_warning() {
-  log_status "[WARN]  " "$1" "$COLOR_YELLOW"
-  _log_to_file "[WARN]  " "$1"
+  log_status "[WARN] " "$1" "$COLOR_YELLOW"
+  _log_to_file "[WARN] " "$1"
 }
 log_info() {
-  log_status "[INFO]  " "$1" "$COLOR_BLUE"
-  _log_to_file "[INFO]  " "$1"
-}
-log_action() {
-  log_status "[INFO]  " "$1" "$COLOR_CYAN"
-  _log_to_file "[INFO]  " "$1"
+  log_status "[INFO] " "$1" "$COLOR_CYAN"
+  _log_to_file "[INFO] " "$1"
 }
 log_error() {
-  log_status "[ERROR] " "$1" "$COLOR_RED"
-  _log_to_file "[ERROR] " "$1"
+  log_status "[ERROR]" "$1" "$COLOR_RED"
+  _log_to_file "[ERROR]" "$1"
 }
 log_fatal() {
-  log_status "[FATAL] " "$1" "$COLOR_RED"
-  _log_to_file "[FATAL] " "$1"
+  log_status "[FATAL]" "$1" "$COLOR_RED"
+  _log_to_file "[FATAL]" "$1"
   exit 1
 }
 
 # 库层专用：记录 FATAL 日志并返回 1（不退出进程）
 # 调用方负责决定是否 exit，入口层（bin/）通常 || exit 1
 log_fatal_return() {
-  log_status "[FATAL] " "$1" "$COLOR_RED"
-  _log_to_file "[FATAL] " "$1"
+  log_status "[FATAL]" "$1" "$COLOR_RED"
+  _log_to_file "[FATAL]" "$1"
   return 1
 }
 
 # 调试日志（仅 DEBNAS_DEBUG=1 时输出到终端，文件日志始终写入）
 log_debug() {
   if [[ "${DEBNAS_DEBUG:-0}" -eq 1 ]]; then
-    log_status "[DEBUG] " "$1" "$COLOR_DIM"
+    log_status "[DEBUG]" "$1" "$COLOR_DIM"
   fi
-  _log_to_file "[DEBUG] " "$1"
+  _log_to_file "[DEBUG]" "$1"
 }
 
 # ==================== 文件日志功能 ====================

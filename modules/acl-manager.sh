@@ -27,7 +27,7 @@ if ! check_dependencies "${REQUIRED_CMDS[@]}"; then
   log_warning "ACL 工具缺失"
   apt_install_packages acl
   if ! check_dependencies "${REQUIRED_CMDS[@]}"; then
-    log_fail "ACL工具安装失败。请手动安装acl软件包后重试。"
+    log_error "ACL工具安装失败。请手动安装acl软件包后重试。"
     exit "${ERROR_DEPENDENCY}"
   fi
 fi
@@ -46,15 +46,16 @@ validate_permissions() {
   if [[ "$perms" =~ ^[rwx-]{0,3}$ ]]; then
     return 0
   else
-    log_fail "无效权限"
+    log_error "无效权限"
     return 1
   fi
 }
 
 # 查看ACL权限，输出到临时文件
 view_acl() {
-  print_prompt "请输入文件或目录路径: "
-  read -r path
+  local path
+  path=$(ui_input "请输入文件或目录路径")
+  [[ -z "$path" ]] && { log_info "已取消"; return; }
   if [ ! -e "$path" ]; then
     log_error "$path 不存在"
     return
@@ -65,25 +66,24 @@ view_acl() {
 
 # 为用户设置ACL权限
 set_user_acl() {
-  print_prompt "请输入文件或目录路径: "
-  read -r path
+  local path username permissions recursive
+  path=$(ui_input "请输入文件或目录路径")
+  [[ -z "$path" ]] && { log_info "已取消"; return; }
   if [ ! -e "$path" ]; then
     log_error "$path 不存在"
     return
   fi
-  print_prompt "请输入用户名: "
-  read -r username
-  print_prompt "请输入权限（如rwx）: "
-  read -r permissions
+  username=$(ui_input "请输入用户名")
+  [[ -z "$username" ]] && { log_info "已取消"; return; }
+  permissions=$(ui_input "请输入权限 (如 rwx)" "rwx")
+  [[ -z "$permissions" ]] && { log_info "已取消"; return; }
   if ! validate_permissions "$permissions"; then return; fi
-  print_prompt "是否递归设置？(y/n): "
-  read -r recursive
-  print_warning "将为用户 $username 设置 $permissions 权限于 $path，确认操作？(y/n): "
-  read -r confirm
-  if [[ "$confirm" != "y" ]]; then
+  recursive=$(ui_input "是否递归设置？(y/n)" "n")
+
+  [[ "$(ui_confirm "为用户设置ACL权限？" "路径: $path\n用户: $username\n权限: $permissions\n递归: $recursive")" == "0" ]] || {
     log_info "已取消"
     return
-  fi
+  }
   if [[ "$recursive" == "y" ]]; then
     if setfacl -R -m u:"$username":"$permissions" "$path" 2>&1 | tee "$ACL_OUTPUT"; then
       log_success "ACL: u:$username:$permissions $path"
@@ -103,25 +103,24 @@ set_user_acl() {
 
 # 为组设置ACL权限
 set_group_acl() {
-  print_prompt "请输入文件或目录路径: "
-  read -r path
+  local path groupname permissions recursive
+  path=$(ui_input "请输入文件或目录路径")
+  [[ -z "$path" ]] && { log_info "已取消"; return; }
   if [ ! -e "$path" ]; then
     log_error "$path 不存在"
     return
   fi
-  print_prompt "请输入组名: "
-  read -r groupname
-  print_prompt "请输入权限（如rwx）: "
-  read -r permissions
+  groupname=$(ui_input "请输入组名")
+  [[ -z "$groupname" ]] && { log_info "已取消"; return; }
+  permissions=$(ui_input "请输入权限 (如 rwx)" "rwx")
+  [[ -z "$permissions" ]] && { log_info "已取消"; return; }
   if ! validate_permissions "$permissions"; then return; fi
-  print_prompt "是否递归设置？(y/n): "
-  read -r recursive
-  print_warning "将为组 $groupname 设置 $permissions 权限于 $path，确认操作？(y/n): "
-  read -r confirm
-  if [[ "$confirm" != "y" ]]; then
+  recursive=$(ui_input "是否递归设置？(y/n)" "n")
+
+  [[ "$(ui_confirm "为组设置ACL权限？" "路径: $path\n组: $groupname\n权限: $permissions\n递归: $recursive")" == "0" ]] || {
     log_info "已取消"
     return
-  fi
+  }
   if [[ "$recursive" == "y" ]]; then
     if setfacl -R -m g:"$groupname":"$permissions" "$path" 2>&1 | tee "$ACL_OUTPUT"; then
       log_success "ACL: g:$groupname:$permissions $path"
@@ -141,23 +140,23 @@ set_group_acl() {
 
 # 设置目录的默认ACL权限
 set_default_acl() {
-  print_prompt "请输入目录路径: "
-  read -r path
+  local path entry permissions
+  path=$(ui_input "请输入目录路径")
+  [[ -z "$path" ]] && { log_info "已取消"; return; }
   if [ ! -d "$path" ]; then
     log_error "目录 $path 不存在，请检查路径。"
     return
   fi
-  print_prompt "请输入用户或组（u:username 或 g:groupname）: "
-  read -r entry
-  print_prompt "请输入权限（如rwx）: "
-  read -r permissions
+  entry=$(ui_input "请输入用户或组 (u:username 或 g:groupname)")
+  [[ -z "$entry" ]] && { log_info "已取消"; return; }
+  permissions=$(ui_input "请输入权限 (如 rwx)" "rwx")
+  [[ -z "$permissions" ]] && { log_info "已取消"; return; }
   if ! validate_permissions "$permissions"; then return; fi
-  print_warning "将为目录 $path 设置默认ACL $entry:$permissions，确认操作？(y/n): "
-  read -r confirm
-  if [[ "$confirm" != "y" ]]; then
+
+  [[ "$(ui_confirm "设置默认ACL权限？" "目录: $path\n条目: $entry\n权限: $permissions")" == "0" ]] || {
     log_info "已取消"
     return
-  fi
+  }
   if setfacl -d -m "$entry":"$permissions" "$path" 2>&1 | tee "$ACL_OUTPUT"; then
     log_success "ACL 默认: $path"
     log_acl_action "设置默认ACL: $entry:$permissions $path"
@@ -168,18 +167,18 @@ set_default_acl() {
 
 # 取消目录的默认ACL权限
 remove_default_acl() {
-  print_prompt "请输入目录路径: "
-  read -r path
+  local path
+  path=$(ui_input "请输入目录路径")
+  [[ -z "$path" ]] && { log_info "已取消"; return; }
   if [ ! -d "$path" ]; then
     log_error "目录 $path 不存在，请检查路径。"
     return
   fi
-  print_warning "将取消目录 $path 的默认ACL，确认操作？(y/n): "
-  read -r confirm
-  if [[ "$confirm" != "y" ]]; then
+
+  [[ "$(ui_confirm "取消默认ACL权限？" "将取消目录 $path 的默认ACL")" == "0" ]] || {
     log_info "已取消"
     return
-  fi
+  }
   if setfacl -k "$path" 2>&1 | tee "$ACL_OUTPUT"; then
     log_success "ACL 默认取消: $path"
     log_acl_action "取消默认ACL: $path"
@@ -190,22 +189,21 @@ remove_default_acl() {
 
 # 删除ACL权限
 remove_acl() {
-  print_prompt "请输入文件或目录路径: "
-  read -r path
+  local path entry recursive
+  path=$(ui_input "请输入文件或目录路径")
+  [[ -z "$path" ]] && { log_info "已取消"; return; }
   if [ ! -e "$path" ]; then
     log_error "$path 不存在"
     return
   fi
-  print_prompt "请输入要删除的ACL条目（u:username 或 g:groupname）: "
-  read -r entry
-  print_prompt "是否递归删除？(y/n): "
-  read -r recursive
-  print_warning "将删除 $entry 的ACL于 $path，确认操作？(y/n): "
-  read -r confirm
-  if [[ "$confirm" != "y" ]]; then
+  entry=$(ui_input "请输入要删除的ACL条目 (u:username 或 g:groupname)")
+  [[ -z "$entry" ]] && { log_info "已取消"; return; }
+  recursive=$(ui_input "是否递归删除？(y/n)" "n")
+
+  [[ "$(ui_confirm "删除ACL权限？" "路径: $path\n条目: $entry\n递归: $recursive")" == "0" ]] || {
     log_info "已取消"
     return
-  fi
+  }
   if [[ "$recursive" == "y" ]]; then
     if setfacl -R -x "$entry" "$path" 2>&1 | tee "$ACL_OUTPUT"; then
       log_success "ACL 删除: $entry"
@@ -225,21 +223,20 @@ remove_acl() {
 
 # 批量设置ACL权限
 batch_set_acl() {
-  print_prompt "请输入文件或目录路径（支持通配符，如 *.txt）: "
-  read -r pattern
-  print_prompt "请输入用户或组（u:username 或 g:groupname）: "
-  read -r entry
-  print_prompt "请输入权限（如rwx）: "
-  read -r permissions
+  local pattern entry permissions recursive
+  pattern=$(ui_input "请输入匹配模式 (如 *.txt)")
+  [[ -z "$pattern" ]] && { log_info "已取消"; return; }
+  entry=$(ui_input "请输入用户或组 (u:username 或 g:groupname)")
+  [[ -z "$entry" ]] && { log_info "已取消"; return; }
+  permissions=$(ui_input "请输入权限 (如 rwx)" "rwx")
+  [[ -z "$permissions" ]] && { log_info "已取消"; return; }
   if ! validate_permissions "$permissions"; then return; fi
-  print_prompt "是否递归设置？(y/n): "
-  read -r recursive
-  print_warning "将为匹配 $pattern 的文件设置 $entry:$permissions，确认操作？(y/n): "
-  read -r confirm
-  if [[ "$confirm" != "y" ]]; then
+  recursive=$(ui_input "是否递归设置？(y/n)" "n")
+
+  [[ "$(ui_confirm "批量设置ACL权限？" "匹配: $pattern\n条目: $entry\n权限: $permissions\n递归: $recursive")" == "0" ]] || {
     log_info "已取消"
     return
-  fi
+  }
   shopt -s nullglob
   for path in $pattern; do
     if [ ! -e "$path" ]; then
@@ -265,27 +262,13 @@ batch_set_acl() {
   shopt -u nullglob
 }
 
-# 菜单
-show_acl_menu() {
-  print_separator "-"
-  print_menu_item "1" "查看ACL权限"
-  print_menu_item "2" "设置用户ACL"
-  print_menu_item "3" "设置组ACL"
-  print_menu_item "4" "设置默认ACL"
-  print_menu_item "5" "取消默认ACL"
-  print_menu_item "6" "删除ACL"
-  print_menu_item "7" "批量设置ACL"
-  print_menu_item "0" "返回" "true"
-  print_separator "-"
-}
-
 # 主循环
 main() {
   if [[ "${DEBNAS_CRON_MODE:-0}" -eq 1 ]]; then
     log_info "cron 模式下不支持交互操作，已跳过"
     return 0
   fi
-  local menu_options=(
+  local -a items=(
     "查看ACL权限"
     "设置用户ACL"
     "设置组ACL"
@@ -294,20 +277,25 @@ main() {
     "删除ACL"
     "批量设置ACL"
   )
+  local choice exit_code
   while true; do
-    show_acl_menu
-    print_prompt "请选择编号: "
-    read -r choice
+    choice=$(UI_MENU_BACK_LABEL="← 返回上级" ui_menu "ACL 权限" "${items[@]}") || {
+      exit_code=$?
+      case $exit_code in
+        254) return 0 ;;   # Esc：返回上级
+        255) return 0 ;;   # Q：退出
+        *)   return 0 ;;
+      esac
+    }
+
     case $choice in
-      1) view_acl ;;
-      2) set_user_acl ;;
-      3) set_group_acl ;;
-      4) set_default_acl ;;
-      5) remove_default_acl ;;
-      6) remove_acl ;;
-      7) batch_set_acl ;;
-      0) log_action "返回"; return 0 ;;
-      *) log_fail "无效选择，请输入0-7。" ;;
+      0) view_acl ;;
+      1) set_user_acl ;;
+      2) set_group_acl ;;
+      3) set_default_acl ;;
+      4) remove_default_acl ;;
+      5) remove_acl ;;
+      6) batch_set_acl ;;
     esac
     echo ""
     sleep 1

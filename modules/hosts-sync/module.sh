@@ -75,11 +75,23 @@ _menu_create_cron() { log_info "创建定时任务..."; create_cron_job; }
 _menu_remove_cron() { log_info "删除定时任务..."; remove_cron_job; }
 
 menu() {
-  run_submenu "Hosts 优化" \
-    "_menu_update" "单次更新" \
-    "_menu_create_cron" "定时更新" \
-    "_menu_remove_cron" "删除定时任务" \
-    "list_cron_jobs" "查询定时任务"
+  local -a items=("单次更新" "定时更新" "删除定时任务" "查询定时任务")
+  while true; do
+    local choice
+    choice=$(UI_MENU_BACK_LABEL="← 返回上级" ui_menu "Hosts 优化" "${items[@]}") || {
+      case $? in
+        254) return 0 ;;   # Esc：返回上级
+        255) return 0 ;;   # Q：退出
+      esac
+      continue
+    }
+    case "$choice" in
+      0) _menu_update ;;
+      1) _menu_create_cron ;;
+      2) _menu_remove_cron ;;
+      3) list_cron_jobs ;;
+    esac
+  done
 }
 
 main() {

@@ -55,8 +55,8 @@ execute_solution() {
     module_name="${module_name%"${module_name##*[![:space:]]}"}"
     [[ -n "$module_name" ]] || continue
 
-    if ! (unset _DEBNAS_BOOTSTRAPPED; bash "${_DEBNAS_ROOT}/bin/module-runner.sh" "$module_name"); then
-      log_fail "模块 \"$module_name\" 执行失败，已中断部署方案"
+    if ! (unset _DEBNAS_BOOTSTRAPPED; trap - INT; bash "${_DEBNAS_ROOT}/bin/module-runner.sh" "$module_name"); then
+      log_error "模块 \"$module_name\" 执行失败，已中断部署方案"
       failed=1
       break
     fi
@@ -83,6 +83,7 @@ build_active_categories() {
       [[ ${#modules[@]} -gt 0 ]] && ACTIVE_CATEGORIES+=("$category")
     fi
   done
+  return 0  # 确保函数始终返回 0（避免 set -e 下因最后一个 [[ 失败而退出）
 }
 
 # 执行自动发现模式选择的模块
@@ -94,8 +95,8 @@ execute_auto_modules() {
   for module_name in "${selected_modules[@]}"; do
     local display_name
     display_name=$(get_module_field "$module_name" "name" "$module_name" 2>/dev/null) || display_name="$module_name"
-    if ! (unset _DEBNAS_BOOTSTRAPPED; bash "${_DEBNAS_ROOT}/bin/module-runner.sh" "$module_name"); then
-      log_fail "模块 \"$display_name\" 执行失败，已中断"
+    if ! (unset _DEBNAS_BOOTSTRAPPED; trap - INT; bash "${_DEBNAS_ROOT}/bin/module-runner.sh" "$module_name"); then
+      log_error "模块 \"$display_name\" 执行失败，已中断"
       break
     fi
   done
@@ -107,20 +108,35 @@ execute_auto_modules() {
 
 # 部署方案子菜单（新）
 handle_solution_sub_menu() {
-  local choice exit_code
+  ui_screen_switch  # 清 L1 菜单区 + 渲染 L2 Header
+  # 计算旧 L2 区域总行数（Header + 面包屑 + 菜单项 + 底部标签）
+  local _hdr_h=4 _bc_lines=2 _ftr_lines=1
+  [[ "${_UI_COMPACT_MODE:-0}" -eq 1 ]] && { _hdr_h=3; _bc_lines=1; }
+  local _old_area=$((_hdr_h + _bc_lines + ${#SOLUTION_DISPLAY_NAMES[@]} + _ftr_lines))
+
+  local choice exit_code menu_result
   while true; do
-    ui_screen_init
-    choice=$(UI_MENU_BACK_LABEL="← 返回上级" ui_menu "${MSG_CAT_DEPLOY}" "${SOLUTION_DISPLAY_NAMES[@]}") || {
+    menu_result=$(mktemp)
+    UI_MENU_BACK_LABEL="← 返回上级" UI_MENU_RESULT_FILE="$menu_result" ui_menu "${MSG_CAT_DEPLOY}" "${SOLUTION_DISPLAY_NAMES[@]}" || {
       exit_code=$?
+      rm -f "$menu_result"
       case $exit_code in
         254) return 0 ;;   # Esc：返回上级
-        255) exit 0  ;;   # Q：退出程序
+        255) declare -f _ui_print_menu_snapshot >/dev/null 2>&1 && _ui_print_menu_snapshot; exit 0  ;;
         *)   return 0 ;;
       esac
     }
+    choice=$(cat "$menu_result")
+    rm -f "$menu_result"
+
+    # 清除旧菜单 → 打印快照（留在 scrollback）→ 模块输出追加在快照下方
+    ui_clear_menu_area "$_old_area"
+    declare -f _ui_print_menu_snapshot >/dev/null 2>&1 && _ui_print_menu_snapshot
 
     execute_solution "${SOLUTION_NAMES[$choice]}"
-    sleep 1  # 短暂停留，让用户看到最终结果
+
+    # 在日志末尾重绘 Header + L2 菜单
+    ui_screen_init
   done
 }
 
@@ -138,39 +154,74 @@ handle_auto_sub_menu() {
     display_names+=("$display_name")
   done
 
-  local choice exit_code
+  local choice exit_code menu_result
+  ui_screen_switch  # 清 L1 菜单区 + 渲染 L2 Header
+  # 计算旧 L2 区域总行数（Header + 面包屑 + 菜单项 + 底部标签）
+  local _hdr_h=4 _bc_lines=2 _ftr_lines=1
+  [[ "${_UI_COMPACT_MODE:-0}" -eq 1 ]] && { _hdr_h=3; _bc_lines=1; }
+  local _old_area=$((_hdr_h + _bc_lines + ${#modules[@]} + _ftr_lines))
+
   while true; do
-    ui_screen_init
-    choice=$(UI_MENU_BACK_LABEL="← 返回上级" ui_menu "$category" "${display_names[@]}") || {
+    menu_result=$(mktemp)
+    UI_MENU_BACK_LABEL="← 返回上级" UI_MENU_RESULT_FILE="$menu_result" ui_menu "$category" "${display_names[@]}" || {
       exit_code=$?
+      rm -f "$menu_result"
       case $exit_code in
         254) return 0 ;;   # Esc：返回上级
-        255) exit 0  ;;   # Q：退出程序
+        255) declare -f _ui_print_menu_snapshot >/dev/null 2>&1 && _ui_print_menu_snapshot; exit 0  ;;
         *)   return 0 ;;
       esac
     }
+    choice=$(cat "$menu_result")
+    rm -f "$menu_result"
+
+    # 清除旧菜单 → 打印快照（留在 scrollback）→ 模块输出追加在快照下方
+    ui_clear_menu_area "$_old_area"
+    declare -f _ui_print_menu_snapshot >/dev/null 2>&1 && _ui_print_menu_snapshot
 
     # 执行单个选中模块
     execute_auto_modules "$category" "${modules[$choice]}"
-    sleep 1  # 短暂停留，让用户看到最终结果
+
+    # 在日志末尾重绘 Header + L2 菜单
+    ui_screen_init
   done
 }
 
 # 主菜单循环（新）
 main_menu_loop() {
+  # Ctrl+C 在菜单导航中静默忽略（子进程中由 module-runner 自行处理）
+  trap ':' INT
+
   build_active_categories
 
-  local choice exit_code
+  # 空分类保护：无模块也无方案时直接退出
+  if [[ ${#ACTIVE_CATEGORIES[@]} -eq 0 ]]; then
+    log_error "未发现任何可用模块，请检查 modules/ 目录"
+    ui_cursor_show
+    exit "${ERROR_MODULE_NOT_FOUND:-1}"
+  fi
+
+  local choice exit_code menu_result
+  local first_entry=1
   while true; do
-    ui_screen_init
-    choice=$(UI_MENU_QUIT=1 ui_menu "" "${ACTIVE_CATEGORIES[@]}") || {
+    if [[ $first_entry -eq 1 ]]; then
+      ui_screen_init    # 首次：无旧菜单需清除
+      first_entry=0
+    else
+      ui_screen_switch  # 从子菜单返回：清子菜单区 + 渲染 L1
+    fi
+    menu_result=$(mktemp)
+    UI_MENU_QUIT=1 UI_MENU_RESULT_FILE="$menu_result" ui_menu "" "${ACTIVE_CATEGORIES[@]}" || {
       exit_code=$?
+      rm -f "$menu_result"
       case $exit_code in
         254) continue ;;   # Esc（主菜单无上级，忽略）
         255) break   ;;   # Q：退出程序
         *)   break   ;;
       esac
     }
+    choice=$(cat "$menu_result")
+    rm -f "$menu_result"
 
     local category="${ACTIVE_CATEGORIES[$choice]}"
     if [[ "$category" == "${MSG_CAT_DEPLOY}" ]]; then
@@ -178,12 +229,12 @@ main_menu_loop() {
     else
       handle_auto_sub_menu "$category"
     fi
-    # 返回后不清屏 — ui_screen_init 在当前位置重绘
-    # 模块执行日志保留在上方回滚缓冲区
   done
 
+  # 退出前打印最终菜单快照（记录用户从哪个界面退出）
+  declare -f _ui_print_menu_snapshot >/dev/null 2>&1 && _ui_print_menu_snapshot
   ui_cursor_show
-  log_action "用户退出 DebNAS"
+  log_info "用户退出 DebNAS"
   exit 0
 }
 

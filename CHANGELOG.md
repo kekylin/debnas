@@ -107,7 +107,12 @@
 - 删除 DEBUG 日志等级和 `log_debug` 函数
 
 ### Fixed
-- 修复 Cockpit 模块组 `@order` 冲突（vm-components 31→33），恢复菜单正确排序
+- 修复菜单循环每次模块执行后固定等待约 2 秒的问题：移除模块返回后的 `sleep 1`，并去掉 DSR 光标查询（改为使用已保存光标位置清除菜单区）
+- 修复 Phase 2 `ui_menu` 调用方式缺陷：`$()` 命令替换捕获所有 stdout 导致菜单渲染不可见，改为 `UI_MENU_RESULT_FILE` 临时文件传递选中索引
+- 修复 `build_active_categories` 最后一分类无项时返回非零导致 `set -e` 下脚本退出，添加 `return 0` 保护
+- 修复 `main_menu_loop` 空分类无限重绘 Header 问题，添加空分类检查和提前退出
+- 修复 `read_key` 直接按 Enter 键无效：`read -n 1` 在遇到分隔符 `\n` 前无普通字符时设 key 为空串（退出码 0），但原代码未处理空 key，导致"OTHER:"穿透菜单循环无响应
+- 修复 `ui_menu` 底部快捷键标签与重构计划不符：`Q 退出`/`← 返回上级` 替换为 `ui_footer` 渲染的 `↑↓ 选择  Enter 确认  Q/Esc 退出/返回` + 版本号
 - 修复 P1-4（login-mail 依赖声明补全）、P2-8（旧项目名 HomeNAS→DebNAS 残留）、P2-10（代码风格统一）、P2-12（重复函数定义清理）、P2-18（缺失依赖声明补全）
 - 修复 `print_prompt` 输出到 stderr + `mail-account` 幂等性检查
 - 修复 `sources.sh` 顶层 `verify_debian_12_13_support` 调用导致 source 时副作用，移入 `main()` 函数

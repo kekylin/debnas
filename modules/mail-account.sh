@@ -13,26 +13,6 @@ IFS=$'\n\t'
 # 加载公共模块，确保依赖函数和常量可用
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${SCRIPT_DIR}/lib/bootstrap.sh"
-# 安全读取一行输入（兼容 set -e，read 失败不终止脚本）
-# 参数：$1 - 提示信息，$2 - 隐藏输入（hidden）
-# 输出：用户输入内容
-safe_read_input() {
-  local prompt="$1"
-  local hidden="${2:-}"
-  local input=""
-
-  if [[ -n "$prompt" ]]; then
-    printf '%s\n' "$prompt" >&2
-  fi
-
-  if [[ "$hidden" == "hidden" ]]; then
-    read -rs input 2>/dev/null || true
-    printf '\n' >&2
-  else
-    read -r input 2>/dev/null || true
-  fi
-  printf '%s' "$input"
-}
 
 main() {
   if [[ "${DEBNAS_CRON_MODE:-0}" -eq 1 ]]; then
@@ -62,12 +42,10 @@ main() {
       return 0
     fi
 
-    local reconfigure
-    reconfigure=$(safe_read_input "是否重新配置？[y/N]：")
-    if [[ "${reconfigure,,}" != "y" && "${reconfigure,,}" != "yes" ]]; then
+    [[ "$(ui_confirm "是否重新配置邮件账户？" "当前配置:\n发件邮箱: ${current_sender}\nSMTP: ${current_smarthost}\n通知邮箱: ${current_notify}")" == "0" ]] || {
       log_info "保持现有配置，跳过"
       return 0
-    fi
+    }
     log_info "开始重新配置邮件账户..."
   fi
 
@@ -199,7 +177,7 @@ EOF
   log_info "发送测试邮件..."
   printf '%s\n' "$email_content" | exim4 -bm "$notify_email" && \
     log_success "测试邮件已发送" || \
-    { log_fail "测试邮件发送失败，请查看 /var/log/exim4/mainlog。"; exit "${ERROR_GENERAL}"; }
+    { log_error "测试邮件发送失败，请查看 /var/log/exim4/mainlog。"; exit "${ERROR_GENERAL}"; }
 }
 
 # 主控制流程
@@ -209,9 +187,9 @@ log_info "配置邮件服务..."
 email_domain=""
 smarthost=""
 while true; do
-  email=$(safe_read_input "请输入 SMTP 发件邮箱地址（支持 QQ/163/126/新浪/阿里云/Gmail/Outlook/Yahoo）：")
+  email=$(ui_input "请输入 SMTP 发件邮箱地址")
   if [[ -z "$email" ]]; then
-    log_fail "发件邮箱不能为空"
+    log_error "发件邮箱不能为空"
     continue
   fi
   smarthost=$(validate_sender_email "$email") || true
@@ -219,14 +197,14 @@ while true; do
     email_domain="${email##*@}"
     break
   fi
-  log_fail "邮箱域名不支持"
+  log_error "邮箱域名不支持"
 done
 
 # 读取授权密码
 while true; do
-  password=$(safe_read_input "请输入 SMTP 服务授权密码：" "hidden")
+  password=$(ui_input "请输入 SMTP 服务授权密码" "" "hidden")
   if [[ -z "$password" ]]; then
-    log_fail "授权密码不能为空"
+    log_error "授权密码不能为空"
     continue
   fi
   break
@@ -234,15 +212,15 @@ done
 
 # 读取通知接收邮箱
 while true; do
-  notify_email=$(safe_read_input "请输入系统通知接收邮箱地址：")
+  notify_email=$(ui_input "请输入系统通知接收邮箱地址")
   if [[ -z "$notify_email" ]]; then
-    log_fail "通知邮箱不能为空"
+    log_error "通知邮箱不能为空"
     continue
   fi
   if [[ "$notify_email" =~ ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
     break
   fi
-  log_fail "邮箱格式无效"
+  log_error "邮箱格式无效"
 done
 
 generate_exim_config "$email_domain" "$smarthost"

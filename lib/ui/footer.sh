@@ -15,14 +15,15 @@ ui_footer() {
   local version="v${DEBNAS_VERSION:-3.0.0}"
   local cols="${COLUMNS:-$(tput cols 2>/dev/null || echo 80)}"
 
-  # 计算右侧版本号的起始列（左侧 2 空格缩进 + 快捷键 + 2 空格间距 + 版本号）
-  local padding=$((cols - ${#shortcuts} - ${#version} - 4))
+  # 计算右侧版本号间隙（左边距 _UI_BREAD_INDENT + 快捷键 + 2 空格间距 + 版本号）
+  local margin="${_UI_BREAD_INDENT:-2}"
+  local padding=$((cols - margin - ${#shortcuts} - ${#version} - 2))
 
   if [[ "$padding" -lt 1 ]]; then
     # 屏幕太窄：快捷键和版本号各占一行
-    printf "%b  %s%b\n" "$COLOR_DIM" "$shortcuts" "$COLOR_RESET"
+    printf "%b%*s%s%b\n" "$COLOR_DIM" "$margin" '' "$shortcuts" "$COLOR_RESET"
     printf "%b%*s%b\n" "$COLOR_DIM" "$((cols - ${#version}))" "$version" "$COLOR_RESET"
   else
-    printf "%b  %s%*s%b\n" "$COLOR_DIM" "$shortcuts" "$padding" "$version" "$COLOR_RESET"
+    printf "%b%*s%s%*s%b\n" "$COLOR_DIM" "$margin" '' "$shortcuts" "$padding" "$version" "$COLOR_RESET"
   fi
 }

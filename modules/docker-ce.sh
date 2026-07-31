@@ -151,7 +151,7 @@ download_docker_gpg_key() {
   done
 
   if [[ $gpg_downloaded -eq 0 ]]; then
-    log_fail "GPG 密钥下载失败"
+    log_error "GPG 密钥下载失败"
     exit "${ERROR_DEPENDENCY}"
   fi
 
@@ -213,26 +213,38 @@ add_user_to_docker_group() {
 # ==================== 主入口 ====================
 
 main() {
+  local step=0 total=7
 
-  log_info "检测镜像源"
+  ui_progress_step $((++step)) "$total" "检测镜像源"
   local DOCKER_MIRROR
   DOCKER_MIRROR=$(get_docker_mirror) || {
-    log_fail "无法获取 Docker 源"
+    log_error "无法获取 Docker 源"
     exit "${ERROR_DEPENDENCY}"
   }
 
   local first_user
   first_user=$(get_first_regular_user)
 
-  log_info "安装 Docker CE..."
+  ui_progress_step $((++step)) "$total" "安装系统依赖"
   install_docker_prerequisites
+
+  ui_progress_step $((++step)) "$total" "下载 GPG 签名密钥"
   download_docker_gpg_key "$DOCKER_MIRROR"
+
+  ui_progress_step $((++step)) "$total" "配置 APT 软件源"
   write_docker_apt_source "$DOCKER_MIRROR"
+
+  ui_progress_step $((++step)) "$total" "安装 Docker 组件"
   install_docker_packages
+
+  ui_progress_step $((++step)) "$total" "启动 Docker 服务"
   service_ensure docker started
   service_ensure docker enabled
+
+  ui_progress_step $((++step)) "$total" "添加用户到 docker 组"
   add_user_to_docker_group "$first_user"
 
+  ui_progress_step "$step" "$total" "Docker CE 安装完成" "done"
   log_info "Docker $(docker --version 2>/dev/null | grep -oP '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
 }
 

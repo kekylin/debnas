@@ -4,7 +4,7 @@ set -euo pipefail
 IFS=$'\n\t'
 create_cron_job() {
   if ! update_hosts; then
-    log_fail "取消创建定时任务。"
+    log_error "取消创建定时任务。"
     return 1
   fi
 
@@ -12,7 +12,7 @@ create_cron_job() {
   if cron_register "hosts-sync" "0 0,6,12,18 * * *"; then
     log_success "定时 0,6,12,18"
   else
-    log_fail "定时任务注册失败。"
+    log_error "定时任务注册失败。"
     return 1
   fi
   return 0

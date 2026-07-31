@@ -20,9 +20,21 @@ main() {
   source "${SCRIPT_DIR}/lib/system/state.sh"
   source "${MODULE_DIR}/actions.sh"
 
-  run_submenu "登录通知" \
-    "enable_login_mail" "启用登录通知" \
-    "disable_login_mail" "禁用登录通知"
+  local -a items=("启用登录通知" "禁用登录通知")
+  while true; do
+    local choice
+    choice=$(UI_MENU_BACK_LABEL="← 返回上级" ui_menu "登录通知" "${items[@]}") || {
+      case $? in
+        254) return 0 ;;   # Esc：返回上级
+        255) return 0 ;;   # Q：退出
+      esac
+      continue
+    }
+    case "$choice" in
+      0) enable_login_mail ;;
+      1) disable_login_mail ;;
+    esac
+  done
 }
 
 main "$@"

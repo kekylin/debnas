@@ -131,7 +131,7 @@ execute_module() {
   local display_name
   display_name=$(get_module_field "$module_name" "name" "$module_name" 2>/dev/null) || display_name="$module_name"
 
-  log_action "→ ${display_name}"
+  log_info "→ ${display_name}"
 
   # 通过 bash 子进程执行模块（清除 bootstrap 标记，让模块重新加载库）
   if (unset _DEBNAS_BOOTSTRAPPED; bash "$module_path" "$@"); then

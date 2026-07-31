@@ -160,13 +160,27 @@ start_fail2ban() {
 
 # 主执行流程，串联各功能模块
 main() {
+  local step=0 total=6
+
+  ui_progress_step $((++step)) "$total" "安装 Fail2ban 软件包"
   install_fail2ban
+
+  ui_progress_step $((++step)) "$total" "配置告警邮箱"
   configure_email
+
+  ui_progress_step $((++step)) "$total" "配置封禁规则 (jail.local)"
   configure_jail_local
+
+  ui_progress_step $((++step)) "$total" "配置告警邮件模板"
   configure_mail_whois
+
+  ui_progress_step $((++step)) "$total" "启用 Cockpit 登录防护"
   configure_pam_generic
+
+  ui_progress_step $((++step)) "$total" "启动 Fail2ban 服务"
   start_fail2ban
 
+  ui_progress_step "$step" "$total" "Fail2ban 安装配置完成" "done"
 }
 
 main "$@"
