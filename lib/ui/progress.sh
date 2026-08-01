@@ -6,7 +6,7 @@
 # 用法：ui_progress_step 1 3 "Docker Engine"
 # 输出：[INFO]  [=>                  ] 33% Docker Engine
 #       ui_progress_step 3 3 "Docker Engine 安装完成" "done"
-# 输出：[OK]    [====================] 100% Docker Engine 安装完成
+# 输出：[DONE] [====================] 100% Docker Engine 安装完成
 
 set -euo pipefail
 IFS=$'\n\t'
@@ -15,7 +15,7 @@ IFS=$'\n\t'
 # 参数：$1 — 当前步骤号
 #       $2 — 总步骤数
 #       $3 — 描述文字
-#       $4 — 状态（可选，"done"=绿色OK标签，其余=蓝色INFO标签）
+#       $4 — 状态（可选，"done"=绿色 [DONE] 标签，其余=蓝色 INFO 标签）
 ui_progress_step() {
   local current="$1" total="$2" description="$3" status="${4:-}"
   local pct=$((current * 100 / total))

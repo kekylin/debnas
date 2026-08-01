@@ -4,7 +4,7 @@
 # 依赖：lib/core/logging.sh（由 bootstrap 已加载）
 #
 # 用法：ui_log "INFO"  "正在检查系统环境"
-#       ui_log "OK"    "Docker Engine 安装完成"
+#       ui_log "OK"    "Docker Engine 安装完成"   # 成功级别，终端标签渲染为 [DONE]
 #       ui_log "ERROR" "无法连接到服务器 (超时)"
 
 set -euo pipefail

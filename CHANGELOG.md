@@ -67,7 +67,7 @@
 - 四个定时模块菜单统一为启用/禁用，功能开关与定时任务分离管理
 - cron 表达式增加字段值范围校验，新增可读描述与状态查询
 - 关于项目改为直接打印概况后返回一级菜单，并优化终端排版
-- Phase 1 UI 基础层：日志标签统一为 7 字符宽度（`[SUCCESS]→[OK]`、`[FAIL]→[ERROR]`、`[WARNING]→[WARN]`、`[ACTION]→[INFO]`）
+- Phase 1 UI 基础层：日志标签统一为 7 字符宽度（`[SUCCESS]→[DONE]`、`[FAIL]→[ERROR]`、`[WARNING]→[WARN]`、`[ACTION]→[INFO]`）
 - Phase 1 UI 基础层：`get_ui_color highlight` 从 COLOR_MAGENTA 迁移为 COLOR_CYAN
 - Phase 1 UI 基础层：`log_fatal` / `log_fatal_return` 颜色从 COLOR_MAGENTA 改为 COLOR_RED
 - Phase 1 UI 基础层：`bin/menu.sh` 横幅精简（移除 QQ/作者/GitHub/温馨提示）
