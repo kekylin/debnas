@@ -150,12 +150,12 @@ _ui_register_cursor_trap() {
   local current
   current=$(trap -p EXIT 2>/dev/null || true)
   if [[ -z "$current" ]]; then
-    trap 'cursor_show 2>/dev/null || printf "\033[?25h"' EXIT
+    trap 'cursor_show 2>/dev/null || printf "\033[?25h"; stty echo 2>/dev/null || true' EXIT
   else
     local existing_cmd
     existing_cmd=$(echo "$current" | sed -n "s/^trap -- '\\(.*\\)' EXIT$/\\1/p")
     if [[ -n "$existing_cmd" ]]; then
-      trap 'cursor_show 2>/dev/null || printf "\033[?25h"; '"$existing_cmd" EXIT
+      trap 'cursor_show 2>/dev/null || printf "\033[?25h"; stty echo 2>/dev/null || true; '"$existing_cmd" EXIT
     fi
   fi
   _UI_CURSOR_TRAP_SET=1
@@ -164,6 +164,17 @@ _ui_register_cursor_trap() {
 ui_cursor_show() {
   cursor_show
   printf '\n'
+}
+
+# 菜单交互期间关闭终端回显，避免方向键/ESC 序列被原样打印
+_ui_terminal_echo_off() {
+  [[ -t 0 ]] || return 0
+  stty -echo 2>/dev/null || true
+}
+
+_ui_terminal_echo_on() {
+  [[ -t 0 ]] || return 0
+  stty echo 2>/dev/null || true
 }
 
 # ═══════════════════════════════════════════════════════════════

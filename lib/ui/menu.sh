@@ -111,6 +111,7 @@ ui_menu() {
   fi
 
   ui_detect_size
+  _ui_terminal_echo_off
 
   local focus_idx=0       # 当前焦点（items 数组索引）
   local old_focus=-1      # 上一次焦点（用于局部刷新）
@@ -380,6 +381,7 @@ ui_menu() {
     case "$key" in
       EOF)
         _UI_MENU_SNAPSHOT_FOCUSED=$focus_idx
+        _ui_terminal_echo_on
         return 255
         ;;
       REDRAW)
@@ -429,6 +431,7 @@ ui_menu() {
         ;;
       ENTER)
         _UI_MENU_SNAPSHOT_FOCUSED=$focus_idx
+        _ui_terminal_echo_on
         if [[ -n "${UI_MENU_RESULT_FILE:-}" ]]; then
           echo "$focus_idx" > "$UI_MENU_RESULT_FILE"
         else
@@ -439,12 +442,14 @@ ui_menu() {
       ESC)
         if [[ -n "$back_label" ]]; then
           _UI_MENU_SNAPSHOT_FOCUSED=$focus_idx
+          _ui_terminal_echo_on
           return 254
         fi
         ;;
       Q)
         if [[ "$enable_quit" -eq 1 ]]; then
           _UI_MENU_SNAPSHOT_FOCUSED=$focus_idx
+          _ui_terminal_echo_on
           return 255
         fi
         ;;

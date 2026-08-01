@@ -40,6 +40,7 @@ ui_confirm() {
     echo "0"
     return 0
   fi
+  _ui_terminal_echo_off
 
   # 焦点：0=[Y]确认, 1=[N]取消，默认在 N
   local focus=1
@@ -86,6 +87,7 @@ ui_confirm() {
   local key
   while true; do
     read_key < /dev/tty || {
+      _ui_terminal_echo_on
       echo "1"
       return 0
     }
@@ -115,6 +117,7 @@ ui_confirm() {
         fi
         ;;
       ENTER)
+        _ui_terminal_echo_on
         echo "$focus"
         return 0
         ;;
@@ -123,6 +126,7 @@ ui_confirm() {
         # 局部刷新显示焦点变化
         printf '\033[u' > /dev/tty
         _ui_confirm_render
+        _ui_terminal_echo_on
         echo "0"
         return 0
         ;;
@@ -130,10 +134,12 @@ ui_confirm() {
         focus=1
         printf '\033[u' > /dev/tty
         _ui_confirm_render
+        _ui_terminal_echo_on
         echo "1"
         return 0
         ;;
       ESC)
+        _ui_terminal_echo_on
         echo "1"
         return 0
         ;;
@@ -158,6 +164,7 @@ ui_alert() {
   if [[ ! -t 0 ]]; then
     return 0
   fi
+  _ui_terminal_echo_off
 
   printf '\n' > /dev/tty
   printf '    %s\n' "$title" > /dev/tty
@@ -181,7 +188,10 @@ ui_alert() {
   # 等待 Enter
   local key
   while true; do
-    read_key < /dev/tty || return 0
+    read_key < /dev/tty || {
+      _ui_terminal_echo_on
+      return 0
+    }
     key="$_READ_KEY_RESULT"
     case "$key" in
       REDRAW)
@@ -202,7 +212,10 @@ ui_alert() {
         printf '%b    Enter 关闭%b\n' "$COLOR_DIM" "$COLOR_RESET" > /dev/tty
         printf '\n' > /dev/tty
         ;;
-      ENTER|ESC|Q) return 0 ;;
+      ENTER|ESC|Q)
+        _ui_terminal_echo_on
+        return 0
+        ;;
     esac
   done
 }

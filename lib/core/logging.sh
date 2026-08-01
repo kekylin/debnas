@@ -73,11 +73,11 @@ _log_to_file() {
 # ==================== 日志函数 ====================
 
 # 标准 5 级日志等级：DEBUG=灰、INFO=青、WARN=黄、ERROR=红、FATAL=红
-# log_success 是辅助标签（绿色 [OK]），表示模块/操作的完成信号
+# log_success 是辅助标签（绿色 [DONE]），表示模块/操作的完成信号
 # 标签统一 7 字符宽（左对齐不足补空格），标签与消息间固定 2 空格分隔（§4.4.2）
 log_success() {
-  log_status "[OK] " "$1" "$COLOR_GREEN"
-  _log_to_file "[OK] " "$1"
+  log_status "[DONE] " "$1" "$COLOR_GREEN"
+  _log_to_file "[DONE] " "$1"
 }
 log_warning() {
   log_status "[WARN] " "$1" "$COLOR_YELLOW"
