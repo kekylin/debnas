@@ -131,7 +131,9 @@ execute_module() {
   local display_name
   display_name=$(get_module_field "$module_name" "name" "$module_name" 2>/dev/null) || display_name="$module_name"
 
-  log_info "→ ${display_name}"
+  if [[ "${_DEBNAS_INTERACTIVE_TTY:-0}" -ne 1 ]]; then
+    log_info "→ ${display_name}"
+  fi
 
   # 通过 bash 子进程执行模块（清除 bootstrap 标记，让模块重新加载库）
   if (unset _DEBNAS_BOOTSTRAPPED; bash "$module_path" "$@"); then
@@ -214,6 +216,11 @@ run_report() {
   local exit_code="$3"
 
   if [[ "$exit_code" -eq 0 ]]; then
+    # 交互式菜单仅浏览未执行动作：不记录状态、不输出完成日志
+    if [[ "${_DEBNAS_INTERACTIVE_TTY:-0}" -eq 1 && ! -f "${DEBNAS_ACTION_MARKER:-}" ]]; then
+      log_stop_file 2>/dev/null || true
+      return 0
+    fi
     local version
     version=$(get_module_field "$module_name" "version" "" 2>/dev/null) || version=""
     state_mark_success "$module_name" "$version"
@@ -277,11 +284,25 @@ main() {
   # ── Initialize + Execute ──
   log_to_file "$module_name" 2>/dev/null || true
 
+  # 交互式 TTY 模块：用动作标记区分“仅浏览菜单”和“真实执行动作”
+  _DEBNAS_INTERACTIVE_TTY=0
+  local interactive_marker=""
+  local interactive
+  interactive=$(get_module_field "$module_name" "interactive" "false" 2>/dev/null) || interactive="false"
+  if [[ "$interactive" == "true" && -t 0 ]]; then
+    _DEBNAS_INTERACTIVE_TTY=1
+    interactive_marker=$(mktemp)
+    export DEBNAS_ACTION_MARKER="$interactive_marker"
+  else
+    export DEBNAS_ACTION_MARKER=""
+  fi
+
   local exit_code=0
   execute_module "$module_name" "${module_args[@]+"${module_args[@]}"}" || exit_code=$?
 
   # ── Report ──
   run_report "$module_name" "$display_name" "$exit_code"
+  [[ -n "$interactive_marker" ]] && rm -f "$interactive_marker" 2>/dev/null || true
 
   return "$exit_code"
 }

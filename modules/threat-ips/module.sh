@@ -331,7 +331,7 @@ main() {
     while true; do
       display_threat_status
       menu_result=$(mktemp)
-      UI_MENU_BACK_LABEL="← 返回上级" UI_MENU_RESULT_FILE="$menu_result" ui_menu "威胁 IP 封禁" "${items[@]}" || {
+      UI_MENU_BLANK_BEFORE=1 UI_MENU_BACK_LABEL="← 返回上级" UI_MENU_RESULT_FILE="$menu_result" ui_menu "威胁 IP 封禁" "${items[@]}" || {
         exit_code=$?
         rm -f "$menu_result"
         case $exit_code in

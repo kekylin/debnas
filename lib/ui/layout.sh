@@ -73,7 +73,7 @@ ui_screen_clear() {
 
 # 计算当前菜单区总行数（Header + 面包屑 + 菜单项 + 底部标签）
 _ui_menu_area_height() {
-  local header_height=4 breadcrumb_lines=2
+  local header_height=4 breadcrumb_lines=1
   [[ "${_UI_COMPACT_MODE:-0}" -eq 1 ]] && { header_height=3; breadcrumb_lines=1; }
   local item_count=${#_UI_MENU_SNAPSHOT_ITEMS[@]}
   [[ -z "${_UI_MENU_SNAPSHOT_BREADCRUMB:-}" ]] && breadcrumb_lines=0
@@ -192,6 +192,7 @@ _ui_print_menu_snapshot() {
   local focused="${_UI_MENU_SNAPSHOT_FOCUSED:-0}"
 
   cursor_show 2>/dev/null || printf '\033[?25h'
+  printf '\n'
 
   # Header
   if [[ "${_UI_COMPACT_MODE:-0}" -eq 1 ]]; then
@@ -209,9 +210,6 @@ _ui_print_menu_snapshot() {
   # 面包屑
   if [[ -n "$bc" ]]; then
     printf '%*s%b%s%b\n' "$_UI_BREAD_INDENT" '' "${COLOR_DIM:-}" "$bc" "${COLOR_RESET:-}"
-    if [[ "${_UI_COMPACT_MODE:-0}" -eq 0 ]]; then
-      printf '\n'
-    fi
   fi
 
   # 菜单项

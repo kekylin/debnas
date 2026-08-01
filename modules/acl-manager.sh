@@ -59,6 +59,7 @@ view_acl() {
   fi
   getfacl "$path" 2>&1 | tee "$ACL_OUTPUT"
   log_acl_action "查看ACL: $path"
+  module_mark_action
 }
 
 # 为用户设置ACL权限
@@ -84,6 +85,7 @@ set_user_acl() {
   if [[ "$recursive" == "y" ]]; then
     if setfacl -R -m u:"$username":"$permissions" "$path" 2>&1 | tee "$ACL_OUTPUT"; then
       log_success "ACL: u:$username:$permissions $path"
+      module_mark_action
       log_acl_action "设置用户ACL: u:$username:$permissions $path (递归: $recursive)"
     else
       acl_error "无法设置权限。请检查输入或查看 $ACL_OUTPUT。"
@@ -91,6 +93,7 @@ set_user_acl() {
   else
     if setfacl -m u:"$username":"$permissions" "$path" 2>&1 | tee "$ACL_OUTPUT"; then
       log_success "ACL: u:$username:$permissions $path"
+      module_mark_action
       log_acl_action "设置用户ACL: u:$username:$permissions $path (递归: $recursive)"
     else
       acl_error "无法设置权限。请检查输入或查看 $ACL_OUTPUT。"
@@ -121,6 +124,7 @@ set_group_acl() {
   if [[ "$recursive" == "y" ]]; then
     if setfacl -R -m g:"$groupname":"$permissions" "$path" 2>&1 | tee "$ACL_OUTPUT"; then
       log_success "ACL: g:$groupname:$permissions $path"
+      module_mark_action
       log_acl_action "设置组ACL: g:$groupname:$permissions $path (递归: $recursive)"
     else
       acl_error "无法设置权限。请检查输入或查看 $ACL_OUTPUT。"
@@ -128,6 +132,7 @@ set_group_acl() {
   else
     if setfacl -m g:"$groupname":"$permissions" "$path" 2>&1 | tee "$ACL_OUTPUT"; then
       log_success "ACL: g:$groupname:$permissions $path"
+      module_mark_action
       log_acl_action "设置组ACL: g:$groupname:$permissions $path (递归: $recursive)"
     else
       acl_error "无法设置权限。请检查输入或查看 $ACL_OUTPUT。"
@@ -156,6 +161,7 @@ set_default_acl() {
   }
   if setfacl -d -m "$entry":"$permissions" "$path" 2>&1 | tee "$ACL_OUTPUT"; then
     log_success "ACL 默认: $path"
+    module_mark_action
     log_acl_action "设置默认ACL: $entry:$permissions $path"
   else
     acl_error "无法设置默认ACL权限。请检查输入或查看 $ACL_OUTPUT。"
@@ -178,6 +184,7 @@ remove_default_acl() {
   }
   if setfacl -k "$path" 2>&1 | tee "$ACL_OUTPUT"; then
     log_success "ACL 默认取消: $path"
+    module_mark_action
     log_acl_action "取消默认ACL: $path"
   else
     acl_error "无法取消默认ACL权限。请检查输入或查看 $ACL_OUTPUT。"
@@ -204,6 +211,7 @@ remove_acl() {
   if [[ "$recursive" == "y" ]]; then
     if setfacl -R -x "$entry" "$path" 2>&1 | tee "$ACL_OUTPUT"; then
       log_success "ACL 删除: $entry"
+      module_mark_action
       log_acl_action "删除ACL: $entry $path (递归: $recursive)"
     else
       acl_error "无法删除ACL条目。请检查输入或查看 $ACL_OUTPUT。"
@@ -211,6 +219,7 @@ remove_acl() {
   else
     if setfacl -x "$entry" "$path" 2>&1 | tee "$ACL_OUTPUT"; then
       log_success "ACL 删除: $entry"
+      module_mark_action
       log_acl_action "删除ACL: $entry $path (递归: $recursive)"
     else
       acl_error "无法删除ACL条目。请检查输入或查看 $ACL_OUTPUT。"
@@ -243,6 +252,7 @@ batch_set_acl() {
     if [[ "$recursive" == "y" ]]; then
       if setfacl -R -m "$entry":"$permissions" "$path" 2>&1 | tee -a "$ACL_OUTPUT"; then
         log_success "已为 $path 设置 $entry:$permissions"
+        module_mark_action
         log_acl_action "批量设置ACL: $entry:$permissions $path (递归: $recursive)"
       else
         acl_error "无法为 $path 设置权限，请查看 $ACL_OUTPUT。"
@@ -250,6 +260,7 @@ batch_set_acl() {
     else
       if setfacl -m "$entry":"$permissions" "$path" 2>&1 | tee -a "$ACL_OUTPUT"; then
         log_success "已为 $path 设置 $entry:$permissions"
+        module_mark_action
         log_acl_action "批量设置ACL: $entry:$permissions $path (递归: $recursive)"
       else
         acl_error "无法为 $path 设置权限，请查看 $ACL_OUTPUT。"
@@ -277,7 +288,7 @@ main() {
   local choice exit_code menu_result
   while true; do
     menu_result=$(mktemp)
-    UI_MENU_BACK_LABEL="← 返回上级" UI_MENU_RESULT_FILE="$menu_result" ui_menu "ACL 权限管理" "${items[@]}" || {
+    UI_MENU_BLANK_BEFORE=1 UI_MENU_BACK_LABEL="← 返回上级" UI_MENU_RESULT_FILE="$menu_result" ui_menu "ACL 权限管理" "${items[@]}" || {
       exit_code=$?
       rm -f "$menu_result"
       case $exit_code in

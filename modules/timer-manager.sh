@@ -41,6 +41,7 @@ _timer_list_all() {
 
 main() {
   _timer_list_all
+  module_mark_action
   return 0
 }
 

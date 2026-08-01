@@ -143,6 +143,7 @@ EOF
   if ! grep -Fxq "session optional pam_exec.so debug /bin/bash $NOTIFY_SCRIPT" "$PAM_FILE" 2>/dev/null; then
     echo "session optional pam_exec.so debug /bin/bash $NOTIFY_SCRIPT" >> "$PAM_FILE"
     log_success "登录通知已启用"
+    module_mark_action
   else
     log_info "登录通知已配置，无需重复操作"
   fi
@@ -155,6 +156,7 @@ disable_login_mail() {
   if grep -Fxq "session optional pam_exec.so debug /bin/bash $NOTIFY_SCRIPT" "$PAM_FILE" 2>/dev/null; then
     sed -i "/session optional pam_exec.so debug \/bin\/bash \/etc\/pam.d\/login-notify.sh/d" "$PAM_FILE"
     log_success "登录通知已移除"
+    module_mark_action
   else
     log_info "登录通知未配置"
   fi

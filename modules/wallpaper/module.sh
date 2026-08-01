@@ -230,6 +230,7 @@ enable_bing_wallpaper() {
     if restart_cockpit; then
       feature_enable "wallpaper"
       log_success "壁纸已启用"
+      module_mark_action
     else
       log_error "Cockpit 未运行，壁纸未启用"
       return 1
@@ -247,6 +248,7 @@ disable_bing_wallpaper() {
   write_file_if_changed "$ISSUE_FILE" "基于Debian搭建 DebNAS" || true
   restart_cockpit
   log_success "壁纸已禁用"
+  module_mark_action
 }
 
 # ==================== 自动更新模式（cron 调用） ====================
@@ -262,7 +264,7 @@ main_menu() {
   local choice exit_code menu_result
   while true; do
     menu_result=$(mktemp)
-    UI_MENU_BACK_LABEL="← 返回上级" UI_MENU_RESULT_FILE="$menu_result" ui_menu "登录页壁纸" "${items[@]}" || {
+    UI_MENU_BLANK_BEFORE=1 UI_MENU_BACK_LABEL="← 返回上级" UI_MENU_RESULT_FILE="$menu_result" ui_menu "登录页壁纸" "${items[@]}" || {
       exit_code=$?
       rm -f "$menu_result"
       case $exit_code in

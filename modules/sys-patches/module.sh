@@ -39,7 +39,7 @@ main_menu() {
   while true; do
     local choice exit_code menu_result
     menu_result=$(mktemp)
-    UI_MENU_BACK_LABEL="← 返回上级" UI_MENU_RESULT_FILE="$menu_result" ui_menu "检查系统更新" "${items[@]}" || {
+    UI_MENU_BLANK_BEFORE=1 UI_MENU_BACK_LABEL="← 返回上级" UI_MENU_RESULT_FILE="$menu_result" ui_menu "检查系统更新" "${items[@]}" || {
       exit_code=$?
       rm -f "$menu_result"
       case $exit_code in
@@ -71,6 +71,7 @@ module_enable_feature() {
   execute_update_check
   feature_enable "sys-patches"
   log_success "系统更新已启用"
+  module_mark_action
   return 0
 }
 
@@ -78,6 +79,7 @@ module_disable_feature() {
   feature_disable "sys-patches"
   cron_unregister "sys-patches" || true
   log_success "系统更新已禁用"
+  module_mark_action
   return 0
 }
 

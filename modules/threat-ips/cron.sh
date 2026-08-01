@@ -54,6 +54,7 @@ enable_auto_update() {
       "首次更新失败，但自动更新已启用（将在下次定时任务时重试）"
   fi
   log_success "威胁封禁已启用：威胁等级 ${threat_level}"
+  module_mark_action
 }
 
 disable_auto_update() {
@@ -86,6 +87,7 @@ disable_auto_update() {
   fi
 
   log_success "威胁 IP 已禁用"
+  module_mark_action
 }
 
 view_cron_jobs() {

@@ -60,6 +60,7 @@ $origins_line"
   fi
 
   log_success "https://$domain"
+  module_mark_action
 }
 
 disable_cockpit_ext() {
@@ -87,6 +88,7 @@ disable_cockpit_ext() {
   if [[ "$config_changed" -eq 1 ]]; then
     if service_ensure "cockpit" "restarted"; then
       log_success "外网访问已禁用"
+      module_mark_action
     else
       log_warning "Cockpit 服务重启失败，请手动重启。"
     fi

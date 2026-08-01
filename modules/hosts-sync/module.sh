@@ -74,6 +74,7 @@ module_enable_feature() {
   update_hosts
   feature_enable "hosts-sync"
   log_success "Hosts 同步已启用"
+  module_mark_action
   return 0
 }
 
@@ -81,6 +82,7 @@ module_disable_feature() {
   feature_disable "hosts-sync"
   cron_unregister "hosts-sync" || true
   log_success "Hosts 同步已禁用"
+  module_mark_action
   return 0
 }
 
@@ -89,7 +91,7 @@ menu() {
   while true; do
     local choice exit_code menu_result
     menu_result=$(mktemp)
-    UI_MENU_BACK_LABEL="← 返回上级" UI_MENU_RESULT_FILE="$menu_result" ui_menu "同步 Hosts" "${items[@]}" || {
+    UI_MENU_BLANK_BEFORE=1 UI_MENU_BACK_LABEL="← 返回上级" UI_MENU_RESULT_FILE="$menu_result" ui_menu "同步 Hosts" "${items[@]}" || {
       exit_code=$?
       rm -f "$menu_result"
       case $exit_code in

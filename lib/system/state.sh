@@ -138,6 +138,12 @@ state_mark_checkpoint() {
   state_set "$module_name" "last_checkpoint" "$checkpoint"
 }
 
+# 交互模块执行真实动作后调用，供 module-runner 判断是否记录状态与日志
+module_mark_action() {
+  [[ -n "${DEBNAS_ACTION_MARKER:-}" ]] && : > "$DEBNAS_ACTION_MARKER" 2>/dev/null || true
+  return 0
+}
+
 # 获取模块最后一个检查点
 # 参数：$1 - 模块名
 # 输出：检查点名称（无则输出空）

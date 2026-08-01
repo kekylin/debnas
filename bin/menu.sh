@@ -127,7 +127,7 @@ handle_about_project() {
 handle_solution_sub_menu() {
   ui_screen_switch  # 清 L1 菜单区 + 渲染 L2 Header
   # 计算旧 L2 区域总行数（Header + 面包屑 + 菜单项 + 底部标签）
-  local _hdr_h=4 _bc_lines=2 _ftr_lines=1
+  local _hdr_h=4 _bc_lines=1 _ftr_lines=1
   [[ "${_UI_COMPACT_MODE:-0}" -eq 1 ]] && { _hdr_h=3; _bc_lines=1; }
   local _old_area=$((_hdr_h + _bc_lines + ${#SOLUTION_DISPLAY_NAMES[@]} + _ftr_lines))
 
@@ -174,7 +174,7 @@ handle_auto_sub_menu() {
   local choice exit_code menu_result
   ui_screen_switch  # 清 L1 菜单区 + 渲染 L2 Header
   # 计算旧 L2 区域总行数（Header + 面包屑 + 菜单项 + 底部标签）
-  local _hdr_h=4 _bc_lines=2 _ftr_lines=1
+  local _hdr_h=4 _bc_lines=1 _ftr_lines=1
   [[ "${_UI_COMPACT_MODE:-0}" -eq 1 ]] && { _hdr_h=3; _bc_lines=1; }
   local _old_area=$((_hdr_h + _bc_lines + ${#modules[@]} + _ftr_lines))
 

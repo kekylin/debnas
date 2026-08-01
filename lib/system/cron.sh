@@ -296,6 +296,7 @@ cron_enable_interactive() {
 
   if cron_register "$module_name" "$schedule"; then
     log_success "已启用 $(_cron_display_name "$module_name") 定时任务：${schedule}（$(cron_describe "$schedule")）"
+    module_mark_action
   else
     log_error "定时任务注册失败"
     return 1
@@ -315,7 +316,7 @@ cron_settings_menu() {
   while true; do
     local choice exit_code menu_result
     menu_result=$(mktemp)
-    UI_MENU_BACK_LABEL="← 返回上级" UI_MENU_RESULT_FILE="$menu_result" ui_menu "${display_name} 定时设置" "${items[@]}" || {
+    UI_MENU_BLANK_BEFORE=1 UI_MENU_BACK_LABEL="← 返回上级" UI_MENU_RESULT_FILE="$menu_result" ui_menu "${display_name} 定时设置" "${items[@]}" || {
       exit_code=$?
       rm -f "$menu_result"
       case $exit_code in
@@ -331,6 +332,7 @@ cron_settings_menu() {
       1)
         if cron_unregister "$module_name"; then
           log_success "已禁用 ${display_name} 定时任务"
+          module_mark_action
         else
           log_error "定时任务移除失败"
         fi

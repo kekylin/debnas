@@ -112,6 +112,9 @@ ui_menu() {
 
   ui_detect_size
   _ui_terminal_echo_off
+  if [[ "${UI_MENU_BLANK_BEFORE:-0}" -eq 1 ]]; then
+    printf '\n'
+  fi
 
   local focus_idx=0       # 当前焦点（items 数组索引）
   local old_focus=-1      # 上一次焦点（用于局部刷新）
@@ -124,7 +127,7 @@ ui_menu() {
     if [[ "${_UI_COMPACT_MODE:-0}" -eq 1 ]]; then
       breadcrumb_lines=1  # 仅面包屑文字，无空行
     else
-      breadcrumb_lines=2  # 面包屑文字 + 空行
+      breadcrumb_lines=1  # 仅面包屑文字，无空行
     fi
   fi
   local bottom_lines=0
@@ -218,9 +221,6 @@ ui_menu() {
     # 面包屑
     if [[ -n "$breadcrumb" ]]; then
       printf '%*s%b%s%b\n' "$_UI_BREAD_INDENT" '' "$COLOR_DIM" "$breadcrumb" "$COLOR_RESET"
-      if [[ "${_UI_COMPACT_MODE:-0}" -eq 0 ]]; then
-        printf '\n'
-      fi
     fi
 
     if [[ $_ui_needs_scroll -eq 0 ]]; then

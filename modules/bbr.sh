@@ -156,14 +156,15 @@ perm_disable_bbr() {
 handle_choice() {
   local choice="$1"
   case "$choice" in
-    1) temp_enable_bbr ;;
-    2) perm_enable_bbr ;;
-    3) temp_disable_bbr ;;
-    4) perm_disable_bbr ;;
-    5) check_current_algo ;;
+    1) temp_enable_bbr || return 1 ;;
+    2) perm_enable_bbr || return 1 ;;
+    3) temp_disable_bbr || return 1 ;;
+    4) perm_disable_bbr || return 1 ;;
+    5) check_current_algo || return 1 ;;
     0) log_info "退出 BBR 管理"; return 0 ;;
     *) log_error "无效编号，请重新选择。"; return 1 ;;
   esac
+  module_mark_action
 }
 
 main() {
@@ -183,7 +184,7 @@ main() {
   local choice exit_code menu_result
   while true; do
     menu_result=$(mktemp)
-    UI_MENU_RESULT_FILE="$menu_result" ui_menu "配置 BBR 加速" "${items[@]}" || {
+    UI_MENU_BLANK_BEFORE=1 UI_MENU_RESULT_FILE="$menu_result" ui_menu "配置 BBR 加速" "${items[@]}" || {
       exit_code=$?
       rm -f "$menu_result"
       case $exit_code in
