@@ -6,8 +6,9 @@
 # @depend_modules: cockpit
 # @version: 1.0.0
 # @order: 35
+# @interactive: true
 # @cron: true
-# @cron_schedule: 0 */6 * * *
+# @cron_schedule: 0 0 * * *
 # 功能：Cockpit 登录页必应每日壁纸自动管理
 
 set -euo pipefail
@@ -207,40 +208,32 @@ restart_cockpit() {
   if systemctl is-active --quiet cockpit 2>/dev/null; then
     service_ensure cockpit restarted
     log_success "Cockpit 已重启"
-  else
-    log_warning "Cockpit 未运行"
+    return 0
   fi
-}
-
-# ==================== Cron 管理 ====================
-show_cron_jobs() {
-  log_info "当前定时任务："
-  if cron_is_registered "wallpaper"; then
-    cron_list | grep "wallpaper" || log_info "已注册（使用 debnas cron list 查看）"
-  else
-    echo "(无定时任务)"
+  if systemctl is-active --quiet cockpit.socket 2>/dev/null; then
+    service_ensure cockpit.socket restarted
+    log_success "Cockpit 已重启"
+    return 0
   fi
+  log_warning "Cockpit 未运行"
+  return 1
 }
 
 # ==================== 启用/禁用 ====================
 enable_bing_wallpaper() {
+  ensure_module_deps wallpaper || return 1
   check_cockpit_version || return 1
-  local cron_expr default_cron
-
-  default_cron=$(get_module_field "wallpaper" "cron_schedule" "0 */6 * * *" 2>/dev/null) || default_cron="0 */6 * * *"
-  cron_expr=$(ui_input "请输入 Cron 表达式" "$default_cron")
 
   prepare_env
-  if ! cron_register "wallpaper" "$cron_expr"; then
-    log_error "定时注册失败"
-    return 1
-  fi
-  log_success "壁纸定时 $cron_expr"
-
   if update_wallpaper; then
     generate_css
-    restart_cockpit
-    log_success "壁纸已启用"
+    if restart_cockpit; then
+      feature_enable "wallpaper"
+      log_success "壁纸已启用"
+    else
+      log_error "Cockpit 未运行，壁纸未启用"
+      return 1
+    fi
   else
     log_error "壁纸下载失败"
     return 1
@@ -248,6 +241,7 @@ enable_bing_wallpaper() {
 }
 
 disable_bing_wallpaper() {
+  feature_disable "wallpaper"
   cron_unregister "wallpaper" || true
   rm -rf "$BRANDING_DIR"
   write_file_if_changed "$ISSUE_FILE" "基于Debian搭建 DebNAS" || true
@@ -257,19 +251,18 @@ disable_bing_wallpaper() {
 
 # ==================== 自动更新模式（cron 调用） ====================
 auto_update_mode() {
-  if update_wallpaper; then
-    generate_css
-    restart_cockpit
-  fi
+  update_wallpaper || return 1
+  generate_css
+  restart_cockpit
 }
 
 # ==================== 交互菜单 ====================
 main_menu() {
-  local -a items=("启用必应壁纸" "禁用必应壁纸" "查看壁纸计划")
+  local -a items=("启用壁纸" "禁用壁纸" "定时设置")
   local choice exit_code menu_result
   while true; do
     menu_result=$(mktemp)
-    UI_MENU_BACK_LABEL="← 返回上级" UI_MENU_RESULT_FILE="$menu_result" ui_menu "Cockpit 必应壁纸" "${items[@]}" || {
+    UI_MENU_BACK_LABEL="← 返回上级" UI_MENU_RESULT_FILE="$menu_result" ui_menu "登录页壁纸" "${items[@]}" || {
       exit_code=$?
       rm -f "$menu_result"
       case $exit_code in
@@ -284,7 +277,7 @@ main_menu() {
     case "$choice" in
       0) enable_bing_wallpaper ;;
       1) disable_bing_wallpaper ;;
-      2) show_cron_jobs ;;
+      2) cron_settings_menu "wallpaper" ;;
     esac
     echo ""
   done
@@ -292,6 +285,15 @@ main_menu() {
 
 # ==================== 主入口 ====================
 main() {
+  if [[ "${1:-}" == "enable" ]]; then
+    enable_bing_wallpaper
+    return $?
+  fi
+  if [[ "${1:-}" == "disable" ]]; then
+    disable_bing_wallpaper
+    return $?
+  fi
+
   if [[ "${DEBNAS_CRON_MODE:-0}" -eq 1 ]]; then
     auto_update_mode
   elif [[ -t 0 ]]; then

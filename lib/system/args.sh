@@ -39,7 +39,7 @@ DebNAS — Debian NAS 自动化部署工具
   update                  更新 DebNAS
   uninstall               卸载 DebNAS
   doctor                  系统状态诊断
-  cron add|remove|list    管理定时任务
+  cron enable|disable|list   管理定时任务
 
 全局参数（临时生效，需配合子命令）:
   --dry-run               仅预览，不实际操作
@@ -57,7 +57,9 @@ DebNAS — Debian NAS 自动化部署工具
   debnas config region cn                   # 设置: 国内镜像
   debnas --dry-run install docker-ce        # 预览安装计划
   debnas doctor                             # 系统诊断
-  debnas cron list                          # 查看定时任务
+  debnas cron list                          # 查看全部定时任务
+  debnas cron enable sys-patches            # 启用定时（默认每天 00:00）
+  debnas cron disable sys-patches           # 禁用定时
   debnas --help                             # 显示帮助
 
 项目主页: https://github.com/kekylin/debnas

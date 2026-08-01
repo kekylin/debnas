@@ -18,6 +18,53 @@ readonly DEBNAS_BIN="${DEBNAS_BIN:-/usr/local/bin/debnas}"
 
 # ==================== 内部函数 ====================
 
+# 校验 cron 单个字段
+# 参数：$1 - 字段值，$2 - 最小值，$3 - 最大值
+# 返回：0 合法，1 非法
+_cron_field_valid() {
+  local field="$1" min="$2" max="$3" part value
+  [[ -n "$field" ]] || return 1
+  IFS=',' read -ra parts <<< "$field"
+  for part in "${parts[@]}"; do
+    if [[ "$part" == "*" ]]; then
+      continue
+    fi
+    if [[ "$part" =~ ^\*/([0-9]+)$ ]]; then
+      [[ "${BASH_REMATCH[1]}" -ge 1 ]] || return 1
+      continue
+    fi
+    if [[ "$part" =~ ^([0-9]+)-([0-9]+)(/([0-9]+))?$ ]]; then
+      [[ "${BASH_REMATCH[1]}" -ge "$min" \
+        && "${BASH_REMATCH[2]}" -le "$max" \
+        && "${BASH_REMATCH[1]}" -le "${BASH_REMATCH[2]}" ]] || return 1
+      if [[ -n "${BASH_REMATCH[4]}" ]]; then
+        [[ "${BASH_REMATCH[4]}" -ge 1 ]] || return 1
+      fi
+      continue
+    fi
+    [[ "$part" =~ ^[0-9]+$ ]] || return 1
+    [[ "$part" -ge "$min" && "$part" -le "$max" ]] || return 1
+  done
+  return 0
+}
+
+# 校验 cron 表达式（5 个字段，含字段值范围）
+# 参数：$1 - cron 表达式
+# 返回：0 合法，1 非法
+cron_validate_schedule() {
+  local schedule="$1"
+  local -a fields
+  local IFS=' '
+  read -r -a fields <<< "$schedule"
+  [[ ${#fields[@]} -eq 5 ]] || return 1
+  _cron_field_valid "${fields[0]}" 0 59 || return 1
+  _cron_field_valid "${fields[1]}" 0 23 || return 1
+  _cron_field_valid "${fields[2]}" 1 31 || return 1
+  _cron_field_valid "${fields[3]}" 1 12 || return 1
+  _cron_field_valid "${fields[4]}" 0 7 || return 1
+  return 0
+}
+
 # 构建 cron 条目标识
 # 参数：$1 - 模块名
 # 输出：cron 条目的标记字符串
@@ -57,10 +104,8 @@ cron_register() {
   local marker
   marker=$(_cron_entry_marker "$module_name")
 
-  # 验证 cron 表达式格式（基本校验：5 个字段）
-  local field_count
-  field_count=$(echo "$schedule" | awk '{print NF}')
-  if [[ "$field_count" -ne 5 ]]; then
+  # 验证 cron 表达式格式（5 个字段 + 字段值范围）
+  if ! cron_validate_schedule "$schedule"; then
     return 1
   fi
 
@@ -175,4 +220,127 @@ cron_is_registered() {
   current_crontab=$(_get_current_crontab)
 
   echo "$current_crontab" | grep -q "${marker}" 2>/dev/null
+}
+
+# 获取模块当前 cron 表达式
+# 参数：$1 - 模块名
+# 输出：cron 表达式；未注册时输出空
+# 返回：0 已注册，1 未注册
+cron_get_schedule() {
+  local module_name="${1:?cron_get_schedule: 缺少模块名}"
+  local marker line
+  marker=$(_cron_entry_marker "$module_name")
+  line=$(_get_current_crontab | grep "${marker}" | head -1)
+  [[ -n "$line" ]] || return 1
+  echo "$line" | awk '{print $1, $2, $3, $4, $5}'
+}
+
+# 将常见 cron 表达式转换为可读描述
+# 参数：$1 - cron 表达式
+# 输出：可读描述；无法识别时返回原始表达式
+cron_describe() {
+  local schedule="$1"
+  case "$schedule" in
+    "0 0 * * *")  echo "每天 00:00" ;;
+    "0 0 * * 1")  echo "每周一 00:00" ;;
+    "0 0 * * 0"|"0 0 * * 7") echo "每周日 00:00" ;;
+    "0 * * * *")  echo "每小时整点" ;;
+    "0 */6 * * *") echo "每 6 小时" ;;
+    *) echo "$schedule" ;;
+  esac
+}
+
+# 统一展示模块定时任务状态
+# 参数：$1 - 模块名
+# 输出：模块显示名、状态、调度与可读描述
+cron_show_status() {
+  local module_name="${1:?cron_show_status: 缺少模块名}"
+  local display_name
+  display_name=$(get_module_field "$module_name" "name" "$module_name" 2>/dev/null) || display_name="$module_name"
+
+  echo "模块：${display_name}"
+  if cron_is_registered "$module_name"; then
+    local schedule
+    schedule=$(cron_get_schedule "$module_name") || schedule=""
+    echo "状态：已启用"
+    echo "调度：${schedule}（$(cron_describe "$schedule")）"
+  else
+    echo "状态：未启用"
+  fi
+}
+
+# 交互式启用定时任务：先询问时间，再自动补齐功能并注册
+# 参数：$1 - 模块名
+# 返回：0 成功，1 失败
+cron_enable_interactive() {
+  local module_name="${1:?cron_enable_interactive: 缺少模块名}"
+  local default_cron="0 0 * * *" input schedule
+
+  input=$(ui_input "请输入定时表达式（留空使用默认每天 00:00）" "$default_cron")
+  if [[ -z "$input" ]]; then
+    schedule="$default_cron"
+  elif cron_validate_schedule "$input"; then
+    schedule="$input"
+  else
+    log_warning "无效定时表达式：${input}，使用默认：${default_cron}"
+    schedule="$default_cron"
+  fi
+
+  if ! feature_enabled "$module_name"; then
+    log_warning "$(_cron_display_name "$module_name") 功能未启用，将自动启用"
+    if ! (unset _DEBNAS_BOOTSTRAPPED; trap - INT; bash "${DEBNAS_ROOT}/bin/module-runner.sh" "$module_name" enable); then
+      log_error "自动启用 $(_cron_display_name "$module_name") 失败"
+      return 1
+    fi
+  fi
+
+  if cron_register "$module_name" "$schedule"; then
+    log_success "已启用 $(_cron_display_name "$module_name") 定时任务：${schedule}（$(cron_describe "$schedule")）"
+  else
+    log_error "定时任务注册失败"
+    return 1
+  fi
+  return 0
+}
+
+# 模块内“定时设置”统一菜单
+# 参数：$1 - 模块名
+# 返回：0 返回上级，1 失败
+cron_settings_menu() {
+  local module_name="${1:?cron_settings_menu: 缺少模块名}"
+  local display_name
+  display_name=$(_cron_display_name "$module_name")
+  local -a items=("启用定时任务（默认每天 00:00）" "禁用定时任务")
+
+  while true; do
+    local choice exit_code menu_result
+    menu_result=$(mktemp)
+    UI_MENU_BACK_LABEL="← 返回上级" UI_MENU_RESULT_FILE="$menu_result" ui_menu "${display_name} 定时设置" "${items[@]}" || {
+      exit_code=$?
+      rm -f "$menu_result"
+      case $exit_code in
+        254) return 0 ;;   # Esc：返回上级
+        255) return 0 ;;   # Q：退出
+        *)   continue ;;
+      esac
+    }
+    choice=$(cat "$menu_result")
+    rm -f "$menu_result"
+    case "$choice" in
+      0) cron_enable_interactive "$module_name" ;;
+      1)
+        if cron_unregister "$module_name"; then
+          log_success "已禁用 ${display_name} 定时任务"
+        else
+          log_error "定时任务移除失败"
+        fi
+        ;;
+    esac
+  done
+}
+
+# 获取模块显示名（供 cron 管理函数内部使用）
+_cron_display_name() {
+  local module_name="$1"
+  get_module_field "$module_name" "name" "$module_name" 2>/dev/null || echo "$module_name"
 }

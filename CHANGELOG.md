@@ -17,6 +17,8 @@
 > 当前开发分支：`refactor/debnas-v2`
 
 ### Added
+- 新增统一“定时任务”管理模块（位于系统维护二级菜单），支持选择模块后启用/禁用/查看定时任务
+- 新增 `lib/system/feature.sh` 模块功能状态管理
 - 一级菜单新增“关于项目”入口，进入后展示本项目概况
 - Phase 1 UI 基础层：新增 `COLOR_DIM`（亮黑/灰色）ANSI 颜色变量
 - Phase 1 UI 基础层：新增 `print_dim()` / `print_accent()` 辅助输出函数
@@ -55,6 +57,13 @@
 - 新增部署方案集成测试 `tests/integration/test-solution.bats`（8 个用例：方案解析、模块排序、stdin 隔离、失败中断、空格 trim）
 
 ### Changed
+- CLI 定时任务新增 `cron enable/disable` 命令，保留 `add/remove` 兼容
+- 定时任务回归模块内管理：每个模块菜单新增“定时设置”，集中入口改为只读概览
+- 定时任务启用流程调整为先询问定时时间，再自动补齐功能并注册定时
+- 依赖检查统一延迟到交互模块具体动作时执行，进入菜单不再检查/安装依赖（wallpaper、acl-manager、sys-patches、hosts-sync）
+- 定时任务默认调度统一为每天 00:00（`0 0 * * *`）
+- 四个定时模块菜单统一为启用/禁用，功能开关与定时任务分离管理
+- cron 表达式增加字段值范围校验，新增可读描述与状态查询
 - 关于项目改为直接打印概况后返回一级菜单，并优化终端排版
 - Phase 1 UI 基础层：日志标签统一为 7 字符宽度（`[SUCCESS]→[OK]`、`[FAIL]→[ERROR]`、`[WARNING]→[WARN]`、`[ACTION]→[INFO]`）
 - Phase 1 UI 基础层：`get_ui_color highlight` 从 COLOR_MAGENTA 迁移为 COLOR_CYAN
@@ -99,6 +108,7 @@
 - Phase 2 菜单交互：`show_menu()` / `show_menu_with_border()` / `get_user_choice()` / `run_submenu()` 弃用（由 `ui_menu` 替代，旧函数保留向后兼容）
 
 ### Removed
+- 删除 sys-patches、hosts-sync 旧 cron 子模块及模块内定时设置菜单
 - 移除多语言（i18n）支持：删除 `lib/i18n/`、`--lang` 参数与 `lang` 配置项，界面固定为中文
 - 移除无引用的错误码常量（`ERROR_CONFIG`、`ERROR_PARAMETER`）及兼容别名（`GENERAL`/`DEPENDENCY`/`CONFIG`/`PERMISSION`/`PARAMETER`/`UNSUPPORTED_OS`）
 - 移除死函数 `config_validate`、`config_read_global`、`config_write_global`
@@ -110,6 +120,8 @@
 - 删除 DEBUG 日志等级和 `log_debug` 函数
 
 ### Fixed
+- 修复 threat-ips 菜单缺少“定时设置”入口
+- 修复 wallpaper 菜单标题与模块名不一致，并修复 Cockpit 运行状态误判（兼容 `cockpit.socket` 激活）
 - 修复模块内使用 `$(ui_menu)` 捕获菜单渲染导致选择失效，统一改用 `UI_MENU_RESULT_FILE`（sys-patches/wallpaper/hosts-sync/login-mail/bbr/threat-ips/cockpit-ext/acl-manager）
 - 修复非 TTY 菜单 EOF 死循环：`read_key` 返回 EOF，`ui_menu` 收到后统一退出
 - 修复 `ui_menu` 在非 TTY/模块子菜单中 `LINES` 未绑定导致崩溃

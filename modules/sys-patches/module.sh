@@ -6,7 +6,7 @@
 # @version: 1.0.0
 # @order: 71
 # @cron: true
-# @cron_schedule: 0 6 * * *
+# @cron_schedule: 0 0 * * *
 # @interactive: true
 # 功能：系统更新检查与邮件通知（目录模块入口）
 
@@ -23,7 +23,6 @@ source "${SCRIPT_DIR}/lib/bootstrap.sh"
 # ==================== 加载子模块 ====================
 source "${MODULE_DIR}/check.sh"
 source "${MODULE_DIR}/notify.sh"
-source "${MODULE_DIR}/cron.sh"
 
 # ==================== 常量定义 ====================
 REQUIRED_CMDS=(apt grep awk mail systemctl)
@@ -36,7 +35,7 @@ main_menu() {
     return 1
   fi
 
-  local -a items=("立即执行检测" "设置定时检测" "查看定时任务" "移除定时任务")
+  local -a items=("启用系统更新" "禁用系统更新" "定时设置")
   while true; do
     local choice exit_code menu_result
     menu_result=$(mktemp)
@@ -52,50 +51,53 @@ main_menu() {
     choice=$(cat "$menu_result")
     rm -f "$menu_result"
     case "$choice" in
-      0) execute_update_check ;;
-      1) schedule_menu ;;
-      2) list_cron_tasks ;;
-      3) remove_cron_task ;;
+      0) module_enable_feature ;;
+      1) module_disable_feature ;;
+      2) cron_settings_menu "sys-patches" ;;
     esac
   done
 }
 
-_schedule_daily() { set_cron_task "daily"; }
-_schedule_weekly() { set_cron_task "weekly"; }
+# ==================== 功能开关 ====================
 
-schedule_menu() {
-  local -a items=("每日检测（00:00）" "每周检测（周一00:00）" "自定义定时检测")
-  while true; do
-    local choice exit_code menu_result
-    menu_result=$(mktemp)
-    UI_MENU_BACK_LABEL="← 返回上级" UI_MENU_RESULT_FILE="$menu_result" ui_menu "定时检测" "${items[@]}" || {
-      exit_code=$?
-      rm -f "$menu_result"
-      case $exit_code in
-        254) return 0 ;;   # Esc：返回上级
-        255) return 0 ;;   # Q：退出
-        *)   continue ;;
-      esac
-    }
-    choice=$(cat "$menu_result")
-    rm -f "$menu_result"
-    case "$choice" in
-      0) _schedule_daily ;;
-      1) _schedule_weekly ;;
-      2) set_custom_cron_task ;;
-    esac
-  done
+module_enable_feature() {
+  if ! check_dependencies "${REQUIRED_CMDS[@]}"; then
+    log_error "依赖缺失，请先安装必备命令：${REQUIRED_CMDS[*]}。"
+    return 1
+  fi
+  if ! verify_system_support; then
+    return 1
+  fi
+  execute_update_check
+  feature_enable "sys-patches"
+  log_success "系统更新已启用"
+  return 0
+}
+
+module_disable_feature() {
+  feature_disable "sys-patches"
+  cron_unregister "sys-patches" || true
+  log_success "系统更新已禁用"
+  return 0
 }
 
 # ==================== 主入口 ====================
 
 main() {
-  if ! check_dependencies "${REQUIRED_CMDS[@]}"; then
-    log_error "依赖缺失，请先安装必备命令：${REQUIRED_CMDS[*]}。"
-    exit "${ERROR_DEPENDENCY}"
+  if [[ "${1:-}" == "enable" ]]; then
+    module_enable_feature
+    return $?
+  fi
+  if [[ "${1:-}" == "disable" ]]; then
+    module_disable_feature
+    return $?
   fi
 
   if [[ "${DEBNAS_CRON_MODE:-0}" -eq 1 ]]; then
+    if ! check_dependencies "${REQUIRED_CMDS[@]}"; then
+      log_error "依赖缺失，请先安装必备命令：${REQUIRED_CMDS[*]}。"
+      exit "${ERROR_DEPENDENCY}"
+    fi
     # 定时任务模式：执行检测，有更新时发送邮件通知
     if ! verify_system_support; then
       exit "${ERROR_UNSUPPORTED_OS}"
@@ -105,6 +107,10 @@ main() {
       send_email_notification
     fi
   elif [[ "${DEBNAS_FORCE_YES:-0}" -eq 1 ]]; then
+    if ! check_dependencies "${REQUIRED_CMDS[@]}"; then
+      log_error "依赖缺失，请先安装必备命令：${REQUIRED_CMDS[*]}。"
+      exit "${ERROR_DEPENDENCY}"
+    fi
     # --yes 模式：跳过菜单，直接执行检测
     if ! verify_system_support; then
       exit "${ERROR_UNSUPPORTED_OS}"

@@ -5,6 +5,7 @@
 # @depends: getfacl,setfacl
 # @version: 1.0.0
 # @order: 75
+# @interactive: true
 # 功能：ACL权限管理工具（交互式菜单，支持批量、递归、用户/组/默认ACL等操作）
 
 set -euo pipefail
@@ -21,17 +22,6 @@ _ACL_FAILED=0
 
 # 日志文件路径
 LOG_FILE="/var/log/debnas/acl-manager.log"
-
-# 检查依赖，自动安装缺失的ACL工具
-REQUIRED_CMDS=(getfacl setfacl)
-if ! check_dependencies "${REQUIRED_CMDS[@]}"; then
-  log_warning "ACL 工具缺失"
-  apt_install_packages acl
-  if ! check_dependencies "${REQUIRED_CMDS[@]}"; then
-    log_error "ACL工具安装失败。请手动安装acl软件包后重试。"
-    exit "${ERROR_DEPENDENCY}"
-  fi
-fi
 
 # 记录ACL操作日志，便于审计和问题追踪
 log_acl_action() {
@@ -300,13 +290,13 @@ main() {
     rm -f "$menu_result"
 
     case $choice in
-      0) view_acl ;;
-      1) set_user_acl ;;
-      2) set_group_acl ;;
-      3) set_default_acl ;;
-      4) remove_default_acl ;;
-      5) remove_acl ;;
-      6) batch_set_acl ;;
+      0) ensure_module_deps acl-manager || continue; view_acl ;;
+      1) ensure_module_deps acl-manager || continue; set_user_acl ;;
+      2) ensure_module_deps acl-manager || continue; set_group_acl ;;
+      3) ensure_module_deps acl-manager || continue; set_default_acl ;;
+      4) ensure_module_deps acl-manager || continue; remove_default_acl ;;
+      5) ensure_module_deps acl-manager || continue; remove_acl ;;
+      6) ensure_module_deps acl-manager || continue; batch_set_acl ;;
     esac
     echo ""
     sleep 1

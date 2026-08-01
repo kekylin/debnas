@@ -8,7 +8,7 @@
 # @version: 2.0.0
 # @order: 43
 # @cron: true
-# @cron_schedule: 0 */6 * * *
+# @cron_schedule: 0 0 * * *
 # 功能：Firewalld-IPThreat 自动化威胁情报更新系统（目录模块入口）
 
 set -euo pipefail
@@ -291,12 +291,12 @@ _handle_threat_action() {
       check_services || return 1
       validate_zone
       enable_auto_update || {
-        log_error "启用自动更新失败"
+        log_error "启用威胁封禁失败"
         return 1
       }
       ;;
     1) disable_auto_update ;;
-    2) view_cron_jobs ;;
+    2) cron_settings_menu "threat-ips" ;;
     *) log_warning "无效选项" ;;
   esac
 }
@@ -306,6 +306,19 @@ _handle_threat_action() {
 main() {
   register_temp_cleanup
 
+  if [[ "${1:-}" == "enable" ]]; then
+    init_manual
+    ensure_module_deps threat-ips || exit "${ERROR_DEPENDENCY}"
+    check_services || exit "${ERROR_GENERAL}"
+    validate_zone
+    enable_auto_update
+    exit $?
+  fi
+  if [[ "${1:-}" == "disable" ]]; then
+    disable_auto_update
+    exit $?
+  fi
+
   if ! [[ "${MAX_IP_LIMIT}" =~ ^[0-9]+$ ]]; then
     log_error "无效 MAX_IP_LIMIT：${MAX_IP_LIMIT}"
     exit "${ERROR_GENERAL}"
@@ -313,7 +326,7 @@ main() {
 
   if [[ "${DEBNAS_CRON_MODE:-0}" -eq 0 ]]; then
     init_manual
-    local -a items=("启用自动更新" "禁用自动更新" "查看定时任务")
+    local -a items=("启用威胁封禁" "禁用威胁封禁" "定时设置")
     local choice exit_code menu_result
     while true; do
       display_threat_status

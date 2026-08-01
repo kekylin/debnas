@@ -6,7 +6,7 @@ IFS=$'\n\t'
 
 # ==================== 自动更新管理 ====================
 enable_auto_update() {
-  local cron_schedule threat_level input
+  local threat_level input
 
   print_prompt "请输入威胁等级（0-100，留空使用默认：${DEFAULT_THREAT_LEVEL}）："
   read -r input || true
@@ -19,16 +19,6 @@ enable_auto_update() {
   fi
   THREAT_LEVEL=${threat_level}
   export THREAT_LEVEL
-
-  print_prompt "请输入 Cron 规则（留空使用默认：${DEFAULT_UPDATE_CRON}）："
-  read -r input || true
-  cron_schedule="${input:-${DEFAULT_UPDATE_CRON}}"
-  if ! printf "%s" "${cron_schedule}" \
-    | grep -qE '^[0-9*,/-]+[[:space:]]+[0-9*,/-]+[[:space:]]+[0-9*,/-]+[[:space:]]+[0-9*,/-]+[[:space:]]+[0-9*,/-]+$'; then
-    log_warning \
-      "无效 Cron 规则：${cron_schedule}，使用默认：${DEFAULT_UPDATE_CRON}"
-    cron_schedule=${DEFAULT_UPDATE_CRON}
-  fi
 
   init_data_dir
   if [[ ! -d "${LOG_DIR}" ]]; then
@@ -56,28 +46,18 @@ enable_auto_update() {
     log_error "写入配置文件失败：${CONFIG_FILE}"
     return 1
   }
-  printf "UPDATE_CRON=%s\n" "${cron_schedule}" >> "${CONFIG_FILE}" || {
-    log_error "写入配置文件失败：${CONFIG_FILE}"
-    return 1
-  }
   chmod 644 "${CONFIG_FILE}" 2>/dev/null
-
-  # 使用统一 cron 框架注册定时任务（替代自行管理 crontab）
-  if ! cron_register "threat-ips" "${cron_schedule}"; then
-    log_error "定时注册失败"
-    return 1
-  fi
-  log_success \
-    "启用自动更新：威胁等级 ${threat_level}，定时 ${cron_schedule}"
+  feature_enable "threat-ips"
 
   if ! update_threat_ips "${threat_level}"; then
     log_warning \
       "首次更新失败，但自动更新已启用（将在下次定时任务时重试）"
   fi
+  log_success "威胁封禁已启用：威胁等级 ${threat_level}"
 }
 
 disable_auto_update() {
-  # 使用统一 cron 框架移除定时任务（替代自行管理 crontab）
+  feature_disable "threat-ips"
   cron_unregister "threat-ips" || true
 
   remove_all_ips || {
@@ -148,4 +128,3 @@ update_threat_ips() {
     return 1
   fi
 }
-

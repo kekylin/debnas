@@ -7,7 +7,7 @@
 # @version: 2.0.0
 # @order: 73
 # @cron: true
-# @cron_schedule: 0 3 * * *
+# @cron_schedule: 0 0 * * *
 # 功能：自动更新 /etc/hosts 文件（目录模块入口）
 
 set -euo pipefail
@@ -35,7 +35,6 @@ readonly END_MARK="# DebNAS Hosts End"
 source "${MODULE_DIR}/dns-resolve.sh"
 source "${MODULE_DIR}/connectivity.sh"
 source "${MODULE_DIR}/hosts-manager.sh"
-source "${MODULE_DIR}/cron.sh"
 
 # 导出函数供并行子 shell 使用（所有子模块加载完毕后统一导出）
 export -f resolve_domain get_ip_type test_https_connectivity test_tcp_connectivity test_ping_connectivity test_ip_connectivity 2>/dev/null || true
@@ -66,16 +65,27 @@ setup_temp_environment() {
 # 参数：$1 - 域名
 # 返回：MD5 哈希值（32 字符）
 
-_menu_update() {
+module_enable_feature() {
   ensure_module_deps hosts-sync || return 1
+  setup_temp_environment
+  init_domains_config
+  install_missing_dependencies dig ping curl || true
   log_info "更新 Hosts..."
   update_hosts
+  feature_enable "hosts-sync"
+  log_success "Hosts 同步已启用"
+  return 0
 }
-_menu_create_cron() { log_info "创建定时任务..."; create_cron_job; }
-_menu_remove_cron() { log_info "删除定时任务..."; remove_cron_job; }
+
+module_disable_feature() {
+  feature_disable "hosts-sync"
+  cron_unregister "hosts-sync" || true
+  log_success "Hosts 同步已禁用"
+  return 0
+}
 
 menu() {
-  local -a items=("单次更新" "定时更新" "删除定时任务" "查询定时任务")
+  local -a items=("启用 Hosts 同步" "禁用 Hosts 同步" "定时设置")
   while true; do
     local choice exit_code menu_result
     menu_result=$(mktemp)
@@ -91,27 +101,37 @@ menu() {
     choice=$(cat "$menu_result")
     rm -f "$menu_result"
     case "$choice" in
-      0) _menu_update ;;
-      1) _menu_create_cron ;;
-      2) _menu_remove_cron ;;
-      3) list_cron_jobs ;;
+      0) module_enable_feature ;;
+      1) module_disable_feature ;;
+      2) cron_settings_menu "hosts-sync" ;;
     esac
   done
 }
 
 main() {
+  if [[ "${1:-}" == "enable" ]]; then
+    module_enable_feature
+    return $?
+  fi
+  if [[ "${1:-}" == "disable" ]]; then
+    module_disable_feature
+    return $?
+  fi
+
   if [[ $CRON_MODE -eq 0 ]]; then
-    setup_temp_environment
-    init_domains_config
-    install_missing_dependencies dig ping curl || true
     if [[ "${DEBNAS_FORCE_YES:-0}" -eq 1 ]]; then
       # --yes 模式：跳过菜单，直接执行单次更新
+      setup_temp_environment
+      init_domains_config
+      install_missing_dependencies dig ping curl || true
       update_hosts
     else
       menu
     fi
   else
     setup_temp_environment
+    init_domains_config
+    install_missing_dependencies dig ping curl || true
     update_hosts
     exit 0
   fi

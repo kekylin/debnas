@@ -35,6 +35,7 @@ source "${_DEBNAS_ROOT}/lib/bootstrap-core.sh"
 # ==================== 扩展 System layer ====================
 source "${_DEBNAS_ROOT}/lib/system/args.sh"
 source "${_DEBNAS_ROOT}/lib/system/state.sh"
+source "${_DEBNAS_ROOT}/lib/system/feature.sh"
 source "${_DEBNAS_ROOT}/lib/system/cron.sh"
 source "${_DEBNAS_ROOT}/lib/system/config.sh"
 source "${_DEBNAS_ROOT}/lib/system/installer.sh"
