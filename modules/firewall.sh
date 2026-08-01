@@ -1,6 +1,6 @@
 #!/bin/bash
 # @module: firewall
-# @name: 防火墙
+# @name: 配置防火墙
 # @category: 安全防护
 # @depends:
 # @version: 1.0.0

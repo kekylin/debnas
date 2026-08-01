@@ -1,6 +1,6 @@
 #!/bin/bash
 # @module: security
-# @name: 安全加固
+# @name: 配置安全加固
 # @category: 安全防护
 # @depends:
 # @version: 1.0.0

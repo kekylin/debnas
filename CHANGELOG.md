@@ -57,6 +57,8 @@
 - 新增部署方案集成测试 `tests/integration/test-solution.bats`（8 个用例：方案解析、模块排序、stdin 隔离、失败中断、空格 trim）
 
 ### Changed
+- 统一模块显示名与子菜单标题为动作化表述（安装/配置/检查/查询/部署等）
+- 成功日志标签统一为 `[OK]`（与 UI 设计规范一致）
 - CLI 定时任务新增 `cron enable/disable` 命令，保留 `add/remove` 兼容
 - 定时任务回归模块内管理：每个模块菜单新增“定时设置”，集中入口改为只读概览
 - 定时任务启用流程调整为先询问定时时间，再自动补齐功能并注册定时
@@ -120,6 +122,8 @@
 - 删除 DEBUG 日志等级和 `log_debug` 函数
 
 ### Fixed
+- 修复连发下方向键被误判为 ESC 序列，导致二级菜单意外返回一级菜单
+- 修复质量门禁第 3/5 层遗留失败：同步 `log_fail` 旧 API 测试、`ui_confirm`/`ui_log` 断言及 `execute_solution` 失败中断用例
 - 修复 threat-ips 菜单缺少“定时设置”入口
 - 修复 wallpaper 菜单标题与模块名不一致，并修复 Cockpit 运行状态误判（兼容 `cockpit.socket` 激活）
 - 修复模块内使用 `$(ui_menu)` 捕获菜单渲染导致选择失效，统一改用 `UI_MENU_RESULT_FILE`（sys-patches/wallpaper/hosts-sync/login-mail/bbr/threat-ips/cockpit-ext/acl-manager）

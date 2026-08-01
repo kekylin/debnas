@@ -1,6 +1,6 @@
 #!/bin/bash
 # @module: login-mail
-# @name: 登录通知
+# @name: 登录邮件通知
 # @category: 通知服务
 # @depends: exim4
 # @depend_modules: mail-account
@@ -20,11 +20,11 @@ main() {
   source "${SCRIPT_DIR}/lib/system/state.sh"
   source "${MODULE_DIR}/actions.sh"
 
-  local -a items=("启用登录通知" "禁用登录通知")
+  local -a items=("启用登录邮件通知" "禁用登录邮件通知")
   while true; do
     local choice exit_code menu_result
     menu_result=$(mktemp)
-    UI_MENU_BACK_LABEL="← 返回上级" UI_MENU_RESULT_FILE="$menu_result" ui_menu "登录通知" "${items[@]}" || {
+    UI_MENU_BACK_LABEL="← 返回上级" UI_MENU_RESULT_FILE="$menu_result" ui_menu "登录邮件通知" "${items[@]}" || {
       exit_code=$?
       rm -f "$menu_result"
       case $exit_code in

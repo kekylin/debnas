@@ -1,6 +1,6 @@
 #!/bin/bash
 # @module: bbr
-# @name: BBR 加速
+# @name: 配置 BBR 加速
 # @category: 系统工具
 # @depends:
 # @version: 1.0.0
@@ -179,11 +179,11 @@ main() {
     return $?
   fi
 
-  local -a items=("启用 BBR（临时）" "启用 BBR（永久）" "关闭 BBR（临时）" "关闭 BBR（永久）" "BBR 状态")
+  local -a items=("临时启用 BBR" "永久启用 BBR" "临时停用 BBR" "永久停用 BBR" "查看 BBR 状态")
   local choice exit_code menu_result
   while true; do
     menu_result=$(mktemp)
-    UI_MENU_RESULT_FILE="$menu_result" ui_menu "BBR 拥塞控制" "${items[@]}" || {
+    UI_MENU_RESULT_FILE="$menu_result" ui_menu "配置 BBR 加速" "${items[@]}" || {
       exit_code=$?
       rm -f "$menu_result"
       case $exit_code in

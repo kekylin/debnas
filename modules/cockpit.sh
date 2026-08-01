@@ -1,6 +1,6 @@
 #!/bin/bash
 # @module: cockpit
-# @name: Cockpit 面板
+# @name: 安装 Cockpit 面板
 # @category: 管理面板
 # @depends: curl
 # @version: 4.0.0

@@ -1,6 +1,6 @@
 #!/bin/bash
 # @module: timer-manager
-# @name: 定时任务
+# @name: 定时任务概览
 # @category: 系统维护
 # @version: 1.0.0
 # @order: 80
@@ -22,7 +22,7 @@ _timer_display_name() {
 }
 
 _timer_list_all() {
-  echo "定时任务"
+  echo "定时任务概览"
   echo "────────────────────────────────────────────"
   printf "  %-20s %-8s %s\n" "模块" "状态" "调度"
   echo "────────────────────────────────────────────"

@@ -1,6 +1,6 @@
 #!/bin/bash
 # @module: docker-mirror
-# @name: 镜像加速
+# @name: 配置镜像加速
 # @category: 容器管理
 # @depends: docker
 # @depend_modules: docker-ce

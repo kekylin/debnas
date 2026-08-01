@@ -1,6 +1,6 @@
 #!/bin/bash
 # @module: sys-patches
-# @name: 系统更新
+# @name: 检查系统更新
 # @category: 系统维护
 # @depends:
 # @version: 1.0.0
@@ -35,11 +35,11 @@ main_menu() {
     return 1
   fi
 
-  local -a items=("启用系统更新" "禁用系统更新" "定时设置")
+  local -a items=("启用更新检查" "禁用更新检查" "定时设置")
   while true; do
     local choice exit_code menu_result
     menu_result=$(mktemp)
-    UI_MENU_BACK_LABEL="← 返回上级" UI_MENU_RESULT_FILE="$menu_result" ui_menu "系统更新" "${items[@]}" || {
+    UI_MENU_BACK_LABEL="← 返回上级" UI_MENU_RESULT_FILE="$menu_result" ui_menu "检查系统更新" "${items[@]}" || {
       exit_code=$?
       rm -f "$menu_result"
       case $exit_code in

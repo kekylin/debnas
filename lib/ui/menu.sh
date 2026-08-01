@@ -44,17 +44,26 @@ read_key() {
 
   # ESC 序列：尝试读取更多字节（方向键为多字节序列）
   if [[ "$key" == $'\033' ]]; then
-    local rest
-    # 10ms 超时 + 最多读 10 字节：防止快按时 B 字节未到达导致序列撕裂
-    IFS= read -r -s -n 10 -t 0.01 rest 2>/dev/null || true
-    key+="$rest"
-    case "$key" in
-      $'\033[A'|$'\033OA') _READ_KEY_RESULT="UP";    return 0 ;;  # 上（ANSI + 应用模式）
-      $'\033[B'|$'\033OB') _READ_KEY_RESULT="DOWN";  return 0 ;;  # 下
-      $'\033[C'|$'\033OC') _READ_KEY_RESULT="RIGHT"; return 0 ;;  # 右（预留）
-      $'\033[D'|$'\033OD') _READ_KEY_RESULT="LEFT";  return 0 ;;  # 左（预留）
-      $'\033')             _READ_KEY_RESULT="ESC";   return 0 ;;  # 纯 ESC
-      *)                   _READ_KEY_RESULT="ESC";   return 0 ;;  # 撕裂序列 → 视为 ESC，不输出乱码
+    local seq_prefix seq_final
+    # 只读取一个引导字节（[ 或 O），避免连发方向键时吞掉后续完整序列
+    if ! IFS= read -r -s -n 1 -t 0.05 seq_prefix; then
+      _READ_KEY_RESULT="ESC"
+      return 0
+    fi
+    if [[ "$seq_prefix" != "[" && "$seq_prefix" != "O" ]]; then
+      _READ_KEY_RESULT="ESC"
+      return 0
+    fi
+    if ! IFS= read -r -s -n 1 -t 0.05 seq_final; then
+      _READ_KEY_RESULT="ESC"
+      return 0
+    fi
+    case "$seq_final" in
+      A) _READ_KEY_RESULT="UP";    return 0 ;;  # 上（ANSI + 应用模式）
+      B) _READ_KEY_RESULT="DOWN";  return 0 ;;  # 下
+      C) _READ_KEY_RESULT="RIGHT"; return 0 ;;  # 右（预留）
+      D) _READ_KEY_RESULT="LEFT";  return 0 ;;  # 左（预留）
+      *) _READ_KEY_RESULT="ESC";   return 0 ;;  # 非方向键序列，不输出乱码
     esac
   elif [[ "$key" == $'\n' || "$key" == $'\r' ]]; then
     _READ_KEY_RESULT="ENTER"; return 0

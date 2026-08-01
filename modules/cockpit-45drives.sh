@@ -1,6 +1,6 @@
 #!/bin/bash
 # @module: cockpit-45drives
-# @name: 45Drives 扩展
+# @name: 安装 45Drives 扩展
 # @category: 管理面板
 # @depends: curl
 # @depend_modules: cockpit

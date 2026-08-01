@@ -1,6 +1,6 @@
 #!/bin/bash
 # @module: vm-components
-# @name: 虚拟机组件
+# @name: 安装虚拟机组件
 # @category: 管理面板
 # @depends:
 # @depend_modules: cockpit

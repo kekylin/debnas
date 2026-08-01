@@ -1,6 +1,6 @@
 #!/bin/bash
 # @module: docker-ce
-# @name: Docker CE
+# @name: 安装 Docker CE
 # @category: 容器管理
 # @depends: wget,curl
 # @version: 1.0.0

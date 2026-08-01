@@ -1,6 +1,6 @@
 #!/bin/bash
 # @module: cockpit-ext
-# @name: 外网访问
+# @name: Cockpit 外网访问
 # @category: 管理面板
 # @depends:
 # @depend_modules: cockpit
@@ -24,7 +24,7 @@ main() {
   while true; do
     local choice exit_code menu_result
     menu_result=$(mktemp)
-    UI_MENU_BACK_LABEL="← 返回上级" UI_MENU_RESULT_FILE="$menu_result" ui_menu "外网访问" "${items[@]}" || {
+    UI_MENU_BACK_LABEL="← 返回上级" UI_MENU_RESULT_FILE="$menu_result" ui_menu "Cockpit 外网访问" "${items[@]}" || {
       exit_code=$?
       rm -f "$menu_result"
       case $exit_code in

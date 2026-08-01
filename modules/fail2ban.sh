@@ -1,6 +1,6 @@
 #!/bin/bash
 # @module: fail2ban
-# @name: 防暴力破解
+# @name: 配置 Fail2ban
 # @category: 安全防护
 # @depends:
 # @depend_modules: firewall

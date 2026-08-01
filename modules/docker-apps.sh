@@ -1,6 +1,6 @@
 #!/bin/bash
 # @module: docker-apps
-# @name: 容器应用
+# @name: 部署容器应用
 # @category: 容器管理
 # @depends: docker
 # @depend_modules: docker-ce

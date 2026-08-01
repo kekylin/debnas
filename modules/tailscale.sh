@@ -1,6 +1,6 @@
 #!/bin/bash
 # @module: tailscale
-# @name: Tailscale
+# @name: 安装 Tailscale
 # @category: 系统工具
 # @depends: curl
 # @version: 1.0.0

@@ -1,6 +1,6 @@
 #!/bin/bash
 # @module: acl-manager
-# @name: ACL 权限
+# @name: ACL 权限管理
 # @category: 系统工具
 # @depends: getfacl,setfacl
 # @version: 1.0.0
@@ -266,18 +266,18 @@ main() {
     return 0
   fi
   local -a items=(
-    "查看ACL权限"
-    "设置用户ACL"
-    "设置组ACL"
-    "设置默认ACL"
-    "取消默认ACL"
-    "删除ACL"
-    "批量设置ACL"
+    "查看 ACL 权限"
+    "设置用户 ACL"
+    "设置组 ACL"
+    "设置默认 ACL"
+    "取消默认 ACL"
+    "删除 ACL"
+    "批量设置 ACL"
   )
   local choice exit_code menu_result
   while true; do
     menu_result=$(mktemp)
-    UI_MENU_BACK_LABEL="← 返回上级" UI_MENU_RESULT_FILE="$menu_result" ui_menu "ACL 权限" "${items[@]}" || {
+    UI_MENU_BACK_LABEL="← 返回上级" UI_MENU_RESULT_FILE="$menu_result" ui_menu "ACL 权限管理" "${items[@]}" || {
       exit_code=$?
       rm -f "$menu_result"
       case $exit_code in

@@ -1,6 +1,6 @@
 #!/bin/bash
 # @module: service-query
-# @name: 服务状态
+# @name: 查询服务状态
 # @category: 系统维护
 # @depends:
 # @depend_modules: cockpit
@@ -103,4 +103,3 @@ main() {
 }
 
 main "$@"
-

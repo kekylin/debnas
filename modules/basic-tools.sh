@@ -1,6 +1,6 @@
 #!/bin/bash
 # @module: basic-tools
-# @name: 基础工具包
+# @name: 安装基础工具
 # @category: 基础系统
 # @depends:
 # @version: 1.0.0

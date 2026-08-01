@@ -1,6 +1,6 @@
 #!/bin/bash
 # @module: sys-check
-# @name: 兼容性检查
+# @name: 检查兼容性
 # @category: 系统维护
 # @version: 1.0.0
 # @order: 70

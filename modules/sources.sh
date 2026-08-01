@@ -1,6 +1,6 @@
 #!/bin/bash
 # @module: sources
-# @name: APT 软件源
+# @name: 配置 APT 软件源
 # @category: 基础系统
 # @depends:
 # 说明：使用 smart library 实现幂等写入，内容未变更时跳过 apt update

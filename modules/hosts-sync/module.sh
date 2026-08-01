@@ -1,6 +1,6 @@
 #!/bin/bash
 # @module: hosts-sync
-# @name: Hosts 优化
+# @name: 同步 Hosts
 # @category: 系统工具
 # @depends: dig,ping
 # @interactive: true
@@ -89,7 +89,7 @@ menu() {
   while true; do
     local choice exit_code menu_result
     menu_result=$(mktemp)
-    UI_MENU_BACK_LABEL="← 返回上级" UI_MENU_RESULT_FILE="$menu_result" ui_menu "Hosts 优化" "${items[@]}" || {
+    UI_MENU_BACK_LABEL="← 返回上级" UI_MENU_RESULT_FILE="$menu_result" ui_menu "同步 Hosts" "${items[@]}" || {
       exit_code=$?
       rm -f "$menu_result"
       case $exit_code in

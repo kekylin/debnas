@@ -1,6 +1,6 @@
 #!/bin/bash
 # @module: mail-account
-# @name: 邮件账户
+# @name: 配置邮件账户
 # @category: 通知服务
 # @depends: exim4
 # @version: 1.0.0
