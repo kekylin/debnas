@@ -57,6 +57,8 @@
 - 新增部署方案集成测试 `tests/integration/test-solution.bats`（8 个用例：方案解析、模块排序、stdin 隔离、失败中断、空格 trim）
 
 ### Changed
+- 45Drives 扩展不再安装 `cockpit-navigator`，改用 Cockpit 官方文件管理组件
+- 45Drives 扩展在 Debian 13 上改为通过官方仓库安装，移除 GitHub 手动下载 `.deb` 逻辑
 - 调整不同层级菜单的时间线间距：下一级菜单标题前增加空行，标题与菜单项之间不再空行
 - 统一模块显示名与子菜单标题为动作化表述（安装/配置/检查/查询/部署等）
 - 成功日志标签统一为 `[DONE]`
