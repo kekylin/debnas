@@ -137,6 +137,7 @@
 - `lib/system/args.sh`：`config_read` 替代直接 `grep` 配置文件
 - 定时任务概览新增 ops-report 模块
 - `install_missing_dependencies` 日志去噪：无缺失不再输出提示，缺失时按系统/服务/工具级别分别提示
+- ops-report 报告渲染重构：删除 report.sh 内 4 代历史渲染函数死代码（legacy/017/无后缀/v022，约 2000 行），统一渲染函数命名去除版本号后缀并合并 network_metrics 薄包装
 
 ### Deprecated
 - Phase 1 UI 基础层：`print_highlight()` 弃用（MAGENTA 已禁用，改用 `print_accent`）
