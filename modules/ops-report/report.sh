@@ -3962,7 +3962,7 @@ ops_render_network_iface_table_v022() {
 }
 
 ops_render_html_report_v022() {
-  local css_file="${MODULE_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}/report-style-v022.css"
+  local css_file="${MODULE_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}/report-style.css"
   local report_css
   report_css=$(cat "$css_file" 2>/dev/null || true)
   local host_ip most_urgent fail_source_summary="" next_period_expr="next Monday 01:00"
@@ -4286,7 +4286,7 @@ HTML
 }
 
 ops_render_html_report_v023() {
-  local css_file="${MODULE_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}/report-style-v022.css"
+  local css_file="${MODULE_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}/report-style.css"
   local report_css
   report_css=$(cat "$css_file" 2>/dev/null || true)
   local host_ip fail_source_summary="" next_period_expr="next Monday 01:00"
