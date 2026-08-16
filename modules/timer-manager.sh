@@ -14,7 +14,7 @@ IFS=$'\n\t'
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${SCRIPT_DIR}/lib/bootstrap.sh"
 
-readonly TIMER_MODULES=("sys-patches" "wallpaper" "hosts-sync" "threat-ips")
+readonly TIMER_MODULES=("sys-patches" "wallpaper" "hosts-sync" "threat-ips" "ops-report")
 
 _timer_display_name() {
   local module_name="$1"

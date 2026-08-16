@@ -321,6 +321,7 @@ write_file_if_changed() {
   local file="${1:?write_file_if_changed: 缺少文件路径}"
   local new_content="${2:?write_file_if_changed: 缺少文件内容}"
   local file_perm="${3:-644}"
+  local quiet="${4:-0}"
 
   # 确保父目录存在
   mkdir -p "$(dirname "$file")" 2>/dev/null || true
@@ -330,7 +331,9 @@ write_file_if_changed() {
     local current_content
     current_content=$(cat "$file" 2>/dev/null) || current_content=""
     if [[ "$current_content" == "$new_content" ]]; then
-      log_info "配置文件未变更，跳过写入：$file"
+      if [[ "$quiet" -ne 1 ]]; then
+        log_info "配置文件未变更，跳过写入：$file"
+      fi
       return 1
     fi
   fi

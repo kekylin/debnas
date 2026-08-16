@@ -136,6 +136,48 @@ ${cron_cmd}"
   fi
 }
 
+# 为同一模块注册额外的 cron 变体条目（不替换主调度条目）
+# 参数：$1 - 模块名，$2 - cron 表达式，$3 - 附加命令参数
+# 返回：0 成功，1 失败
+cron_register_variant() {
+  local module_name="${1:?cron_register_variant: 缺少模块名}"
+  local schedule="${2:?cron_register_variant: 缺少 cron 表达式}"
+  local command_args="${3:-}"
+  local marker cron_cmd
+  marker=$(_cron_entry_marker "$module_name")
+
+  if ! cron_validate_schedule "$schedule"; then
+    return 1
+  fi
+
+  cron_cmd="${schedule} DEBNAS_CRON_MODE=1 ${DEBNAS_BIN} run ${module_name} ${command_args} ${marker}"
+  local current_crontab
+  current_crontab=$(_get_current_crontab)
+
+  if echo "$current_crontab" | grep -Fxq "$cron_cmd" 2>/dev/null; then
+    return 0
+  fi
+
+  # 移除同一模块同调度但参数不同的旧条目，保留其他条目
+  local new_crontab
+  new_crontab=$(printf '%s\n' "$current_crontab" | awk -v marker="$marker" -v schedule="$schedule" '
+    index($0, marker) && index($0, schedule) { next }
+    { print }
+  ' | sed '/^$/d' || true)
+
+  if [[ -n "$new_crontab" ]]; then
+    new_crontab="${new_crontab}
+${cron_cmd}"
+  else
+    new_crontab="${cron_cmd}"
+  fi
+
+  if printf '%s\n' "$new_crontab" | _set_crontab; then
+    return 0
+  fi
+  return 1
+}
+
 # 注销模块的 cron 定时任务
 # 参数：$1 - 模块名
 # 返回：0 成功（包括原本不存在的情况），1 操作失败
@@ -243,6 +285,8 @@ cron_describe() {
   case "$schedule" in
     "0 0 * * *")  echo "每天 00:00" ;;
     "0 0 * * 1")  echo "每周一 00:00" ;;
+    "0 1 * * 1")  echo "每周一 01:00" ;;
+    "0 2 1 1 *")  echo "每年 1 月 1 日 02:00" ;;
     "0 0 * * 0"|"0 0 * * 7") echo "每周日 00:00" ;;
     "0 * * * *")  echo "每小时整点" ;;
     "0 */6 * * *") echo "每 6 小时" ;;

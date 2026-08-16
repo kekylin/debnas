@@ -59,6 +59,12 @@ declare -gA cmd_to_pkg=(
   ["setfacl"]="acl"
   ["nmcli"]="network-manager"
   ["ipset"]="ipset"
+  ["sar"]="sysstat"
+  ["sadc"]="sysstat"
+  ["smartctl"]="smartmontools"
+  ["sensors"]="lm-sensors"
+  ["wtmpdb"]="wtmpdb"
+  ["virsh"]="libvirt-clients"
 )
 
 # ==================== 命令→依赖级别映射表 ====================
@@ -98,6 +104,11 @@ declare -gA cmd_to_level=(
   ["getfacl"]="$DEP_LEVEL_TOOL"
   ["setfacl"]="$DEP_LEVEL_TOOL"
   ["ipset"]="$DEP_LEVEL_TOOL"
+  ["sar"]="$DEP_LEVEL_TOOL"
+  ["sadc"]="$DEP_LEVEL_TOOL"
+  ["smartctl"]="$DEP_LEVEL_TOOL"
+  ["sensors"]="$DEP_LEVEL_TOOL"
+  ["wtmpdb"]="$DEP_LEVEL_TOOL"
 
   # ── Tier 2：服务依赖（安装后产生 daemon/服务，需用户确认）──
   ["docker"]="$DEP_LEVEL_SERVICE"
@@ -107,6 +118,7 @@ declare -gA cmd_to_level=(
   ["exim4"]="$DEP_LEVEL_SERVICE"
   ["update-exim4.conf"]="$DEP_LEVEL_SERVICE"
   ["nmcli"]="$DEP_LEVEL_SERVICE"
+  ["virsh"]="$DEP_LEVEL_SERVICE"
 )
 
 # ==================== 公共接口 ====================
@@ -364,10 +376,8 @@ install_missing_dependencies() {
     fi
   done
   if [[ ${#missing_cmds[@]} -eq 0 ]]; then
-    log_info "所有依赖命令均已安装"
     return 0
   fi
-  log_warning "发现缺失的依赖命令：${missing_cmds[*]}"
 
   # 按级别分流处理
   local -a tool_cmds=()
@@ -399,12 +409,14 @@ install_missing_dependencies() {
 
   # Tier 0 系统命令缺失 → 致命
   if [[ ${#system_cmds[@]} -gt 0 ]]; then
+    log_warning "发现缺失的依赖命令：${system_cmds[*]}"
     log_fatal_return "系统基础命令缺失：${system_cmds[*]}，系统可能已损坏"
     return 1
   fi
 
   # Tier 2 服务依赖 → 提示，不安装
   if [[ ${#service_cmds[@]} -gt 0 ]]; then
+    log_warning "发现缺失的依赖命令：${service_cmds[*]}"
     log_error "以下服务级依赖未安装，请先运行对应模块："
     for cmd in "${service_cmds[@]}"; do
       local pkg_name=""
@@ -425,6 +437,7 @@ install_missing_dependencies() {
     return 0
   fi
 
+  log_info "自动安装缺失工具依赖：${tool_cmds[*]}"
   if ! has_valid_main_apt_source; then
     log_warning "未检测到有效主软件源，跳过自动安装（模块将自行处理）"
     return 1

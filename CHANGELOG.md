@@ -58,6 +58,9 @@
 - 新增部署方案集成测试 `tests/integration/test-solution.bats`（8 个用例：方案解析、模块排序、stdin 隔离、失败中断、空格 trim）
 - ops-report 事件脉冲图支持长周期聚合：月报（30 天）按天、年报（365 天）按周分桶，异常事件时间戳回填为 CPU/内存/磁盘 I/O 峰值出现日期
 - ops-report 异常进程检测：静态启发式扫描 `/proc`（异常启动路径 / 已删除二进制 / 隐藏进程名 / 下载并执行），替代原 Top5 展示
+- 新增 `cron_register_variant()`：支持同一模块注册多条 cron 定时条目（主调度 + 变体调度），并扩展 `cron_describe` 可读描述，用于 ops-report 周报（周一 01:00）+ 年报（每年 1 月 1 日 02:00）双定时
+- 新增 ops-report 依赖命令映射：`sar`/`sadc`/`smartctl`/`sensors`/`wtmpdb`（工具级自动安装）与 `virsh`（服务级提示），依赖检测自动识别 sysstat、smartmontools 等
+- `write_file_if_changed` 新增第 4 参数 `quiet` 静默模式，内容未变更时抑制日志输出
 
 ### Changed
 - 运维报告按 PRD 0.22.33 更新：改版为 Apple 极简浅色样式，页眉仅保留报告周期，页脚使用数据覆盖/生成时间/上一期/下一期四栏
@@ -132,6 +135,8 @@
 - 8 处内部 `log_debug` 升级为 `log_info`/`log_action`（依赖解析、安装进度），其余 18 处内部细节删除
 - `bin/doctor.sh`：`state_list_installed` 替代内联 glob 循环
 - `lib/system/args.sh`：`config_read` 替代直接 `grep` 配置文件
+- 定时任务概览新增 ops-report 模块
+- `install_missing_dependencies` 日志去噪：无缺失不再输出提示，缺失时按系统/服务/工具级别分别提示
 
 ### Deprecated
 - Phase 1 UI 基础层：`print_highlight()` 弃用（MAGENTA 已禁用，改用 `print_accent`）
