@@ -43,7 +43,7 @@ ops_login_parse() {
         date_key = $8 "-" sprintf("%02d", month_num($5)) "-" sprintf("%02d", $6)
       }
       split(time_field, a, ":")
-      hour = (a[1] ~ /^[0-9]+$/) ? a[1] : "0"
+      hour = (a[1] ~ /^[0-9]+$/) ? a[1] : "-1"
       print user, tty, host, timestamp, hour, date_key
     }'
 }
@@ -210,14 +210,68 @@ ops_collect_security() {
     OPS_FAIL_BAN_COUNT="$total"
   fi
 
-  local abnormal root_remote
-  abnormal=$(printf '%s\n' "$parsed" | awk -F '\t' '$5 >= 0 && $5 <= 5 {print $1, $3, $4}' | head -20 || true)
-  root_remote=$(printf '%s\n' "$parsed" | awk -F '\t' '$1 == "root" && $3 != "local" {print $1, $3, $4}' | head -20 || true)
-  OPS_SECURITY_EVENTS="${abnormal:+非工作时间登录：${abnormal}}"
+  # 异常登录时段判定（方案 A）：
+  #   夜间登录：hour ∈ [night_start, night_end] 硬规则，全用户生效（豁免 24 小时服务账户）。
+  #   非常规时段登录：对每用户建立 0-23 小时直方图，若该小时仅出现 1 次、
+  #                   且用户存在明显高频时段（峰值 ≥ min_peak）、样本 ≥ min_sample，
+  #                   则判定为偏离惯常时段（夜间窗口内不重复标记）。
+  local night off_pattern root_remote night_count off_pattern_count root_remote_count
+  local night_start=0 night_end=5 min_sample=5 min_peak=3
+  local flagged
+  flagged=$(printf '%s\n' "$parsed" | awk -F '\t' -v ns="$night_start" -v ne="$night_end" \
+      -v min_sample="$min_sample" -v min_peak="$min_peak" '
+    {
+      n++
+      evt_user[n] = $1
+      evt_host[n] = $3
+      evt_ts[n] = $4
+      h = ($5 ~ /^[0-9]+$/) ? $5 + 0 : -1
+      evt_hour[n] = h
+      if (h >= 0 && h < 24) {
+        cnt[$1 "|" h]++
+        total[$1]++
+      }
+    }
+    END {
+      for (u in total) {
+        active[u] = 0
+        peak[u] = 0
+        for (h = 0; h < 24; h++) {
+          c = cnt[u "|" h] + 0
+          if (c > 0) active[u]++
+          if (c > peak[u]) peak[u] = c
+        }
+      }
+      for (i = 1; i <= n; i++) {
+        u = evt_user[i]
+        h = evt_hour[i]
+        if (h < 0 || h >= 24) continue
+        if (active[u] >= 18) continue
+        if (h >= ns && h <= ne) {
+          print "night|" u " " evt_host[i] " " evt_ts[i]
+        } else if (total[u] >= min_sample && peak[u] >= min_peak && cnt[u "|" h] == 1) {
+          print "off|" u " " evt_host[i] " " evt_ts[i]
+        }
+      }
+    }' || true)
+  night=$(printf '%s\n' "$flagged" | awk -F'|' '$1=="night" {print $2}' || true)
+  off_pattern=$(printf '%s\n' "$flagged" | awk -F'|' '$1=="off" {print $2}' || true)
+  root_remote=$(printf '%s\n' "$parsed" | awk -F '\t' '$1 == "root" && $3 != "local" {print $1, $3, $4}' || true)
+  night_count=$(printf '%s\n' "$night" | grep -vc '^$' || true)
+  off_pattern_count=$(printf '%s\n' "$off_pattern" | grep -vc '^$' || true)
+  root_remote_count=$(printf '%s\n' "$root_remote" | grep -vc '^$' || true)
+  OPS_ABNORMAL_LOGIN_COUNT=$((night_count + off_pattern_count + root_remote_count))
+  # 展示列表封顶，避免报告过长；计数仍为真实值
+  night=$(printf '%s\n' "$night" | head -20 || true)
+  off_pattern=$(printf '%s\n' "$off_pattern" | head -20 || true)
+  root_remote=$(printf '%s\n' "$root_remote" | head -20 || true)
+  OPS_SECURITY_EVENTS="${night:+夜间登录：${night}}"
+  OPS_SECURITY_EVENTS="${OPS_SECURITY_EVENTS:+${OPS_SECURITY_EVENTS}
+}${off_pattern:+非常规时段登录：${off_pattern}}"
   OPS_SECURITY_EVENTS="${OPS_SECURITY_EVENTS:+${OPS_SECURITY_EVENTS}
 }${root_remote:+远程 root 登录：${root_remote}}"
 
-  if [[ -n "$abnormal" ]] || [[ "$OPS_LOGIN_FAIL_COUNT" -ge 50 ]]; then
+  if [[ "$OPS_ABNORMAL_LOGIN_COUNT" -gt 0 ]] || [[ "$OPS_LOGIN_FAIL_COUNT" -ge 50 ]]; then
     OPS_SECURITY_ISSUE=1
   fi
 }

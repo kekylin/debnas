@@ -785,8 +785,6 @@ ops_determine_status() {
   OPS_ACTION_COUNT=0
   OPS_LOGIN_COVERAGE_DAYS="无数据"
   OPS_EVENTS=""
-  OPS_INTRUSION_COUNT=0
-  OPS_ABNORMAL_LOGIN_COUNT=0
   OPS_NEW_LISTEN_PORT_COUNT=0
   OPS_RISK_HIGH=0
   OPS_RISK_MEDIUM=0
@@ -924,8 +922,8 @@ ops_determine_status() {
   fi
   if [[ "${OPS_SECURITY_ISSUE:-0}" -eq 1 ]]; then
     [[ "$OPS_STATUS" == "green" ]] && OPS_STATUS="yellow"
-    OPS_ABNORMAL_LOGIN_COUNT=1
-    OPS_INTRUSION_COUNT=1
+    local login_event_desc="发现异常登录"
+    [[ "${OPS_ABNORMAL_LOGIN_COUNT:-0}" -eq 0 ]] && login_event_desc="发现失败登录集中"
     local login_event_time="${OPS_REPORT_UNTIL}"
     if [[ -n "${OPS_SECURITY_EVENTS:-}" ]]; then
       local raw_login="${OPS_SECURITY_EVENTS%%$'\n'*}"
@@ -938,7 +936,7 @@ ops_determine_status() {
     fi
     [[ -n "$login_event_time" ]] || login_event_time="${OPS_REPORT_UNTIL}"
     OPS_EVENTS="${OPS_EVENTS:+${OPS_EVENTS}
-}${login_event_time}|发现异常登录|安全事件，待确认|处理中"
+}${login_event_time}|${login_event_desc}|安全事件，待确认|处理中"
     ops_add_action "中" "存在异常登录或失败登录集中"
   fi
   if [[ "${OPS_SUSPICIOUS_PROGRAM_COUNT:-0}" -gt 0 ]]; then
@@ -1508,8 +1506,11 @@ ops_render_abnormal_login_row() {
   local raw_event judgement="远程登录，待确认" event user source ts source_label out=""
   while IFS= read -r raw_event; do
     [[ -n "$raw_event" ]] || continue
-    if [[ "$raw_event" == 非工作时间登录：* ]]; then
-      judgement="凌晨登录，与历史习惯不符"
+    if [[ "$raw_event" == 夜间登录：* ]]; then
+      judgement="夜间登录"
+      raw_event="${raw_event#*：}"
+    elif [[ "$raw_event" == 非常规时段登录：* ]]; then
+      judgement="偏离惯常时段"
       raw_event="${raw_event#*：}"
     elif [[ "$raw_event" == 远程\ root\ 登录：* ]]; then
       judgement="远程登录，待确认"
@@ -2202,13 +2203,19 @@ ops_render_anomaly_table() {
   elif [[ "$port_state" != "待基线" ]]; then
     port_cls="good"
   fi
+  local login_badge='<span class="badge badge-clear">正常</span>'
+  local login_cls="good"
+  case "$login_state" in
+    "发现"*) login_badge='<span class="badge badge-medium">中风险</span>'; login_cls="warn" ;;
+    "无数据") login_cls="muted" ;;
+  esac
   [[ "$disk_state" == "关注" ]] && disk_cls="warn"
   if [[ "$service_state" != "未发现" ]]; then
-    service_row=$(printf '<tr><td>服务状态</td><td>%s</td><td class="good">%s</td><td>%s</td></tr>' \
+    service_row=$(printf '<tr><td>服务状态</td><td>%s</td><td class="warn">%s</td><td>%s</td></tr>' \
       "$service_badge" "$service_state" "$service_note")
   fi
   cat <<EOF
-<tr><td>${login_label}</td><td><span class="badge badge-medium">中风险</span></td><td class="warn">${login_state}</td><td>${login_note}</td></tr>
+<tr><td>${login_label}</td><td>${login_badge}</td><td class="${login_cls}">${login_state}</td><td>${login_note}</td></tr>
 <tr><td>${disk_label}</td><td>${disk_badge}</td><td class="${disk_cls}">${disk_state}</td><td>${disk_note}</td></tr>
 <tr><td>安全更新</td><td><span class="badge $([ "$security_state" == "待装" ] && echo badge-low || echo badge-clear)">$([ "$security_state" == "待装" ] && echo 低风险 || echo 正常)</span></td><td class="$([ "$security_state" == "待装" ] && echo warn || echo good)">${security_state}</td><td>${security_note}</td></tr>
 ${service_row}
