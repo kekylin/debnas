@@ -2,33 +2,6 @@
 # sys-patches: 更新检查逻辑
 set -euo pipefail
 IFS=$'\n\t'
-detect_major_version_update() {
-  local system_name=$(get_system_name)
-  local current_version
-  
-  if [[ "$system_name" == "Debian" ]]; then
-    if [[ -f /etc/debian_version ]]; then
-      current_version=$(cat /etc/debian_version)
-    else
-      current_version=$(grep -oP '^VERSION_ID="\K[0-9.]+' /etc/os-release || echo "未知")
-    fi
-  else  # Ubuntu
-    if command -v lsb_release >/dev/null 2>&1; then
-      current_version=$(lsb_release -rs)
-    else
-      current_version=$(grep -oP '^VERSION_ID="\K[0-9.]+' /etc/os-release || echo "未知")
-    fi
-  fi
-  
-  local release_info=$(apt-get -s dist-upgrade | grep -i "inst.*${system_name}.*release" -i)
-    if [[ -n "$release_info" ]]; then
-      local new_version=$(echo "$release_info" | awk '{print $2}' | grep -o '[0-9]\+\.[0-9]\+')
-      if [[ -n "$new_version" && "$new_version" != "$current_version" ]]; then
-      echo -e "${system_name}: ${current_version} → ${new_version}"
-    fi
-  fi
-}
-
 # 解析 Inst 行并格式化为"包名  旧版 → 新版"
 # 行格式：Inst <pkg> [<旧版>] (<新版> <来源> [<架构>])
 # 注：只用 POSIX awk 语法（Debian 默认 mawk 不支持 gawk 的三参数 match 函数）
@@ -83,19 +56,18 @@ run_update_check() {
     apt_index_stale=1
     log_warning "apt update 失败，检测结果基于旧索引，可能已过期"
   fi
+  local full_update_list
   full_update_list=$(apt-get upgrade -s)
-  
-  declare -g security_update_list=$(echo "$full_update_list" | grep -E '^Inst' | grep -i 'Debian-Security\|security')
-  declare -g security_update_count=$(echo "$security_update_list" | grep -c "^Inst")
-  
-  declare -g regular_update_list=$(echo "$full_update_list" | grep -E '^Inst' | grep -vi 'Debian-Security\|security')
-  declare -g regular_update_count=$(echo "$regular_update_list" | grep -c "^Inst")
-  
-  declare -g report_content=$(build_report_content "$security_update_list" "$security_update_count" "$regular_update_list" "$regular_update_count")
+  declare -g security_update_list regular_update_list security_update_count regular_update_count report_content
+  # 无匹配时 grep 返回 1，结果按空列表 / 0 处理
+  security_update_list=$(grep -E '^Inst' <<<"$full_update_list" | grep -i 'Debian-Security\|security') || true
+  security_update_count=$(grep -c "^Inst" <<<"$security_update_list") || true
+  regular_update_list=$(grep -E '^Inst' <<<"$full_update_list" | grep -vi 'Debian-Security\|security') || true
+  regular_update_count=$(grep -c "^Inst" <<<"$regular_update_list") || true
+  report_content=$(build_report_content "$security_update_list" "$security_update_count" "$regular_update_list" "$regular_update_count")
 }
 
-# 发送邮件通知
-
+# 执行检测并在屏幕输出结果，有更新时尝试发送邮件
 execute_update_check() {
   run_update_check
 
@@ -113,5 +85,3 @@ execute_update_check() {
   fi
   sleep 2
 }
-
-# 配置 cron 定时任务（使用统一 cron 框架）

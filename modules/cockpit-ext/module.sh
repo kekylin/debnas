@@ -24,12 +24,11 @@ _COCKPIT_EXT_CONF="/etc/cockpit/cockpit.conf"
 _cockpit_ext_origins() {
   [[ -e "$_COCKPIT_EXT_CONF" ]] || return 0
   [[ -r "$_COCKPIT_EXT_CONF" ]] || return 2
-  sed -nE 's/^[[:space:]]*Origins[[:space:]]*=[[:space:]]*//p' "$_COCKPIT_EXT_CONF" 2>/dev/null | head -n 1 || true
+  sed -nE '/^[[:space:]]*Origins[[:space:]]*=/{s/^[[:space:]]*Origins[[:space:]]*=[[:space:]]*//p;q;}' "$_COCKPIT_EXT_CONF" 2>/dev/null || true
 }
 
 _cockpit_ext_installed() {
-  [[ "$(dpkg-query -W -f='${db:Status-Status}' cockpit-ws 2>/dev/null)" == "installed" ]] \
-    || [[ "$(dpkg-query -W -f='${db:Status-Status}' cockpit 2>/dev/null)" == "installed" ]]
+  pkg_is_installed cockpit-ws || pkg_is_installed cockpit
 }
 
 # 当前状态：一行 "状态码|说明"
@@ -54,7 +53,7 @@ module_status() {
   for o in $origins; do
     [[ "$o" == https://* ]] && hosts+="${hosts:+, }${o#https://}"
   done
-  if ! systemctl is-active --quiet cockpit.socket 2>/dev/null && ! systemctl is-active --quiet cockpit 2>/dev/null; then
+  if ! service_is_active cockpit.socket && ! service_is_active cockpit; then
     echo "warn|已配置 Origins（${hosts:-$origins}），但 Cockpit 未运行"
   else
     echo "applied|外网访问已配置：${hosts:-$origins}"
@@ -84,7 +83,6 @@ module_plan() {
 }
 
 main() {
-  source "${SCRIPT_DIR}/lib/system/state.sh"
   source "${MODULE_DIR}/actions.sh"
 
   local -a items=("启用外网访问" "禁用外网访问")

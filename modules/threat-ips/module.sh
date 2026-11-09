@@ -2,7 +2,7 @@
 # @module: threat-ips
 # @name: 威胁 IP 封禁
 # @category: 安全防护
-# @depends: firewall-cmd,ipset,wget,sipcalc
+# @depends: firewall-cmd,ipset,wget
 # @depend_modules: firewall
 # @interactive: true
 # @version: 2.0.0
@@ -29,165 +29,29 @@ source "${MODULE_DIR}/ipset.sh"
 source "${MODULE_DIR}/firewall.sh"
 source "${MODULE_DIR}/cron.sh"
 
-# ==================== IP 解析处理模块 ====================
-# 清理输入：移除注释和空白字符
-normalize_ip_input() {
-  local input="$1" clean_ip
-  [[ -z "${input}" ]] && return 1
-  clean_ip=$(printf "%s" "${input}" | cut -d'#' -f1 | xargs)
-  [[ -z "${clean_ip}" ]] && return 1
-  printf "%s" "${clean_ip}"
-}
-
-process_ipv4_cidr() {
-  local cidr="$1" output_file="$2"
-  local result prefix mask
-  result=$(validate_cidr_ipv4 "${cidr}") || return 1
-  read -r prefix mask <<< "${result}"
-  printf "%s\n" "${cidr}" >> "${output_file}"
-}
-
-process_ipv6_cidr() {
-  local cidr="$1" output_file="$2"
-  local ipv6_mask
-  if [[ ${cidr} =~ ^([0-9a-fA-F:]+)/([0-9]{1,3})$ ]]; then
-    ipv6_mask=${BASH_REMATCH[2]}
-    if [[ ! "${ipv6_mask}" =~ ^[0-9]+$ ]] \
-      || [[ "${ipv6_mask}" -gt 128 ]] || [[ "${ipv6_mask}" -lt 0 ]]; then
-      log_warning "无效 IPv6 CIDR 掩码：${cidr}"
-      return 1
-    fi
-    if ! validate_ipv6 "${cidr}"; then
-      log_warning "无效 IPv6 CIDR 格式：${cidr}"
-      return 1
-    fi
-    printf "%s\n" "${cidr}" >> "${output_file}"
-    return 0
-  fi
-  return 1
-}
-
-expand_ipv4_range() {
-  local start_num="$1" end_num="$2"
-  awk -v start="${start_num}" -v end="${end_num}" \
-    'BEGIN {
-      for (i=start; i<=end; i++) {
-        a=int(i/16777216)
-        b=int((i%16777216)/65536)
-        c=int((i%65536)/256)
-        d=i%256
-        printf "%d.%d.%d.%d\n", a, b, c, d
-      }
-    }'
-}
-
-process_ipv4_range() {
-  local range="$1" output_file="$2"
-  local start_ip end_ip start_num end_num ip_count a b c d
-  if [[ ${range} =~ ^([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3})-([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3})$ ]]; then
-    start_ip=${BASH_REMATCH[1]}
-    end_ip=${BASH_REMATCH[2]}
-    if ! validate_ipv4 "${start_ip}" || ! validate_ipv4 "${end_ip}"; then
-      log_warning "无效 IPv4 范围地址：${range}"
-      return 1
-    fi
-    # 10# 强制十进制：前导 0 的段（如 08）否则会被当八进制报错并中断整个脚本
-    IFS='.' read -r a b c d <<< "${start_ip}"
-    start_num=$(( (10#$a * 16777216) + (10#$b * 65536) + (10#$c * 256) + 10#$d ))
-    IFS='.' read -r a b c d <<< "${end_ip}"
-    end_num=$(( (10#$a * 16777216) + (10#$b * 65536) + (10#$c * 256) + 10#$d ))
-    if [[ ${start_num} -gt ${end_num} ]]; then
-      log_warning "无效 IPv4 范围：${range}（起始地址大于结束地址）"
-      return 1
-    fi
-    ip_count=$((end_num - start_num + 1))
-    if [[ ${ip_count} -gt ${MAX_RANGE_SIZE} ]]; then
-      log_warning \
-        "IPv4 范围过大：${range}（${ip_count} 条，建议使用 CIDR 格式）"
-      return 1
-    fi
-    local awk_output
-    if ! awk_output=$(expand_ipv4_range "${start_num}" "${end_num}" 2>&1); then
-      log_error "解析 IPv4 范围失败：${range}"
-      return 1
-    fi
-    printf "%s\n" "${awk_output}" >> "${output_file}"
-    return 0
-  fi
-  return 1
-}
-
-process_ipv6_range() {
-  local range="$1" output_file="$2"
-  local start_ip end_ip
-  if [[ ${range} =~ ^([0-9a-fA-F:]+)-([0-9a-fA-F:]+)$ ]]; then
-    start_ip=${BASH_REMATCH[1]}
-    end_ip=${BASH_REMATCH[2]}
-    if ! validate_ipv6 "${start_ip}" || ! validate_ipv6 "${end_ip}"; then
-      log_warning "无效 IPv6 范围：${range}"
-      return 1
-    fi
-    printf "%s\n%s\n" "${start_ip}" "${end_ip}" >> "${output_file}"
-    return 0
-  fi
-  return 1
-}
-
-process_single_ip() {
-  local ip="$1" output_file_ipv4="$2" output_file_ipv6="$3"
-  local protocol
-  protocol=$(validate_ip "${ip}") || return 1
-  if [[ "${protocol}" == "ipv4" ]]; then
-    printf "%s\n" "${ip}" >> "${output_file_ipv4}"
-  else
-    printf "%s\n" "${ip}" >> "${output_file_ipv6}"
-  fi
-}
-
-# 解析 IP 范围：按优先级尝试处理（CIDR > 范围 > 单个 IP）
-parse_ip_range() {
-  local input="$1" output_file_ipv4="$2" output_file_ipv6="$3"
-  local clean_ip
-
-  [[ -z "${input}" ]] && return 1
-
-  clean_ip=$(normalize_ip_input "${input}") || return 1
-  [[ -z "${clean_ip}" ]] && return 1
-
-  process_ipv4_cidr "${clean_ip}" "${output_file_ipv4}" && return 0
-  process_ipv6_cidr "${clean_ip}" "${output_file_ipv6}" && return 0
-  process_ipv4_range "${clean_ip}" "${output_file_ipv4}" && return 0
-  process_ipv6_range "${clean_ip}" "${output_file_ipv6}" && return 0
-  process_single_ip "${clean_ip}" "${output_file_ipv4}" "${output_file_ipv6}" && return 0
-
-  log_warning "无效输入：${input}"
-  return 1
-}
-
-
 # ==================== 核心功能 ====================
 check_services() {
-  local missing=0
+  local rc=0
   # firewalld：已安装但未运行时自动启动
-  if systemctl is-active firewalld &>/dev/null; then
+  if service_is_active firewalld; then
     log_info "Firewalld 服务已在运行"
   elif command -v firewall-cmd &>/dev/null; then
     log_info "Firewalld 已安装但未运行，正在自动启动..."
-    service_ensure firewalld started || missing=1
+    service_ensure firewalld started || rc=1
   else
     log_error "Firewalld 未安装，请先执行 debnas run firewall"
-    missing=1
+    rc=1
   fi
   # cron：已安装但未运行时自动启动
-  if systemctl is-active cron &>/dev/null; then
+  if service_is_active cron; then
     log_info "Cron 服务已在运行"
-  elif command -v cron &>/dev/null || dpkg -l cron &>/dev/null 2>&1; then
+  elif command -v cron &>/dev/null || dpkg -l cron &>/dev/null; then
     log_info "Cron 已安装但未运行，正在自动启动..."
-    service_ensure cron started || missing=1
+    service_ensure cron started || rc=1
   else
     log_warning "Cron 未安装，定时任务功能可能不可用"
   fi
-  return "${missing}"
+  return "${rc}"
 }
 
 
@@ -337,7 +201,7 @@ _threat_ipset_bound() {
 # 读取已保存的威胁等级（未启用时为空）
 _threat_saved_level() {
   [[ -r "${CONFIG_FILE}" ]] || return 0
-  sed -n 's/^THREAT_LEVEL=\([0-9]*\).*/\1/p' "${CONFIG_FILE}" 2>/dev/null | head -n 1 || true
+  sed -n '/^THREAT_LEVEL=/{s/^THREAT_LEVEL=\([0-9]*\).*/\1/p;q;}' "${CONFIG_FILE}" 2>/dev/null || true
 }
 
 # 当前状态：一行 "状态码|说明"
@@ -375,7 +239,7 @@ module_status() {
     echo "warn|已禁用但 IPSet 仍残留（${desc}）"
     return 0
   fi
-  if ! systemctl is-active --quiet firewalld 2>/dev/null; then
+  if ! service_is_active firewalld; then
     echo "warn|firewalld 未运行，封禁未生效（${desc}）"
     return 0
   fi
@@ -387,15 +251,11 @@ module_status() {
     echo "partial|已启用但 IPSet 为空（${desc}）"
     return 0
   fi
-  if [[ ${EUID:-$(id -u)} -eq 0 ]]; then
-    if cron_is_registered "threat-ips" 2>/dev/null; then
-      echo "applied|封禁中 · ${desc} · 定时更新已开启"
-    else
-      echo "partial|封禁中 · ${desc} · 未设置定时更新"
-    fi
-  else
-    echo "applied|封禁中 · ${desc}（定时任务需 root 查看）"
-  fi
+  case "$(cron_state threat-ips)" in
+    on)  echo "applied|封禁中 · ${desc} · 定时更新已开启" ;;
+    off) echo "partial|封禁中 · ${desc} · 未设置定时更新" ;;
+    *)   echo "applied|封禁中 · ${desc}（定时任务需 root 查看）" ;;
+  esac
 }
 
 # 预演：每行 "类型|目标|备注"（交互式模块：列出各菜单动作可能的影响）
@@ -404,7 +264,7 @@ module_plan() {
   local -a missing=()
   local cmd pkg
   # firewall-cmd 属服务依赖（不自动安装，由 firewall 模块负责），下方单列 risk
-  for cmd in ipset wget sipcalc; do
+  for cmd in ipset wget; do
     command -v "$cmd" &>/dev/null && continue
     pkg="${cmd_to_pkg[$cmd]:-$cmd}"
     missing+=("$pkg")
@@ -416,14 +276,14 @@ module_plan() {
   fi
   if ! command -v firewall-cmd &>/dev/null; then
     echo "risk|firewalld|未安装 firewalld，启用会失败；请先执行 firewall 模块"
-  elif ! systemctl is-active --quiet firewalld 2>/dev/null; then
+  elif ! service_is_active firewalld; then
     echo "service|firewalld|启用时自动启动"
   fi
   echo "write|${CONFIG_FILE}|启用时写入威胁等级（直接覆盖，不另做备份）；禁用时删除"
   echo "write|firewalld 永久配置|启用：建 IPSet ${IPSET_NAME_IPV4}/${IPSET_NAME_IPV6}（hash:net）并绑定到 ${ZONE} 区；禁用：解绑并删除（firewall-cmd --permanent，不另做备份）"
   echo "info|威胁情报|启用时联网下载 lists.ipthreat.net 列表（最多 ${MAX_IP_LIMIT} 条/协议族），执行时探测"
   echo "info|${WHITELIST_FILE}|白名单（若存在）、私有网段、本机地址及当前 SSH/登录来源不会被封禁"
-  if [[ ${EUID:-$(id -u)} -eq 0 ]] && cron_is_registered "threat-ips" 2>/dev/null; then
+  if [[ "$(cron_state threat-ips)" == "on" ]]; then
     echo "info|cron|定时更新已开启（$(cron_get_schedule threat-ips 2>/dev/null || echo 已注册)）；禁用时移除"
   else
     echo "cron|threat-ips|仅当在「定时设置」中启用时写入 root crontab（默认 ${DEFAULT_UPDATE_CRON}）；禁用时移除"
@@ -457,18 +317,15 @@ main() {
   if [[ "${DEBNAS_CRON_MODE:-0}" -eq 0 ]]; then
     init_manual
     local -a items=("启用威胁封禁" "禁用威胁封禁" "定时设置")
-    local choice exit_code menu_result
+    local choice menu_result
     while true; do
       display_threat_status
       menu_result=$(mktemp)
+      # ui_menu 非零（254 Esc / 255 Q 等）均退出模块
       UI_MENU_BLANK_BEFORE=1 UI_MENU_BACK_LABEL="← 返回上级" UI_MENU_RESULT_FILE="$menu_result" ui_menu "威胁 IP 封禁" "${items[@]}" || {
-        exit_code=$?
         rm -f "$menu_result"
-        case $exit_code in
-          254) mark_normal_exit; return 0 ;;   # Esc：退出模块
-          255) mark_normal_exit; return 0 ;;   # Q：退出模块
-          *)   mark_normal_exit; return 0 ;;
-        esac
+        mark_normal_exit
+        return 0
       }
       choice=$(cat "$menu_result")
       rm -f "$menu_result"

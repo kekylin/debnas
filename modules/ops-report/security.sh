@@ -48,6 +48,8 @@ ops_login_parse() {
     }'
 }
 
+# 登录日志最早记录日期，写入 OPS_LOGIN_DATA_START（module.sh 数据覆盖状态显示）
+# shellcheck disable=SC2034  # OPS_LOGIN_DATA_START 在 module.sh 中读取
 ops_login_data_start() {
   local raw=""
   if command -v wtmpdb >/dev/null 2>&1; then
@@ -67,6 +69,8 @@ ops_login_data_start() {
   fi
 }
 
+# 采集登录/失败登录/封禁/异常时段；结果写入 OPS_LOGIN_* 等全局变量，由 report.sh 渲染
+# shellcheck disable=SC2034  # OPS_* 结果变量在 report.sh 中读取
 ops_collect_security() {
   local since="${OPS_REPORT_SINCE:-$(date '+%Y-%m-%d %H:%M:%S')}"
   OPS_LOGIN_SUCCESS_COUNT=0
@@ -76,7 +80,6 @@ ops_collect_security() {
   OPS_LOGIN_HOURS=""
   OPS_LOGIN_IP_STATS=""
   OPS_LOGIN_IP_LAST=""
-  OPS_LOGIN_DETAILS=""
   OPS_FAIL_IP_STATS=""
   OPS_FAIL_BAN_COUNT="未启用"
   OPS_SECURITY_EVENTS=""
@@ -94,7 +97,6 @@ ops_collect_security() {
   parsed=$(printf '%s\n' "$raw_login" | ops_login_parse || true)
 
   OPS_LOGIN_SUCCESS_COUNT=$(printf '%s\n' "$parsed" | grep -v '^$' | wc -l || true)
-  OPS_LOGIN_DETAILS=$(printf '%s\n' "$parsed" | grep -v '^$' | tail -20 || true)
   OPS_LOGIN_USERS=$(printf '%s\n' "$parsed" | awk -F '\t' '$1 != "" {print $1}' \
     | sort -u | tr '\n' ',' | sed 's/,$//' || true)
   [[ -n "$OPS_LOGIN_USERS" ]] || OPS_LOGIN_USERS="无数据"
@@ -206,10 +208,10 @@ ops_collect_security() {
     # Jail list 形如 "sshd, recidive"；全局 IFS=$'\n\t' 下 $jails 不会按逗号/空格分词
     IFS=', ' read -r -a jail_list <<< "$jails"
     for jail in "${jail_list[@]}"; do
-      jail=$(printf '%s' "$jail" | tr -d '[:space:]')
+      jail="${jail//[[:space:]]/}"
       [[ -n "$jail" ]] || continue
       banned=$(timeout 10 fail2ban-client status "$jail" 2>/dev/null \
-        | awk -F: '/Currently banned:/ { gsub(/ /, "", $2); print $2 }' || true)
+        | awk -F: '/Currently banned:/ { gsub(/[[:space:]]/, "", $2); print $2 }' || true)
       [[ "$banned" =~ ^[0-9]+$ ]] && total=$((total + banned))
     done
     OPS_FAIL_BAN_COUNT="$total"
@@ -281,8 +283,11 @@ ops_collect_security() {
   fi
 }
 
+# 漂移表转义 & < >（纯 bash；替换串中的 & 需转义，见 report.sh 的 ops_html_escape）
 ops_drift_escape() {
-  printf '%s' "$1" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g'
+  local s="$1"
+  s="${s//&/\&amp;}"; s="${s//</\&lt;}"; s="${s//>/\&gt;}"
+  printf '%s' "$s"
 }
 
 ops_drift_append_row() {
@@ -307,17 +312,30 @@ ops_drift_compact_diff() {
 ops_collect_suspicious_processes() {
   OPS_SUSPICIOUS_PROGRAMS=""
   OPS_SUSPICIOUS_PROGRAM_COUNT=0
-  local pid p exe cwd cmdline comm reason argv0 proc_base
-  for pid in /proc/[0-9]*; do
+  local pid p exe cwd cmdline comm reason argv0 proc_base arg link_dir link_name link_target
+  local ctrl=$'\001'-$'\037'$'\177'
+  local -a pids=(/proc/[0-9]*)
+  local -A links=()
+  # exe/cwd 链接目标用一次 find 取完（原来每个进程各起 2 次 readlink）；\0 分隔，路径含换行也不会错位
+  while IFS= read -r -d '' link_dir && IFS= read -r -d '' link_name && IFS= read -r -d '' link_target; do
+    link_target="${link_target%"${link_target##*[!$'\n']}"}"
+    links["${link_dir}/${link_name}"]="$link_target"
+  done < <(find "${pids[@]}" -mindepth 1 -maxdepth 1 \( -name exe -o -name cwd \) -printf '%h\0%f\0%l\0' 2>/dev/null)
+  for pid in "${pids[@]}"; do
     [[ -d "$pid" ]] || continue
     p="${pid##*/}"
-    exe=$(readlink "$pid/exe" 2>/dev/null || true)
-    cwd=$(readlink "$pid/cwd" 2>/dev/null || true)
-    # comm/cmdline 可被任意本地用户控制：换行/制表等控制字符替换为空格，
+    exe="${links["${pid}/exe"]:-}"
+    cwd="${links["${pid}/cwd"]:-}"
+    # comm/cmdline 可被任意本地用户控制：NUL 与换行/制表等控制字符替换为空格，
     # 防止伪造多行记录；cmdline 截断避免报告被超长参数撑大（HTML 转义在渲染层完成）
-    cmdline=$(tr '\000-\037\177' ' ' < "$pid/cmdline" 2>/dev/null || true)
+    # 用 read 直接读 /proc 文件，不再每个进程起 2 次 tr
+    cmdline="" arg=""
+    { while IFS= read -r -d '' arg; do cmdline+="${arg} "; done; cmdline+="$arg"; } < "$pid/cmdline" 2>/dev/null || true
+    cmdline="${cmdline//[$ctrl]/ }"
     cmdline="${cmdline:0:300}"
-    comm=$(tr '\000-\037\177' ' ' < "$pid/comm" 2>/dev/null || true)
+    comm=""
+    { IFS= read -r -d '' comm || true; } < "$pid/comm" 2>/dev/null || true
+    comm="${comm//[$ctrl]/ }"
     comm="${comm% }"
     reason=""
     # 1) 二进制已删除（运行中被替换/卸载）
@@ -358,14 +376,15 @@ ops_collect_suspicious_processes() {
   done
 }
 
+# 安全配置漂移与监听端口基线；结果写入 OPS_SECURITY_DRIFT_LINES / OPS_*LISTEN_PORT* 全局变量
+# shellcheck disable=SC2034  # OPS_* 结果变量在 report.sh 中读取
 ops_collect_security_drift() {
   OPS_SECURITY_DRIFT_LINES=""
   [[ -n "${OPS_SNAPSHOT_DIR:-}" ]] || return 0
   mkdir -p "${OPS_SNAPSHOT_DIR}/drift" 2>/dev/null || true
   local drift_dir="${OPS_SNAPSHOT_DIR}/drift"
-  local now_label now
-  now_label=$(date '+%Y-%m-%d %H:%M')
-  now=$(date '+%s')
+  local now_label
+  printf -v now_label '%(%Y-%m-%d %H:%M)T' -1
 
   local ssh_content fw_content cron_content user_content
   ssh_content=$( {
@@ -386,7 +405,7 @@ ops_collect_security_drift() {
       getent group 2>/dev/null
     } | sort || true)
 
-  local category label current_file previous_file old changed current_content
+  local category label current_file previous_file old current_content
   for category in ssh firewall cron users; do
     case "$category" in
       ssh) label="SSH 配置与授权密钥"; current_file="${drift_dir}/ssh.current"; previous_file="${drift_dir}/ssh.previous"; current_content="$ssh_content"; ;;
@@ -409,7 +428,7 @@ ops_collect_security_drift() {
       continue
     fi
 
-    local removed added type item risk summary="" removed_count added_count changed_count
+    local removed added type risk summary="" removed_count added_count changed_count
     removed=$(diff -u "$previous_file" "$current_file" 2>/dev/null \
       | grep '^-' | grep -v '^---' | sed 's/^-//' || true)
     added=$(diff -u "$previous_file" "$current_file" 2>/dev/null \
@@ -420,7 +439,6 @@ ops_collect_security_drift() {
     removed=$(ops_drift_compact_diff "$removed")
     added=$(ops_drift_compact_diff "$added")
     type="修改"
-    item="${category}"
     risk="中"
     if [[ "$category" == "users" ]]; then
       local old_users new_users user_added user_removed
@@ -428,7 +446,6 @@ ops_collect_security_drift() {
       new_users=$(awk -F: '$1 !~ /^#/ && $1 != "" {print $1}' "$current_file" | sort -u)
       user_added=$(comm -13 <(printf '%s\n' "$old_users") <(printf '%s\n' "$new_users") | paste -sd ',' -)
       user_removed=$(comm -23 <(printf '%s\n' "$old_users") <(printf '%s\n' "$new_users") | paste -sd ',' -)
-      item="用户账户"
       removed="${user_removed:-无}"
       added="${user_added:-无}"
       type="用户变更"
@@ -437,8 +454,7 @@ ops_collect_security_drift() {
       fi
       summary="新增用户：${added}；删除用户：${removed}"
     elif [[ "$category" == "ssh" ]]; then
-      item="sshd_config / authorized_keys"
-      if printf '%s' "$removed" | grep -q 'PermitRootLogin'; then risk="高"; fi
+      [[ "$removed" == *PermitRootLogin* ]] && risk="高"
       summary="修改 ${changed_count} 项；旧值：${removed}；新值：${added}"
     elif [[ "$category" == "firewall" && -n "$removed" && "$removed" != "无" ]]; then
       risk="高"
@@ -465,7 +481,8 @@ ops_collect_security_drift() {
   port_file="${OPS_SNAPSHOT_DIR}/listen-ports.snapshot"
   if [[ -f "$port_file" ]]; then
     old_ports=$(cat "$port_file" 2>/dev/null || true)
-    if printf '%s\n' "$old_ports" | grep -q '[[:space:]]'; then
+    # 旧版快照每行是 ss 原始行（含空白），视为无基线重新建立；换行本身不算
+    if [[ "$old_ports" == *[$' \t\r\v\f']* ]]; then
       printf '%s\n' "$port_lines" > "$port_file"
       OPS_LISTEN_PORT_BASELINE_STATE="已建立基线"
       OPS_LISTEN_PORT_BASELINE_NOTE="首次报告建立监听端口基线后开始对比"

@@ -213,6 +213,7 @@ check_dependencies() {
 # 参数：命令列表
 # 返回：0 全部存在，1 有缺失（已记录 fatal 日志）
 check_system_deps() {
+  local IFS=' '  # 日志中 "${arr[*]}" 以空格连接命令名（全局 IFS 首字符是换行）
   _dep_filter_missing "$@"
   if [[ ${#_DEP_MISSING[@]} -gt 0 ]]; then
     log_fatal_return "系统基础命令缺失：${_DEP_MISSING[*]}" || true
@@ -227,6 +228,7 @@ check_system_deps() {
 # 参数：命令列表
 # 返回：0 全部就绪，1 部分安装失败（不阻断，模块自行处理）
 check_and_install_tool_deps() {
+  local IFS=' '  # 日志中 "${arr[*]}" 以空格连接命令名（全局 IFS 首字符是换行）
   _dep_filter_missing "$@"
   if [[ ${#_DEP_MISSING[@]} -eq 0 ]]; then
     return 0
@@ -372,6 +374,7 @@ ensure_module_deps() {
 # 参数：命令列表
 # 返回：0 全部就绪，1 有缺失
 install_missing_dependencies() {
+  local IFS=' '  # 日志中 "${arr[*]}" 以空格连接命令名（全局 IFS 首字符是换行）
   _dep_filter_missing "$@"
   if [[ ${#_DEP_MISSING[@]} -eq 0 ]]; then
     return 0

@@ -23,187 +23,95 @@ DOCKER_GPG_FINGERPRINT="9DC858229FC7DD38854AE2D88D81803C0EBFCD88"
 
 # ==================== 函数定义 ====================
 
-# 检测镜像站连通性（基于 urls.sh 的 probe_url）
-probe_mirror() {
-  probe_url "$1"
-}
-
-# 从传统 sources.list 提取镜像源基础 URL（deb [opts] URI suite ...）
-# 返回：镜像源基础 URL（不含路径），失败返回非 0
-extract_mirror_from_legacy_list() {
+# 从传统 sources.list 提取第一条 deb 行的 URI
+# 输出：URI（可能为空）
+_legacy_list_first_uri() {
   local legacy_file="${DOCKER_SOURCES_DIR%/*}/sources.list"
-  local legacy_uri
-
-  [[ -f "$legacy_file" && -r "$legacy_file" ]] || return 1
-  legacy_uri=$(awk '
+  [[ -f "$legacy_file" && -r "$legacy_file" ]] || return 0
+  awk '
     /^[[:space:]]*deb[[:space:]]/ && !/^[[:space:]]*#/ {
       for (i = 2; i <= NF; i++) if ($i ~ /^https?:\/\//) { print $i; exit }
     }
-  ' "$legacy_file" 2>/dev/null)
-  if [[ "$legacy_uri" =~ ^(https?://[^/]+) ]]; then
-    echo "${BASH_REMATCH[1]}"
-    return 0
-  fi
-  return 1
+  ' "$legacy_file" 2>/dev/null
 }
 
 # 从 debian.sources（DEB822）中提取镜像源基础 URL，不存在时回退传统 sources.list
-# 返回：镜像源基础 URL（不含路径），失败返回非 0
+# 输出：镜像源基础 URL（不含路径）
+# 返回：0 成功，1 未找到
 extract_mirror_from_sources() {
-  local sources_file="${DOCKER_SOURCES_DIR}/debian.sources"
+  local sources_file="${DOCKER_SOURCES_DIR}/debian.sources" first_uri=""
 
-  if [[ ! -f "$sources_file" ]] || [[ ! -r "$sources_file" ]]; then
-    extract_mirror_from_legacy_list
-    return
-  fi
-
-  local first_uri
-  first_uri=$(awk '
-    /^[[:space:]]*URIs:[[:space:]]+/ && !/^[[:space:]]*#/ {
-      sub(/^[[:space:]]*URIs:[[:space:]]+/, "")
-      if ($1 ~ /^https?:\/\//) {
-        print $1
-        exit
+  if [[ -f "$sources_file" && -r "$sources_file" ]]; then
+    first_uri=$(awk '
+      /^[[:space:]]*URIs:[[:space:]]+/ && !/^[[:space:]]*#/ {
+        sub(/^[[:space:]]*URIs:[[:space:]]+/, "")
+        if ($1 ~ /^https?:\/\//) {
+          print $1
+          exit
+        }
       }
-    }
-  ' "$sources_file" 2>/dev/null)
-
-  if [[ -z "$first_uri" ]]; then
-    return 1
+    ' "$sources_file" 2>/dev/null)
+  else
+    first_uri=$(_legacy_list_first_uri)
   fi
 
-  if [[ "$first_uri" =~ ^(https?://[^/]+) ]]; then
-    echo "${BASH_REMATCH[1]}"
-    return 0
-  fi
-
-  return 1
+  [[ "$first_uri" =~ ^(https?://[^/]+) ]] || return 1
+  echo "${BASH_REMATCH[1]}"
 }
 
 # 检测是否为 Debian 官方源
 # 参数：$1 - 镜像源基础 URL
 # 返回：0 表示是官方源，非 0 表示不是官方源
 is_official_debian_source() {
-  local mirror_url="$1"
-
-  if [[ "$mirror_url" =~ ^https?://(deb\.debian\.org|ftp\.debian\.org) ]]; then
-    return 0
-  fi
-
-  return 1
+  [[ "${1:-}" =~ ^https?://(deb\.debian\.org|ftp\.debian\.org) ]]
 }
 
 # 获取 Docker 镜像源（优先从系统源提取，失败则使用备用源）
 # 返回：Docker 镜像源完整 URL（标准输出），日志输出到标准错误
 get_docker_mirror() {
-  local base_mirror=""
-  local docker_mirror=""
+  local base_mirror="" docker_mirror="" fallback
 
-  base_mirror=$(extract_mirror_from_sources)
-
-  if [[ -n "$base_mirror" ]]; then
-    if is_official_debian_source "$base_mirror"; then
-      log_info "Docker 官方源" >&2
-      echo "$DOCKER_OFFICIAL_MIRROR" >&1
-      return 0
-    else
-      docker_mirror="${base_mirror}/docker-ce/linux/debian"
-      if probe_mirror "${docker_mirror}/dists/"; then
-        log_info "镜像: ${base_mirror}" >&2
-        echo "$docker_mirror" >&1
-        return 0
-      else
-        log_warning "镜像 ${base_mirror} 不可用" >&2
-      fi
-    fi
+  base_mirror=$(extract_mirror_from_sources) || base_mirror=""
+  if [[ -z "$base_mirror" ]]; then
+    log_warning "无系统镜像配置"
+  elif is_official_debian_source "$base_mirror"; then
+    log_info "Docker 官方源"
+    echo "$DOCKER_OFFICIAL_MIRROR"
+    return 0
   else
-    log_warning "无系统镜像配置" >&2
+    docker_mirror="${base_mirror}/docker-ce/linux/debian"
+    if probe_url "${docker_mirror}/dists/"; then
+      log_info "镜像: ${base_mirror}"
+      echo "$docker_mirror"
+      return 0
+    fi
+    log_warning "镜像 ${base_mirror} 不可用"
   fi
 
   for fallback in "${DOCKER_FALLBACK_MIRRORS[@]}"; do
     docker_mirror="${fallback}/docker-ce/linux/debian"
-    if probe_mirror "${docker_mirror}/dists/"; then
-      log_info "镜像: ${fallback}" >&2
-      echo "$docker_mirror" >&1
+    if probe_url "${docker_mirror}/dists/"; then
+      log_info "镜像: ${fallback}"
+      echo "$docker_mirror"
       return 0
     fi
   done
 
-  log_warning "备用镜像不可用" >&2
-  if probe_mirror "$DOCKER_OFFICIAL_MIRROR"; then
-    log_info "Docker 官方源" >&2
-    echo "$DOCKER_OFFICIAL_MIRROR" >&1
+  log_warning "备用镜像不可用"
+  if probe_url "$DOCKER_OFFICIAL_MIRROR"; then
+    log_info "Docker 官方源"
+    echo "$DOCKER_OFFICIAL_MIRROR"
     return 0
-  else
-    log_error "Docker 官方源也不可用，无法继续安装" >&2
-    return 1
   fi
+  log_error "Docker 官方源也不可用，无法继续安装"
+  return 1
 }
 
-# 安装 Docker 前置依赖（ca-certificates + keyring 目录）
+# 安装 Docker 前置依赖（ca-certificates、curl；gpg 用于校验 Docker 公钥指纹）
 install_docker_prerequisites() {
   log_info "安装依赖..."
   apt_install_packages ca-certificates curl
-  install -m 0755 -d "$DOCKER_KEYRINGS_DIR"
-  # gpg 用于校验 Docker 公钥指纹
   command -v gpg &>/dev/null || apt_install_packages gnupg
-}
-
-# 校验公钥文件：只允许包含一个主密钥，且指纹等于 Docker 官方指纹
-# 参数：$1 - 公钥文件路径
-# 返回：0 校验通过，1 失败
-verify_docker_gpg_fingerprint() {
-  local key_file="$1"
-  local gpg_home fprs
-
-  gpg_home=$(create_temp_dir "docker-gpg") || return 1
-  # --with-colons 输出中 pub 行之后的第一条 fpr 为主密钥指纹（跳过子密钥）
-  fprs=$(gpg --homedir "$gpg_home" --batch --quiet --show-keys --with-colons "$key_file" 2>/dev/null \
-    | awk -F: '$1 == "pub" { want = 1; next } $1 == "fpr" && want { print $10; want = 0 }') || return 1
-
-  if [[ "$fprs" != "$DOCKER_GPG_FINGERPRINT" ]]; then
-    log_error "Docker GPG 公钥指纹不匹配（期望 ${DOCKER_GPG_FINGERPRINT}，实际 ${fprs:-无}）"
-    return 1
-  fi
-  return 0
-}
-
-# 下载 Docker GPG 签名密钥（含 3 次重试）
-# 参数：$1 - Docker 镜像源 URL
-download_docker_gpg_key() {
-  local docker_mirror="$1"
-
-  log_info "获取 GPG 密钥..."
-
-  local gpg_downloaded=0
-  local max_retries=3
-  local retry_count=0
-  local tmp_key
-  tmp_key=$(create_temp_file "docker-gpg" ".asc") || exit "${ERROR_DEPENDENCY}"
-
-  # 先下载到临时文件，校验指纹后再原子替换，失败时不破坏已有 keyring
-  while [[ $retry_count -lt $max_retries ]]; do
-    if curl -fsSL --max-time 30 --connect-timeout 10 "${docker_mirror}/gpg" -o "$tmp_key" 2>/dev/null; then
-      if [[ -s "$tmp_key" ]] && grep -q "BEGIN PGP PUBLIC KEY BLOCK" "$tmp_key" 2>/dev/null \
-        && verify_docker_gpg_fingerprint "$tmp_key"; then
-        install -m 0644 "$tmp_key" "${DOCKER_KEYRINGS_DIR}/docker.asc"
-        gpg_downloaded=1
-        break
-      fi
-    fi
-    ((retry_count++)) || true
-    if [[ $retry_count -lt $max_retries ]]; then
-      log_warning "GPG 密钥下载失败，重试中 ($retry_count/$max_retries)"
-      sleep 2
-    fi
-  done
-
-  if [[ $gpg_downloaded -eq 0 ]]; then
-    log_error "GPG 密钥下载失败"
-    exit "${ERROR_DEPENDENCY}"
-  fi
-
-  chmod a+r "${DOCKER_KEYRINGS_DIR}/docker.asc"
 }
 
 # 写入 Docker APT 软件源（DEB822 格式，幂等）
@@ -229,7 +137,12 @@ write_docker_apt_source() {
   local codename
   codename=$(get_system_codename)
   local docker_sources_content="Types: deb"$'\n'"URIs: ${docker_mirror}"$'\n'"Suites: ${codename}"$'\n'"Components: stable"$'\n'"Signed-By: /etc/apt/keyrings/docker.asc"
-  write_file_if_changed "${DOCKER_SOURCES_DIR}/docker.sources" "$docker_sources_content" || true
+  local rc=0
+  write_file_if_changed "${DOCKER_SOURCES_DIR}/docker.sources" "$docker_sources_content" || rc=$?
+  if [[ $rc -eq 2 ]]; then
+    log_error "写入 Docker 源失败"
+    exit "${ERROR_GENERAL}"
+  fi
 
   apt_update_safe
 }
@@ -250,34 +163,27 @@ install_docker_packages() {
 
 # 将第一个常规用户添加到 docker 组
 # 参数：$1 - 用户名（空则跳过）
+# 说明：可在 /etc/debnas/debnas.conf 设置 add_user_to_docker=0 关闭（默认 1）
 add_user_to_docker_group() {
   local first_user="$1"
 
-  # 可在 /etc/debnas/debnas.conf 设置 add_user_to_docker=0 关闭（默认 1，保持原有用法）
-  if [[ "$(config_read "global" "add_user_to_docker" "1" 2>/dev/null || echo 1)" == "0" ]]; then
+  if ! config_get_bool add_user_to_docker 1; then
     log_info "已配置 add_user_to_docker=0，跳过 docker 组"
-    log_success "Docker CE 就绪"
   elif [[ -n "$first_user" ]]; then
     usermod -aG docker "$first_user"
     log_warning "已将用户 ${first_user} 加入 docker 组：docker 组成员等同于 root 权限（可挂载宿主机任意目录）"
     log_warning "如不需要请执行：gpasswd -d ${first_user} docker；并在 /etc/debnas/debnas.conf 设置 add_user_to_docker=0"
-    log_success "Docker CE 就绪"
   else
     log_info "无普通用户，跳过 docker 组"
-    log_success "Docker CE 就绪"
   fi
+  log_success "Docker CE 就绪"
 }
 
 # ==================== 只读探测契约（docs/ARCHITECTURE.md §4.5） ====================
 
-# 包是否已安装（只读查询 dpkg 数据库）
-_docker_pkg_installed() {
-  [[ "$(dpkg-query -W -f='${db:Status-Status}' "$1" 2>/dev/null)" == "installed" ]]
-}
-
 # 当前状态：一行 "状态码|说明"（只读、不联网）
 module_status() {
-  if _docker_pkg_installed docker-ce; then
+  if pkg_is_installed docker-ce; then
     local ver
     ver=$(dpkg-query -W -f='${Version}' docker-ce 2>/dev/null) || ver=""
     ver="${ver#*:}"
@@ -306,22 +212,21 @@ module_plan() {
     want+=(docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin)
   fi
   for pkg in "${want[@]}"; do
-    _docker_pkg_installed "$pkg" || missing+=("$pkg")
+    pkg_is_installed "$pkg" || missing+=("$pkg")
   done
   [[ ${#missing[@]} -gt 0 ]] && echo "pkg|${missing[*]}|apt 安装"
 
   echo "info|镜像源|执行时按系统源探测镜像站，失败回退备用镜像/官方源（需联网）"
-  echo "write|${DOCKER_KEYRINGS_DIR}/docker.asc|下载 GPG 公钥，指纹校验通过后覆盖写入"
+  echo "write|${DOCKER_KEYRINGS_DIR}/docker.asc|下载 GPG 公钥，指纹校验通过后原子替换（内容未变则跳过）"
   if [[ -f "${DOCKER_SOURCES_DIR}/docker.list" ]]; then
     echo "write|${DOCKER_SOURCES_DIR}/docker.list|旧格式源集中备份到 /var/backups/debnas 后移除"
   fi
   echo "write|${DOCKER_SOURCES_DIR}/docker.sources|DEB822 源（内容未变则跳过），随后 apt update"
   echo "service|docker|启动并设为开机自启"
 
-  local first_user add_flag
-  first_user=$(get_first_regular_user 2>/dev/null) || first_user=""
-  add_flag=$(config_read "global" "add_user_to_docker" "1" 2>/dev/null) || add_flag="1"
-  if [[ "$add_flag" != "0" && -n "$first_user" ]]; then
+  local first_user
+  first_user=$(get_primary_user)
+  if [[ -n "$first_user" ]] && config_get_bool add_user_to_docker 1; then
     echo "user|${first_user}|加入 docker 组"
     echo "risk|docker 组|docker 组成员等同 root 权限（可在 debnas.conf 设 add_user_to_docker=0 关闭）"
   fi
@@ -336,23 +241,25 @@ main() {
   local step=0 total=7
 
   ui_progress_step $((++step)) "$total" "检测镜像源"
-  local DOCKER_MIRROR
-  DOCKER_MIRROR=$(get_docker_mirror) || {
+  local docker_mirror
+  docker_mirror=$(get_docker_mirror) || {
     log_error "无法获取 Docker 源"
     exit "${ERROR_DEPENDENCY}"
   }
 
   local first_user
-  first_user=$(get_first_regular_user)
+  first_user=$(get_primary_user)
 
   ui_progress_step $((++step)) "$total" "安装系统依赖"
   install_docker_prerequisites
 
   ui_progress_step $((++step)) "$total" "下载 GPG 签名密钥"
-  download_docker_gpg_key "$DOCKER_MIRROR"
+  log_info "获取 GPG 密钥..."
+  keyring_install_verified "${docker_mirror}/gpg" "$DOCKER_GPG_FINGERPRINT" "${DOCKER_KEYRINGS_DIR}/docker.asc" \
+    --label Docker || exit "${ERROR_DEPENDENCY}"
 
   ui_progress_step $((++step)) "$total" "配置 APT 软件源"
-  write_docker_apt_source "$DOCKER_MIRROR"
+  write_docker_apt_source "$docker_mirror"
 
   ui_progress_step $((++step)) "$total" "安装 Docker 组件"
   install_docker_packages
@@ -365,7 +272,10 @@ main() {
   add_user_to_docker_group "$first_user"
 
   ui_progress_step "$step" "$total" "Docker CE 安装完成" "done"
-  log_info "Docker $(docker --version 2>/dev/null | grep -oP '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+  local ver
+  ver=$(docker --version 2>/dev/null) || ver=""
+  [[ "$ver" =~ [0-9]+\.[0-9]+\.[0-9]+ ]] && ver="${BASH_REMATCH[0]}" || ver=""
+  log_info "Docker ${ver}"
 }
 
 # 契约守卫：DEBNAS_MODULE_ACTION=status|plan 时只加载函数供只读探测，不执行 main（docs/ARCHITECTURE.md §4.5）

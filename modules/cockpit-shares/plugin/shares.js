@@ -76,6 +76,11 @@
         return parts.join("\n") || String(err);
     }
 
+    // 命令输出 / 错误详情的等宽文本块
+    function preText(text) {
+        return h("pre", { class: "ds-pre", text });
+    }
+
     function isNotFound(err) {
         return err && (err.problem === "not-found" || err.exit_status === 127);
     }
@@ -96,34 +101,33 @@
         const options = Object.assign({ superuser: "require", err: "message" }, opts || {});
         const proc = cockpit.spawn(argv.map(String), options);
         if (input !== undefined) proc.input(input);
-        return new Promise((resolve, reject) => proc.then(data => resolve(data), err => reject(err)));
+        return new Promise((resolve, reject) => proc.then(resolve, reject));
+    }
+
+    // 打开文件执行一次操作后关闭；结果为 then 回调的全部参数数组
+    function fileOp(path, admin, op) {
+        const f = cockpit.file(path, admin ? { superuser: "require" } : {});
+        return new Promise((resolve, reject) => op(f).then((...args) => {
+            f.close();
+            resolve(args);
+        }, err => {
+            f.close();
+            reject(err);
+        }));
     }
 
     function readFile(path, admin) {
-        const f = cockpit.file(path, admin ? { superuser: "require" } : {});
-        return new Promise((resolve, reject) => {
-            f.read().then((content, tag) => {
-                f.close();
-                resolve({ content, tag });
-            }, err => {
-                f.close();
-                reject(err);
-            });
-        });
+        return fileOp(path, admin, f => f.read()).then(([content, tag]) => ({ content, tag }));
     }
 
     // expectedTag：读取时得到的 tag（文件不存在为 "-"）；文件在此期间被改动时 Cockpit 返回 change-conflict
     function replaceFile(path, content, expectedTag) {
-        const f = cockpit.file(path, { superuser: "require" });
-        return new Promise((resolve, reject) => {
-            f.replace(content, expectedTag).then(tag => {
-                f.close();
-                resolve(tag);
-            }, err => {
-                f.close();
-                reject(err);
-            });
-        });
+        return fileOp(path, true, f => f.replace(content, expectedTag)).then(([tag]) => tag);
+    }
+
+    // 读取 Samba 参数的生效值（testparm 合并 smb.conf 与注册表）
+    async function testparmValue(key) {
+        return (await spawn(["testparm", "-s", "--parameter-name=" + key])).trim();
     }
 
     // ======================================================================
@@ -243,14 +247,21 @@
     const ALERT_GLYPH = { info: "i", success: "✓", warning: "!", danger: "!", custom: "i" };
 
     function alertBox(kind, title, desc, actions, onClose) {
-        const el = h("div", { class: "pf-v6-c-alert pf-m-inline pf-m-" + kind, role: kind === "danger" ? "alert" : undefined },
+        return h("div", { class: "pf-v6-c-alert pf-m-inline pf-m-" + kind, role: kind === "danger" ? "alert" : undefined },
             h("div", { class: "pf-v6-c-alert__icon" }, h("span", { class: "ds-alert-glyph ds-alert-glyph-" + kind, "aria-hidden": "true", text: ALERT_GLYPH[kind] || "i" })),
             h("p", { class: "pf-v6-c-alert__title", text: title }),
             onClose ? h("div", { class: "pf-v6-c-alert__action" },
                 h("button", { type: "button", class: "pf-v6-c-button pf-m-plain", "aria-label": "关闭提示", onclick: onClose, text: "✕" })) : null,
             desc ? h("div", { class: "pf-v6-c-alert__description" }, desc) : null,
             actions && actions.length ? h("div", { class: "pf-v6-c-alert__action-group" }, actions) : null);
-        return el;
+    }
+
+    function errorAlert(title, err) {
+        return alertBox("danger", title, preText(errText(err)));
+    }
+
+    function sambaMissingState() {
+        return emptyState("未安装 Samba", "请在 DebNAS 中运行「安装共享管理面板」，或执行 apt install samba。");
     }
 
     function card(title, actions, body, extraClass) {
@@ -260,6 +271,19 @@
                     h("div", { class: "pf-v6-c-card__title" }, h("h2", { class: "pf-v6-c-card__title-text", text: title }))),
                 actions && actions.length ? h("div", { class: "pf-v6-c-card__actions" }, actions) : null),
             h("div", { class: "pf-v6-c-card__body" }, body));
+    }
+
+    // 表格行末的操作列（单元格对象，见 table）
+    function actionsCell(...buttons) {
+        return { action: true, node: h("span", { class: "ds-row-actions" }, buttons) };
+    }
+
+    function editButton(onClick) {
+        return button("编辑", "link", onClick, { inline: true });
+    }
+
+    function deleteButton(text, onClick) {
+        return button(text, "link pf-m-danger", onClick, { inline: true });
     }
 
     // cells：字符串 / 节点 / { node, action: true }
@@ -354,6 +378,21 @@
         return el;
     }
 
+    // 表单容器：阻止回车提交刷新页面
+    function formEl(cls, ...kids) {
+        return h("form", { class: "pf-v6-c-form " + cls, onsubmit: e => e.preventDefault() }, kids);
+    }
+
+    // 路径输入框 + 「浏览…」按钮；返回 textInput 包装，.group 为整组节点
+    function pathInput(value, placeholder) {
+        const path = textInput(value, { placeholder, label: "路径" });
+        const browse = button("浏览…", "secondary", () => browseDialog(path.input.value || "/", p => { path.input.value = p }));
+        path.group = h("div", { class: "pf-v6-c-input-group ds-input-group" },
+            h("div", { class: "pf-v6-c-input-group__item pf-m-fill" }, path),
+            h("div", { class: "pf-v6-c-input-group__item" }, browse));
+        return path;
+    }
+
     // 模态框：actions = [{ text, variant, run(modal) -> Promise|false }]；run 返回 false 时不关闭
     function openModal(spec) {
         const errBox = h("div", { class: "ds-modal-error" });
@@ -381,7 +420,7 @@
         };
         m.setError = (title, detail) => {
             clear(errBox);
-            if (title) errBox.appendChild(alertBox("danger", title, detail ? h("pre", { class: "ds-pre", text: detail }) : null));
+            if (title) errBox.appendChild(alertBox("danger", title, detail ? preText(detail) : null));
             if (title) errBox.scrollIntoView({ block: "nearest" });
         };
         const setDisabled = d => buttons.forEach(b => { b.disabled = d });
@@ -424,16 +463,20 @@
         return m;
     }
 
+    const CANCEL_ACTION = { text: "取消", variant: "link" };
+
     function confirmDialog(title, message, confirmText, run, opts) {
         opts = opts || {};
         return openModal({
             title, size: "sm", danger: opts.danger !== false,
             body: typeof message === "string" ? h("p", { text: message }) : message,
-            actions: [
-                { text: confirmText, variant: opts.danger === false ? "primary" : "danger", run, errorTitle: opts.errorTitle },
-                { text: "取消", variant: "link" }
-            ]
+            actions: [{ text: confirmText, variant: opts.danger === false ? "primary" : "danger", run, errorTitle: opts.errorTitle }, CANCEL_ACTION]
         });
+    }
+
+    // 表单对话框：一个主按钮 + 取消
+    function formDialog(title, size, body, submitText, errorTitle, run) {
+        return openModal({ title, size, body, actions: [{ text: submitText, variant: "primary", errorTitle, run }, CANCEL_ACTION] });
     }
 
     // ======================================================================
@@ -450,9 +493,13 @@
     let root, tabBar, notices, content, adminBox;
 
     function notify(kind, title, detail) {
-        const el = alertBox(kind, title, detail ? h("pre", { class: "ds-pre", text: detail }) : null, null, () => el.remove());
+        const el = alertBox(kind, title, detail ? preText(detail) : null, null, () => el.remove());
         notices.appendChild(el);
         if (kind === "success") setTimeout(() => el.remove(), 4000);
+    }
+
+    function refreshButton(tab) {
+        return button("刷新", "secondary", () => showTab(tab), { small: true });
     }
 
     function lockedState() {
@@ -569,6 +616,22 @@
             h("div", { class: "ds-service-name" }, h("strong", { text: title }), h("span", { class: "ds-muted", text: unit })),
             h("div", { class: "ds-service-status" }, status, boot),
             h("div", { class: "ds-service-actions" }, actions));
+    }
+
+    // 在 body 中渲染一组服务的状态行；units = [[unit, 标题]]，操作后刷新 tab
+    // 返回：状态表（读取失败时为 null，并在 body 中显示错误）
+    async function renderServices(body, units, tab) {
+        let st;
+        try {
+            st = await serviceStatus(units.map(u => u[0]));
+        } catch (err) {
+            clear(body);
+            body.appendChild(errorAlert("读取服务状态失败", err));
+            return null;
+        }
+        clear(body);
+        for (const [unit, title] of units) body.appendChild(serviceRow(unit, title, st[unit], () => showTab(tab)));
+        return st;
     }
 
     // ======================================================================
@@ -841,11 +904,7 @@
                 [names, conf] = await Promise.all([smbListShares(), readFile(SMB_CONF, true)]);
             } catch (err) {
                 clear(body);
-                if (isNotFound(err)) {
-                    body.appendChild(emptyState("未安装 Samba", "请在 DebNAS 中运行「安装共享管理面板」，或执行 apt install samba。"));
-                } else {
-                    body.appendChild(alertBox("danger", "读取 Samba 注册表失败", h("pre", { class: "ds-pre", text: errText(err) })));
-                }
+                body.appendChild(isNotFound(err) ? sambaMissingState() : errorAlert("读取 Samba 注册表失败", err));
                 return;
             }
             let shares;
@@ -853,7 +912,7 @@
                 shares = await Promise.all(names.map(async n => shareFromParams(n, await smbShowShare(n))));
             } catch (err) {
                 clear(body);
-                body.appendChild(alertBox("danger", "读取共享参数失败", h("pre", { class: "ds-pre", text: errText(err) })));
+                body.appendChild(errorAlert("读取共享参数失败", err));
                 return;
             }
             this.shares = shares;
@@ -894,12 +953,8 @@
                         s.timeMachine ? label("Time Machine", "purple") : null),
                     s.validUsers.length ? s.validUsers.join(", ") : h("span", { class: "ds-muted", text: "所有 Samba 用户" }),
                     s.comment || "",
-                    {
-                        action: true,
-                        node: hand ? h("span", { class: "ds-muted", text: "导入后可编辑" }) : h("span", { class: "ds-row-actions" },
-                            button("编辑", "link", () => this.edit(s), { inline: true }),
-                            button("删除", "link pf-m-danger", () => this.remove(s), { inline: true }))
-                    }
+                    hand ? { action: true, node: h("span", { class: "ds-muted", text: "导入后可编辑" }) }
+                        : actionsCell(editButton(() => this.edit(s)), deleteButton("删除", () => this.remove(s)))
                 ])));
         },
 
@@ -927,30 +982,23 @@
                 return c;
             });
             const removeChk = checkbox("导入后从 smb.conf 删除这些段", false, "会先备份 smb.conf。不勾选时原文件保持不变，同名共享会同时存在于 smb.conf 和注册表（参数合并），建议导入确认无误后再删除。");
-            openModal({
-                title: "导入手写共享到注册表",
-                size: "md",
-                body: h("div", { class: "ds-stack" },
-                    h("p", { text: "使用 “net conf import” 把选中的共享从 smb.conf 复制到 Samba 注册表，注册表中其他共享不受影响。" }),
-                    h("div", { class: "ds-check-list" }, checks),
-                    removeChk),
-                actions: [{
-                    text: "导入", variant: "primary", errorTitle: "导入失败",
-                    run: async () => {
-                        const chosen = checks.filter(c => c.input.checked).map(c => c.shareName);
-                        if (!chosen.length) fail("请至少选择一个共享");
-                        for (const n of chosen) {
-                            const e = shareNameError(n);
-                            if (e) fail("无法导入「" + n + "」：" + e);
-                        }
-                        for (const n of chosen) await spawn(["net", "conf", "import", SMB_CONF, n]);
-                        let backup = null;
-                        if (removeChk.input.checked) backup = await rewriteSmbConf(t => removeSections(t, chosen));
-                        await reloadSmbd();
-                        notify("success", "已导入 " + chosen.length + " 个共享", backup ? "smb.conf 备份：" + backup : null);
-                        this.refresh();
-                    }
-                }, { text: "取消", variant: "link" }]
+            const body = h("div", { class: "ds-stack" },
+                h("p", { text: "使用 “net conf import” 把选中的共享从 smb.conf 复制到 Samba 注册表，注册表中其他共享不受影响。" }),
+                h("div", { class: "ds-check-list" }, checks),
+                removeChk);
+            formDialog("导入手写共享到注册表", "md", body, "导入", "导入失败", async () => {
+                const chosen = checks.filter(c => c.input.checked).map(c => c.shareName);
+                if (!chosen.length) fail("请至少选择一个共享");
+                for (const n of chosen) {
+                    const e = shareNameError(n);
+                    if (e) fail("无法导入「" + n + "」：" + e);
+                }
+                for (const n of chosen) await spawn(["net", "conf", "import", SMB_CONF, n]);
+                let backup = null;
+                if (removeChk.input.checked) backup = await rewriteSmbConf(t => removeSections(t, chosen));
+                await reloadSmbd();
+                notify("success", "已导入 " + chosen.length + " 个共享", backup ? "smb.conf 备份：" + backup : null);
+                this.refresh();
             });
         },
 
@@ -981,7 +1029,7 @@
             body: h("div", { class: "ds-stack" }, pathLine, list),
             actions: [
                 { text: "选择此目录", variant: "primary", run: () => { onPick(cur) } },
-                { text: "取消", variant: "link" }
+                CANCEL_ACTION
             ]
         });
         async function load(dir) {
@@ -1081,8 +1129,7 @@
             const isNew = !existing;
             const s = existing ? JSON.parse(JSON.stringify(existing)) : shareFromParams("", [["read only", "no"]]);
             const name = textInput(s.name, { disabled: !isNew, placeholder: "如 data、照片", label: "共享名" });
-            const path = textInput(s.path, { placeholder: "/srv/data", label: "路径" });
-            const browse = button("浏览…", "secondary", () => browseDialog(path.input.value || "/", p => { path.input.value = p }));
+            const path = pathInput(s.path, "/srv/data");
             const comment = textInput(s.comment, { placeholder: "可选", label: "注释" });
             const ro = checkbox("只读", s.readOnly, "勾选后所有用户只能读取");
             const guest = checkbox("允许访客访问", s.guestOk, "无需账号密码即可访问（需在「Samba 设置」中将访客映射设为 Bad User）");
@@ -1097,49 +1144,39 @@
             });
             const kv = kvEditor(s.extra);
 
-            const form = h("form", { class: "pf-v6-c-form pf-m-horizontal ds-form", onsubmit: e => e.preventDefault() },
+            const form = formEl("pf-m-horizontal ds-form",
                 formGroup("共享名", name, isNew ? "字母、数字、汉字、_ . -；以 $ 结尾为隐藏共享" : "共享名创建后不可修改", { required: true }),
-                formGroup("路径", h("div", { class: "pf-v6-c-input-group ds-input-group" },
-                    h("div", { class: "pf-v6-c-input-group__item pf-m-fill" }, path),
-                    h("div", { class: "pf-v6-c-input-group__item" }, browse)), "必须是已存在的目录；不允许共享 /、/etc、/usr、/boot 等系统目录", { required: true }),
+                formGroup("路径", path.group, "必须是已存在的目录；不允许共享 /、/etc、/usr、/boot 等系统目录", { required: true }),
                 formGroup("注释", comment),
                 formGroup("访问", h("div", { class: "ds-stack ds-stack-sm" }, ro, guest, browseable, inherit), null, { noTopPadding: true }),
                 formGroup("允许的用户/组", picker, "对应 valid users；用户与用户组的创建请到 Cockpit「账户」页"),
                 formGroup("Time Machine", h("div", { class: "ds-stack ds-stack-sm" }, tm, tmSize), null, { noTopPadding: true }),
                 formGroup("高级参数", kv, "直接写入 Samba 注册表，如 force user、create mask、veto files"));
 
-            openModal({
-                title: isNew ? "新建 Samba 共享" : "编辑共享「" + s.name + "」",
-                size: "lg",
-                body: form,
-                actions: [{
-                    text: isNew ? "创建" : "保存", variant: "primary", errorTitle: "保存失败",
-                    run: async () => {
-                        const next = Object.assign({}, s, {
-                            name: isNew ? name.input.value.trim() : s.name,
-                            path: normPath(path.input.value),
-                            comment: comment.input.value.trim(),
-                            readOnly: ro.input.checked,
-                            guestOk: guest.input.checked,
-                            browseable: browseable.input.checked,
-                            inheritPermissions: inherit.input.checked,
-                            validUsers: picker.value(),
-                            timeMachine: tm.input.checked,
-                            tmMaxSize: tm.input.checked ? tmSize.input.value.trim() : "",
-                            extra: kv.value()
-                        });
-                        validateShare(next, isNew);
-                        await checkDirRemote(next.path);
-                        if (isNew) {
-                            const existingNames = (await smbListShares()).map(n => n.toLowerCase());
-                            if (existingNames.includes(next.name.toLowerCase())) fail("共享「" + next.name + "」已存在");
-                            await spawn(["net", "conf", "addshare", next.name, next.path]);
-                        }
-                        await applyParams(next.name, shareToParams(next));
-                        notify("success", (isNew ? "已创建共享 " : "已保存共享 ") + next.name);
-                        onDone();
-                    }
-                }, { text: "取消", variant: "link" }]
+            formDialog(isNew ? "新建 Samba 共享" : "编辑共享「" + s.name + "」", "lg", form, isNew ? "创建" : "保存", "保存失败", async () => {
+                const next = Object.assign({}, s, {
+                    name: isNew ? name.input.value.trim() : s.name,
+                    path: normPath(path.input.value),
+                    comment: comment.input.value.trim(),
+                    readOnly: ro.input.checked,
+                    guestOk: guest.input.checked,
+                    browseable: browseable.input.checked,
+                    inheritPermissions: inherit.input.checked,
+                    validUsers: picker.value(),
+                    timeMachine: tm.input.checked,
+                    tmMaxSize: tm.input.checked ? tmSize.input.value.trim() : "",
+                    extra: kv.value()
+                });
+                validateShare(next, isNew);
+                await checkDirRemote(next.path);
+                if (isNew) {
+                    const existingNames = (await smbListShares()).map(n => n.toLowerCase());
+                    if (existingNames.includes(next.name.toLowerCase())) fail("共享「" + next.name + "」已存在");
+                    await spawn(["net", "conf", "addshare", next.name, next.path]);
+                }
+                await applyParams(next.name, shareToParams(next));
+                notify("success", (isNew ? "已创建共享 " : "已保存共享 ") + next.name);
+                onDone();
             });
         }
     };
@@ -1164,8 +1201,8 @@
     const SmbGlobalView = {
         render(el) {
             const statusBody = h("div", null, loading());
-            el.appendChild(card("服务状态", [button("刷新", "secondary", () => showTab("smb-global"), { small: true })], statusBody));
-            this.loadStatus(statusBody);
+            el.appendChild(card("服务状态", [refreshButton("smb-global")], statusBody));
+            renderServices(statusBody, [["smbd.service", "Samba 文件服务（smbd）"], ["nmbd.service", "NetBIOS 名称服务（nmbd）"]], "smb-global");
             if (!state.admin) {
                 el.appendChild(card("全局设置", null, lockedState()));
                 return;
@@ -1175,30 +1212,16 @@
             this.loadConfig(cfgBody);
         },
 
-        async loadStatus(body) {
-            try {
-                const st = await serviceStatus(["smbd.service", "nmbd.service"]);
-                clear(body);
-                body.appendChild(serviceRow("smbd.service", "Samba 文件服务（smbd）", st["smbd.service"], () => showTab("smb-global")));
-                body.appendChild(serviceRow("nmbd.service", "NetBIOS 名称服务（nmbd）", st["nmbd.service"], () => showTab("smb-global")));
-            } catch (err) {
-                clear(body);
-                body.appendChild(alertBox("danger", "读取服务状态失败", h("pre", { class: "ds-pre", text: errText(err) })));
-            }
-        },
-
         async loadConfig(body) {
             let conf, effective;
             try {
                 conf = await readFile(SMB_CONF, true);
+                const values = await Promise.all(GLOBAL_PARAMS.map(p => testparmValue(p.key)));
                 effective = {};
-                for (const p of GLOBAL_PARAMS) {
-                    effective[p.key] = (await spawn(["testparm", "-s", "--parameter-name=" + p.key])).trim();
-                }
+                GLOBAL_PARAMS.forEach((p, i) => { effective[p.key] = values[i] });
             } catch (err) {
                 clear(body);
-                if (isNotFound(err) || (conf && conf.content === null)) body.appendChild(emptyState("未安装 Samba", "请在 DebNAS 中运行「安装共享管理面板」，或执行 apt install samba。"));
-                else body.appendChild(alertBox("danger", "读取 Samba 配置失败", h("pre", { class: "ds-pre", text: errText(err) })));
+                body.appendChild(isNotFound(err) || (conf && conf.content === null) ? sambaMissingState() : errorAlert("读取 Samba 配置失败", err));
                 return;
             }
             clear(body);
@@ -1211,7 +1234,7 @@
                     null, [button("一键启用", "primary", () => SmbView.enableRegistry(), { small: true })]));
             }
             const controls = {};
-            const form = h("form", { class: "pf-v6-c-form pf-m-horizontal ds-form ds-form-narrow", onsubmit: e => e.preventDefault() });
+            const form = formEl("pf-m-horizontal ds-form ds-form-narrow");
             for (const p of GLOBAL_PARAMS) {
                 const val = effective[p.key] || "";
                 let ctrl;
@@ -1252,11 +1275,11 @@
             btn.disabled = true;
             try {
                 await applyParams("global", desired, GLOBAL_PARAMS.map(p => p.key));
+                const effective = await Promise.all(desired.map(([k]) => testparmValue(k)));
                 const overridden = [];
-                for (const [k, v] of desired) {
-                    const eff = (await spawn(["testparm", "-s", "--parameter-name=" + k])).trim();
-                    if (eff.toLowerCase() !== v.toLowerCase()) overridden.push(k + "（当前生效值：" + eff + "）");
-                }
+                desired.forEach(([k, v], i) => {
+                    if (effective[i].toLowerCase() !== v.toLowerCase()) overridden.push(k + "（当前生效值：" + effective[i] + "）");
+                });
                 await reloadSmbd();
                 if (overridden.length) notify("warning", "已保存，但以下参数被 smb.conf 中 include = registry 之后的同名设置覆盖", overridden.join("\n"));
                 else notify("success", "全局设置已保存");
@@ -1364,6 +1387,7 @@
 
     const NFS_HOST_RE = /^(\*|@[A-Za-z0-9_.-]+|[A-Za-z0-9*?._:-]+(\/[0-9.]{1,15})?)$/;
     const NFS_OPT_RE = /^[a-z_]+(=[A-Za-z0-9_.:/@+-]+)?$/;
+    const NFS_DEFAULT_OPTIONS = ["rw", "sync", "root_squash", "no_subtree_check"];
     const NFS_KNOWN = new Set(["rw", "ro", "sync", "async", "root_squash", "no_root_squash", "all_squash", "no_subtree_check", "subtree_check", "insecure", "secure"]);
 
     function clientToForm(c) {
@@ -1398,7 +1422,7 @@
     const NfsView = {
         render(el) {
             const statusBody = h("div", null, loading());
-            el.appendChild(card("NFS 服务状态", [button("刷新", "secondary", () => showTab("nfs"), { small: true })], statusBody));
+            el.appendChild(card("NFS 服务状态", [refreshButton("nfs")], statusBody));
             if (!state.admin) {
                 this.loadStatus(statusBody);
                 el.appendChild(card("NFS 导出", null, lockedState()));
@@ -1410,17 +1434,10 @@
             this.loadStatus(statusBody).then(installed => this.load(body, addBtn, installed));
         },
 
+        // 返回：nfs-server 是否已安装
         async loadStatus(body) {
-            try {
-                const st = (await serviceStatus(["nfs-server.service"]))["nfs-server.service"];
-                clear(body);
-                body.appendChild(serviceRow("nfs-server.service", "NFS 服务端（nfs-server）", st, () => showTab("nfs")));
-                return st.LoadState !== "not-found";
-            } catch (err) {
-                clear(body);
-                body.appendChild(alertBox("danger", "读取服务状态失败", h("pre", { class: "ds-pre", text: errText(err) })));
-                return false;
-            }
+            const st = await renderServices(body, [["nfs-server.service", "NFS 服务端（nfs-server）"]], "nfs");
+            return !!st && st["nfs-server.service"].LoadState !== "not-found";
         },
 
         async load(body, addBtn, installed) {
@@ -1429,10 +1446,10 @@
                 file = await readFile(EXPORTS_FILE, true);
             } catch (err) {
                 clear(body);
-                body.appendChild(alertBox("danger", "读取 " + EXPORTS_FILE + " 失败", h("pre", { class: "ds-pre", text: errText(err) })));
+                body.appendChild(errorAlert("读取 " + EXPORTS_FILE + " 失败", err));
                 return;
             }
-            this.loaded = { content: file.content === null ? null : file.content, tag: file.tag };
+            this.loaded = file;
             this.model = parseExports(file.content || "");
             clear(body);
             body.appendChild(h("p", { class: "ds-muted ds-file-hint" }, "配置文件：", h("code", { class: "ds-code", text: EXPORTS_FILE }),
@@ -1452,18 +1469,13 @@
             body.appendChild(table("NFS 导出列表", ["路径", "客户端与选项", ""], entries.map((e, idx) => {
                 if (e.raw !== undefined) {
                     return [h("code", { class: "ds-code", text: e.raw }), h("span", { class: "ds-muted", text: "无法解析，保持原样" }),
-                        { action: true, node: h("span", { class: "ds-row-actions" }, button("删除", "link pf-m-danger", () => this.remove(idx), { inline: true })) }];
+                        actionsCell(deleteButton("删除", () => this.remove(idx)))];
                 }
                 return [
                     h("code", { class: "ds-code", text: e.path }),
                     h("div", { class: "ds-clients" }, e.clients.length ? e.clients.map(c => h("div", { class: "ds-client" },
                         h("strong", { text: c.host || "（所有主机）" }), h("span", { class: "ds-muted", text: c.options.join(", ") }))) : h("span", { class: "ds-muted", text: "（未指定客户端）" })),
-                    {
-                        action: true,
-                        node: h("span", { class: "ds-row-actions" },
-                            button("编辑", "link", () => this.edit(idx), { inline: true }),
-                            button("删除", "link pf-m-danger", () => this.remove(idx), { inline: true }))
-                    }
+                    actionsCell(editButton(() => this.edit(idx)), deleteButton("删除", () => this.remove(idx)))
                 ];
             })));
         },
@@ -1472,7 +1484,7 @@
         async save(model) {
             const cur = await readFile(EXPORTS_FILE, true);
             const before = this.loaded.content;
-            if ((cur.content === null ? null : cur.content) !== before) fail("文件已被其他程序修改，请刷新页面后重试（" + EXPORTS_FILE + "）");
+            if (cur.content !== before) fail("文件已被其他程序修改，请刷新页面后重试（" + EXPORTS_FILE + "）");
             const text = serializeExports(model);
             if (cur.tag === "-") await spawn(["mkdir", "-p", "--", EXPORTS_DIR]);
             let newTag;
@@ -1505,10 +1517,9 @@
 
         edit(idx) {
             const isNew = idx === null;
-            const entry = isNew ? { comments: [], path: "", clients: [{ host: "", options: ["rw", "sync", "root_squash", "no_subtree_check"] }] }
-                : JSON.parse(JSON.stringify(this.model.entries[idx]));
-            const path = textInput(entry.path, { placeholder: "/srv/nfs/data", label: "路径" });
-            const browse = button("浏览…", "secondary", () => browseDialog(path.input.value || "/", p => { path.input.value = p }));
+            const newClient = () => ({ host: "", options: NFS_DEFAULT_OPTIONS.slice() });
+            const entry = isNew ? { comments: [], path: "", clients: [newClient()] } : JSON.parse(JSON.stringify(this.model.entries[idx]));
+            const path = pathInput(entry.path, "/srv/nfs/data");
             const clientsBox = h("div", { class: "ds-stack ds-stack-sm" });
             const clientRows = [];
 
@@ -1542,38 +1553,28 @@
             };
             entry.clients.forEach(addClient);
 
-            const form = h("form", { class: "pf-v6-c-form ds-form", onsubmit: e => e.preventDefault() },
-                formGroup("路径", h("div", { class: "pf-v6-c-input-group ds-input-group" },
-                    h("div", { class: "pf-v6-c-input-group__item pf-m-fill" }, path),
-                    h("div", { class: "pf-v6-c-input-group__item" }, browse)), "必须是已存在的目录；不允许导出系统目录", { required: true }),
+            const form = formEl("ds-form",
+                formGroup("路径", path.group, "必须是已存在的目录；不允许导出系统目录", { required: true }),
                 formGroup("客户端", h("div", { class: "ds-stack ds-stack-sm" }, clientsBox,
-                    button("添加客户端", "link", () => addClient({ host: "", options: ["rw", "sync", "root_squash", "no_subtree_check"] }), { inline: true }))));
+                    button("添加客户端", "link", () => addClient(newClient()), { inline: true }))));
 
-            openModal({
-                title: isNew ? "新建 NFS 导出" : "编辑 NFS 导出",
-                size: "lg",
-                body: form,
-                actions: [{
-                    text: isNew ? "创建" : "保存", variant: "primary", errorTitle: "保存失败",
-                    run: async () => {
-                        const p = normPath(path.input.value);
-                        const pe = pathSyntaxError(p);
-                        if (pe) fail(pe);
-                        if (!clientRows.length) fail("请至少添加一个客户端");
-                        const clients = clientRows.map(r => formToClient(r.value()));
-                        const dupHost = clients.map(c => c.host).find((hst, i, a) => a.indexOf(hst) !== i);
-                        if (dupHost !== undefined) fail("客户端重复：" + dupHost);
-                        if (this.model.entries.some((e, i) => i !== idx && e.path === p)) fail("该路径已有导出，请直接编辑原条目");
-                        await checkDirRemote(p);
-                        const updated = { comments: entry.comments || [], path: p, clients };
-                        const entries = this.model.entries.slice();
-                        if (isNew) entries.push(updated);
-                        else entries[idx] = updated;
-                        await this.save({ entries, trailing: this.model.trailing });
-                        notify("success", (isNew ? "已创建导出 " : "已保存导出 ") + p);
-                        showTab("nfs");
-                    }
-                }, { text: "取消", variant: "link" }]
+            formDialog(isNew ? "新建 NFS 导出" : "编辑 NFS 导出", "lg", form, isNew ? "创建" : "保存", "保存失败", async () => {
+                const p = normPath(path.input.value);
+                const pe = pathSyntaxError(p);
+                if (pe) fail(pe);
+                if (!clientRows.length) fail("请至少添加一个客户端");
+                const clients = clientRows.map(r => formToClient(r.value()));
+                const dupHost = clients.map(c => c.host).find((hst, i, a) => a.indexOf(hst) !== i);
+                if (dupHost !== undefined) fail("客户端重复：" + dupHost);
+                if (this.model.entries.some((e, i) => i !== idx && e.path === p)) fail("该路径已有导出，请直接编辑原条目");
+                await checkDirRemote(p);
+                const updated = { comments: entry.comments || [], path: p, clients };
+                const entries = this.model.entries.slice();
+                if (isNew) entries.push(updated);
+                else entries[idx] = updated;
+                await this.save({ entries, trailing: this.model.trailing });
+                notify("success", (isNew ? "已创建导出 " : "已保存导出 ") + p);
+                showTab("nfs");
             });
         }
     };
@@ -1592,7 +1593,7 @@
             el.appendChild(alertBox("info", "Samba 使用独立的访问密码",
                 h("p", null, "这里为系统用户设置或删除 Samba 访问密码（smbpasswd）。创建/删除用户和用户组请到 Cockpit 自带的「账户」页面：", accountsLink)));
             const body = h("div", null, loading());
-            el.appendChild(card("共享用户", [button("刷新", "secondary", () => showTab("users"), { small: true })], body));
+            el.appendChild(card("共享用户", [refreshButton("users")], body));
             this.load(body);
         },
 
@@ -1603,8 +1604,7 @@
                 pdb = await spawn(["pdbedit", "-L"]);
             } catch (err) {
                 clear(body);
-                if (isNotFound(err)) body.appendChild(emptyState("未安装 Samba", "请在 DebNAS 中运行「安装共享管理面板」，或执行 apt install samba。"));
-                else body.appendChild(alertBox("danger", "读取 Samba 用户失败", h("pre", { class: "ds-pre", text: errText(err) })));
+                body.appendChild(isNotFound(err) ? sambaMissingState() : errorAlert("读取 Samba 用户失败", err));
                 return;
             }
             const smbUsers = new Map();
@@ -1630,49 +1630,40 @@
                 String(r.uid),
                 r.gecos || "",
                 h("span", { class: "ds-labels" }, r.smb ? label("已设置", "green") : label("未设置", "grey"), r.system ? null : label("系统中不存在", "orange")),
-                {
-                    action: true,
-                    node: h("span", { class: "ds-row-actions" },
-                        r.system ? button(r.smb ? "修改密码" : "设置密码", "link", () => this.setPassword(r.name, r.smb), { inline: true }) : null,
-                        r.smb ? button("删除 Samba 密码", "link pf-m-danger", () => this.removeUser(r.name), { inline: true }) : null)
-                }
+                actionsCell(
+                    r.system ? button(r.smb ? "修改密码" : "设置密码", "link", () => this.setPassword(r.name, r.smb), { inline: true }) : null,
+                    r.smb ? deleteButton("删除 Samba 密码", () => this.removeUser(r.name)) : null)
             ])));
         },
 
+        // 用户名不合法时提示并返回 false（防止异常数据进入 smbpasswd 参数）
+        checkName(name) {
+            const e = accountError(name);
+            if (e) notify("danger", e);
+            return !e;
+        },
+
         setPassword(name, exists) {
-            if (accountError(name)) {
-                notify("danger", accountError(name));
-                return;
-            }
+            if (!this.checkName(name)) return;
             const pw1 = textInput("", { type: "password", autocomplete: "new-password", label: "新密码" });
             const pw2 = textInput("", { type: "password", autocomplete: "new-password", label: "确认密码" });
-            openModal({
-                title: (exists ? "修改" : "设置") + "「" + name + "」的 Samba 密码",
-                size: "sm",
-                body: h("form", { class: "pf-v6-c-form ds-form", onsubmit: e => e.preventDefault() },
-                    formGroup("新密码", pw1, null, { required: true }),
-                    formGroup("确认密码", pw2, "Samba 密码独立于系统登录密码", { required: true })),
-                actions: [{
-                    text: "保存", variant: "primary", errorTitle: "设置密码失败",
-                    run: async () => {
-                        const a = pw1.input.value;
-                        if (!a) fail("请输入密码");
-                        if (/[\r\n]/.test(a)) fail("密码不能包含换行");
-                        if (a !== pw2.input.value) fail("两次输入的密码不一致");
-                        // -s：从 stdin 读取两遍密码；密码不出现在命令行参数中
-                        await spawn(["smbpasswd", "-s", "-a", name], {}, a + "\n" + a + "\n");
-                        notify("success", "已" + (exists ? "修改" : "设置") + " " + name + " 的 Samba 密码");
-                        showTab("users");
-                    }
-                }, { text: "取消", variant: "link" }]
+            const body = formEl("ds-form",
+                formGroup("新密码", pw1, null, { required: true }),
+                formGroup("确认密码", pw2, "Samba 密码独立于系统登录密码", { required: true }));
+            formDialog((exists ? "修改" : "设置") + "「" + name + "」的 Samba 密码", "sm", body, "保存", "设置密码失败", async () => {
+                const a = pw1.input.value;
+                if (!a) fail("请输入密码");
+                if (/[\r\n]/.test(a)) fail("密码不能包含换行");
+                if (a !== pw2.input.value) fail("两次输入的密码不一致");
+                // -s：从 stdin 读取两遍密码；密码不出现在命令行参数中
+                await spawn(["smbpasswd", "-s", "-a", name], {}, a + "\n" + a + "\n");
+                notify("success", "已" + (exists ? "修改" : "设置") + " " + name + " 的 Samba 密码");
+                showTab("users");
             });
         },
 
         removeUser(name) {
-            if (accountError(name)) {
-                notify("danger", accountError(name));
-                return;
-            }
+            if (!this.checkName(name)) return;
             confirmDialog("删除「" + name + "」的 Samba 密码？", "该用户将无法再访问 Samba 共享；系统账户本身不受影响。", "删除", async () => {
                 await spawn(["smbpasswd", "-x", name]);
                 notify("success", "已删除 " + name + " 的 Samba 密码");

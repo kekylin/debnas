@@ -204,7 +204,7 @@ cron_register_variant() {
   local current_crontab
   current_crontab=$(_get_current_crontab)
 
-  if echo "$current_crontab" | grep -Fxq "$cron_cmd" 2>/dev/null; then
+  if grep -Fxq -- "$cron_cmd" <<<"$current_crontab"; then
     return 0
   fi
 

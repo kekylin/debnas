@@ -23,16 +23,21 @@ source "${SCRIPT_DIR}/lib/bootstrap.sh"
 # ==================== 代码常量 ====================
 readonly OPS_DEFAULT_PERIOD=7
 readonly OPS_EMAIL_ENABLED=1
+# shellcheck disable=SC2034  # 被 notify.sh 使用
 readonly OPS_EMAIL_ATTACH_HTML=1
+# shellcheck disable=SC2034  # 被 notify.sh 使用
 readonly OPS_EMAIL_MAX_ATTACH_BYTES=2097152
 readonly OPS_REPORT_DIR="/var/lib/debnas/ops-report"
 readonly OPS_REPORTS_DIR="${OPS_REPORT_DIR}/reports"
+# shellcheck disable=SC2034  # 被 setup.sh/report.sh/security.sh 使用
 readonly OPS_SNAPSHOT_DIR="${OPS_REPORT_DIR}/snapshots"
 readonly OPS_SYSSTAT_HISTORY=400
+# shellcheck disable=SC2034  # 被 services.sh 使用
 readonly OPS_INCLUDE_DOCKER=1
+# shellcheck disable=SC2034  # 被 services.sh 使用
 readonly OPS_INCLUDE_VM=1
+# shellcheck disable=SC2034  # 被 health.sh 使用
 readonly OPS_INCLUDE_SMART=1
-readonly OPS_INCLUDE_SENSORS=1
 readonly OPS_SYSSTAT_DEFAULT="/etc/default/sysstat"
 readonly OPS_SYSSTAT_CONFIG="/etc/sysstat/sysstat"
 readonly OPS_LOGROTATE_CONFIG="/etc/logrotate.d/debnas-ops-report"
@@ -242,7 +247,7 @@ ops_menu() {
           *)   continue ;;
         esac
     }
-    choice=$(cat "$menu_result")
+    choice=$(<"$menu_result")
     rm -f "$menu_result"
     case "$choice" in
       0) ops_setup_and_enable ;;
@@ -255,13 +260,6 @@ ops_menu() {
 }
 
 # ==================== 只读探测契约（docs/ARCHITECTURE.md §4.5） ====================
-
-# root crontab 中模块条目状态：on / off / unknown（非 root 无法读取 root crontab）
-_ops_cron_state() {
-  [[ "${EUID:-1}" -eq 0 ]] || { echo "unknown"; return 0; }
-  command -v crontab >/dev/null 2>&1 || { echo "off"; return 0; }
-  if cron_is_registered "ops-report" 2>/dev/null; then echo "on"; else echo "off"; fi
-}
 
 # 最近一次报告时间（来自 state 的 report_file 文件名；无记录输出空）
 _ops_last_report_time() {
@@ -282,7 +280,7 @@ _ops_sysstat_active() {
 # 当前状态：一行 "状态码|说明"（只读、< 300ms、不联网）
 module_status() {
   local cron enabled=0 last sysstat_desc last_desc
-  cron=$(_ops_cron_state)
+  cron=$(cron_state "ops-report")
   feature_enabled "ops-report" 2>/dev/null && enabled=1
   last=$(_ops_last_report_time)
   last_desc="${last:+最近报告 ${last}}"
@@ -330,7 +328,7 @@ module_plan() {
   local IFS=$' \n\t'
   local -a missing=()
   local cron sadc_opts="" opt need_sysstat=0
-  cron=$(_ops_cron_state)
+  cron=$(cron_state "ops-report")
 
   echo "info|动作范围|交互菜单：启用/禁用定时报告、生成最近 7/30/365 天报告；--yes 生成 7 天报告；cron 模式按周期生成（数据不足自动跳过）"
   command -v sar >/dev/null 2>&1 || missing+=("sysstat")

@@ -12,6 +12,7 @@ print_host_entry() {
 }
 
 # 并行检测线程上限
+# shellcheck disable=SC2034  # 由 connectivity.sh 的 test_ips_concurrently 使用
 readonly CONCURRENT_THREADS=8
 
 # 域名配置文件路径
@@ -42,9 +43,12 @@ load_domains() {
   if [[ -f "${DOMAINS_CONF_FILE}" ]] && [[ -s "${DOMAINS_CONF_FILE}" ]]; then
     # 从配置文件读取（跳过空行和注释行）
     local -a loaded=()
+    local line
     while IFS= read -r line || [[ -n "$line" ]]; do
       [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
-      line=$(printf '%s' "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+      # 去首尾空白（bash 内建，不再每行起 printf|sed）
+      line="${line#"${line%%[![:space:]]*}"}"
+      line="${line%"${line##*[![:space:]]}"}"
       [[ -n "$line" ]] && loaded+=("$line")
     done < "${DOMAINS_CONF_FILE}"
     if [[ ${#loaded[@]} -gt 0 ]]; then
@@ -120,129 +124,61 @@ UNREACHABLE_DOMAINS=0
 RESOLVE_RESULT="unknown"
 
 
+# 按评分降序取前 MAX_IPS_PER_PROTOCOL 个结果
+# 参数：$1 - 协议标签（IPv4/IPv6，日志用），$2 - 域名（日志用，可空），其余 - 检测结果（IP|DNS|https|tcp|ping|延迟）
+# 输出：IP|DNS|检测方法（每行一个）
+_select_top_results() {
+  local label="$1" domain="$2"
+  shift 2
+  local result ip dns https_result tcp_result ping_result ping_delay method count=0
+  local -a sorted=()
+  mapfile -t sorted < <(
+    for result in "$@"; do
+      IFS='|' read -r ip dns https_result tcp_result ping_result ping_delay <<< "$result"
+      echo "$(calculate_ip_score "$https_result" "$tcp_result" "$ping_result" "$ping_delay")|${result}"
+    done | sort -t'|' -k1,1rn | sed 's/^[^|]*|//'
+  )
+  for result in "${sorted[@]}"; do
+    [[ -z "$result" ]] && continue
+    (( count >= MAX_IPS_PER_PROTOCOL )) && break
+    IFS='|' read -r ip dns https_result tcp_result ping_result ping_delay <<< "$result"
+    [[ -n "$ip" ]] || continue
+    method=$(get_detection_method "$https_result" "$tcp_result" "$ping_result")
+    printf '%s\n' "${ip}|${dns}|${method}"
+    ((count++)) || true
+    if [[ $CRON_MODE -eq 0 && -n "$domain" ]]; then
+      echo "  选中 ${label}: $ip (检测方法: $method, 延迟: ${ping_delay:-未知}ms) - $domain" >&2
+    fi
+  done
+}
+
+# 选择最优 IP 地址（按 IP_MODE 决定取哪个协议族，族内按评分取前 MAX_IPS_PER_PROTOCOL 个）
+# 参数：$1 - 检测结果数组引用（格式：IP|DNS|https|tcp|ping|延迟），$2 - 域名（可选，用于日志）
+# 返回：选中的 IP 地址列表（格式：IP|DNS|检测方法，每行一个）
 select_best_ips() {
   local -n results_ref="$1"
   local domain="${2:-}"
-  local -a ipv4_results=()
-  local -a ipv6_results=()
-  local -a selected_ips=()
-  
+  local -a ipv4_results=() ipv6_results=()
+  local result select_ipv4=0 select_ipv6=0
+
   for result in "${results_ref[@]}"; do
     [[ -z "$result" ]] && continue
-    local ip dns https_result tcp_result ping_result ping_delay
-    IFS='|' read -r ip dns https_result tcp_result ping_result ping_delay <<< "$result"
-    local ip_type
-    ip_type=$(get_ip_type "$ip")
-    
-    if [[ "$ip_type" == "ipv4" ]]; then
-      ipv4_results+=("$result")
-    elif [[ "$ip_type" == "ipv6" ]]; then
-      ipv6_results+=("$result")
-    fi
+    case "$(get_ip_type "${result%%|*}")" in
+      ipv4) ipv4_results+=("$result") ;;
+      ipv6) ipv6_results+=("$result") ;;
+    esac
   done
-  
-  local select_ipv4=0
-  local select_ipv6=0
-  
-  if [[ "$IP_MODE" == "True" ]]; then
-    if [[ ${#ipv4_results[@]} -gt 0 ]]; then
-      select_ipv4=1
-    fi
-    if [[ ${#ipv6_results[@]} -gt 0 ]]; then
-      select_ipv6=1
-    fi
-  elif [[ "$IP_MODE" == "IPv4" ]]; then
-    if [[ ${#ipv4_results[@]} -gt 0 ]]; then
-      select_ipv4=1
-    elif [[ ${#ipv6_results[@]} -gt 0 ]]; then
-      select_ipv6=1
-    fi
-  elif [[ "$IP_MODE" == "IPv6" ]]; then
-    if [[ ${#ipv6_results[@]} -gt 0 ]]; then
-      select_ipv6=1
-    elif [[ ${#ipv4_results[@]} -gt 0 ]]; then
-      select_ipv4=1
-    fi
-  else
-    if [[ ${#ipv4_results[@]} -gt 0 ]]; then
-      select_ipv4=1
-    fi
-    if [[ ${#ipv6_results[@]} -gt 0 ]]; then
-      select_ipv6=1
-    fi
-  fi
-  
-  if [[ $select_ipv4 -eq 1 && ${#ipv4_results[@]} -gt 0 ]]; then
-    local -a sorted_ipv4
-    IFS=$'\n' read -d '' -r -a sorted_ipv4 < <(
-      for result in "${ipv4_results[@]}"; do
-        local ip dns https_result tcp_result ping_result ping_delay
-        IFS='|' read -r ip dns https_result tcp_result ping_result ping_delay <<< "$result"
-        local score
-        score=$(calculate_ip_score "$https_result" "$tcp_result" "$ping_result" "$ping_delay")
-        echo "${score}|${result}"
-      done | sort -t'|' -k1,1rn | sed 's/^[^|]*|//'
-    ) || true
-    
-    local count=0
-    for result in "${sorted_ipv4[@]}"; do
-      [[ -z "$result" ]] && continue
-      if [[ $count -ge $MAX_IPS_PER_PROTOCOL ]]; then
-        break
-      fi
-      local ip dns https_result tcp_result ping_result ping_delay
-      IFS='|' read -r ip dns https_result tcp_result ping_result ping_delay <<< "$result"
-      if [[ -n "$ip" && "$ip" != "" ]]; then
-        local method
-        method=$(get_detection_method "$https_result" "$tcp_result" "$ping_result")
-        selected_ips+=("${ip}|${dns}|${method}")
-        ((count++)) || true
 
-        if [[ $CRON_MODE -eq 0 && -n "$domain" ]]; then
-          echo "  选中 IPv4: $ip (检测方法: $method, 延迟: ${ping_delay:-未知}ms) - $domain" >&2
-        fi
-      fi
-    done
-  fi
-
-  if [[ $select_ipv6 -eq 1 && ${#ipv6_results[@]} -gt 0 ]]; then
-    local -a sorted_ipv6
-    IFS=$'\n' read -d '' -r -a sorted_ipv6 < <(
-      for result in "${ipv6_results[@]}"; do
-        local ip dns https_result tcp_result ping_result ping_delay
-        IFS='|' read -r ip dns https_result tcp_result ping_result ping_delay <<< "$result"
-        local score
-        score=$(calculate_ip_score "$https_result" "$tcp_result" "$ping_result" "$ping_delay")
-        echo "${score}|${result}"
-      done | sort -t'|' -k1,1rn | sed 's/^[^|]*|//'
-    ) || true
-
-    local count=0
-    for result in "${sorted_ipv6[@]}"; do
-      [[ -z "$result" ]] && continue
-      if [[ $count -ge $MAX_IPS_PER_PROTOCOL ]]; then
-        break
-      fi
-      local ip dns https_result tcp_result ping_result ping_delay
-      IFS='|' read -r ip dns https_result tcp_result ping_result ping_delay <<< "$result"
-      if [[ -n "$ip" && "$ip" != "" ]]; then
-        local method
-        method=$(get_detection_method "$https_result" "$tcp_result" "$ping_result")
-        selected_ips+=("${ip}|${dns}|${method}")
-        ((count++)) || true
-        
-        if [[ $CRON_MODE -eq 0 && -n "$domain" ]]; then
-          echo "  选中 IPv6: $ip (检测方法: $method, 延迟: ${ping_delay:-未知}ms) - $domain" >&2
-        fi
-      fi
-    done
-  fi
-  
-  printf '%s\n' "${selected_ips[@]}"
+  local n4=${#ipv4_results[@]} n6=${#ipv6_results[@]}
+  case "$IP_MODE" in
+    IPv4) if (( n4 > 0 )); then select_ipv4=1; elif (( n6 > 0 )); then select_ipv6=1; fi ;;
+    IPv6) if (( n6 > 0 )); then select_ipv6=1; elif (( n4 > 0 )); then select_ipv4=1; fi ;;
+    *)    (( n4 > 0 )) && select_ipv4=1; (( n6 > 0 )) && select_ipv6=1 ;;
+  esac
+  if (( select_ipv4 )); then _select_top_results IPv4 "$domain" "${ipv4_results[@]}"; fi
+  if (( select_ipv6 )); then _select_top_results IPv6 "$domain" "${ipv6_results[@]}"; fi
+  return 0
 }
-
-# 解析域名并选择最优 IP 地址
-# 参数：$1 - 域名（格式：域名|组名），$2 - 输出文件路径
 
 # 输出移除 DebNAS 区块并去掉末尾空行后的 hosts 内容（不修改文件本身）
 # 仅删除成对的 START/END 区块；缺少 END 的残缺区块原样保留，避免误删用户条目

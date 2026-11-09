@@ -26,7 +26,7 @@ readonly DEFAULT_QDISC="fq_codel"
 comment_out_sysctl_conf_key() {
   local key="$1"
   local conf="/etc/sysctl.conf"
-  [ -f "$conf" ] || return 0
+  [[ -f "$conf" ]] || return 0
 
   # 按传入的 key 构造正则（转义 .），严格匹配“带等号”的未注释配置行
   local key_re="${key//./\\.}"
@@ -46,24 +46,19 @@ comment_out_sysctl_conf_key() {
   return 0
 }
 
-validate_numeric_input() {
-  local input="$1"
-  [[ "$input" =~ ^[0-9]+$ ]]
-}
-
 check_current_algo() {
   local current_algo supported_algos current_qdisc
-  current_algo=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo "未知")
+  current_algo=$(sysctl -n "$SYSCONF_KEY" 2>/dev/null || echo "未知")
   supported_algos=$(sysctl -n net.ipv4.tcp_available_congestion_control 2>/dev/null || echo "未知")
-  current_qdisc=$(sysctl -n net.core.default_qdisc 2>/dev/null || echo "未知")
+  current_qdisc=$(sysctl -n "$SYSCONF_QDISC_KEY" 2>/dev/null || echo "未知")
   log_info "当前: $current_algo"
   log_info "可用: $supported_algos"
   log_info "当前队列规则：$current_qdisc"
 }
 
 load_bbr_module() {
-  # 模块已加载
-  if lsmod | awk '{print $1}' | grep -qx "$BBR_MODULE"; then
+  # 模块已加载（awk 读完全部输入再判断，避免 grep -q 提前退出让 lsmod 收到 SIGPIPE）
+  if lsmod 2>/dev/null | awk -v m="$BBR_MODULE" '$1 == m { f = 1 } END { exit !f }'; then
     log_success "BBR 模块已加载"
     return 0
   fi
@@ -83,8 +78,8 @@ load_bbr_module() {
 temp_enable_bbr() {
   log_info "临时启用 BBR..."
   if ! load_bbr_module; then return 1; fi
-  if sysctl -w net.ipv4.tcp_congestion_control="$BBR_ALGO" >/dev/null 2>&1 && \
-     sysctl -w net.core.default_qdisc="$QDISC_FQ" >/dev/null 2>&1; then
+  if sysctl -w "${SYSCONF_KEY}"="$BBR_ALGO" >/dev/null 2>&1 && \
+     sysctl -w "${SYSCONF_QDISC_KEY}"="$QDISC_FQ" >/dev/null 2>&1; then
     log_success "BBR (临时)"
   else
     log_error "BBR 失败"
@@ -95,12 +90,12 @@ temp_enable_bbr() {
 perm_enable_bbr() {
   log_info "永久启用 BBR..."
   if ! load_bbr_module; then return 1; fi
-  if ! sysctl -w net.ipv4.tcp_congestion_control="$BBR_ALGO" >/dev/null 2>&1; then
+  if ! sysctl -w "${SYSCONF_KEY}"="$BBR_ALGO" >/dev/null 2>&1; then
     log_error "BBR 失败"
     return 1
   fi
   # 同步设置队列规则为 fq
-  sysctl -w net.core.default_qdisc="$QDISC_FQ" >/dev/null 2>&1 || true
+  sysctl -w "${SYSCONF_QDISC_KEY}"="$QDISC_FQ" >/dev/null 2>&1 || true
   # 注释掉 /etc/sysctl.conf 中的同名键，避免重复配置
   comment_out_sysctl_conf_key "$SYSCONF_KEY" || true
   comment_out_sysctl_conf_key "$SYSCONF_QDISC_KEY" || true
@@ -116,8 +111,8 @@ perm_enable_bbr() {
 
 temp_disable_bbr() {
   log_info "临时关闭 BBR..."
-  if sysctl -w net.ipv4.tcp_congestion_control="$DEFAULT_ALGO" >/dev/null 2>&1 && \
-     sysctl -w net.core.default_qdisc="$DEFAULT_QDISC" >/dev/null 2>&1; then
+  if sysctl -w "${SYSCONF_KEY}"="$DEFAULT_ALGO" >/dev/null 2>&1 && \
+     sysctl -w "${SYSCONF_QDISC_KEY}"="$DEFAULT_QDISC" >/dev/null 2>&1; then
     log_success "${DEFAULT_ALGO} 已启用"
   else
     log_error "算法切换失败，请检查系统权限。"
@@ -127,12 +122,12 @@ temp_disable_bbr() {
 
 perm_disable_bbr() {
   log_info "永久关闭 BBR..."
-  if ! sysctl -w net.ipv4.tcp_congestion_control="$DEFAULT_ALGO" >/dev/null 2>&1; then
+  if ! sysctl -w "${SYSCONF_KEY}"="$DEFAULT_ALGO" >/dev/null 2>&1; then
     log_error "算法切换失败，请检查系统权限。"
     return 1
   fi
   # 恢复默认队列规则
-  sysctl -w net.core.default_qdisc="$DEFAULT_QDISC" >/dev/null 2>&1 || true
+  sysctl -w "${SYSCONF_QDISC_KEY}"="$DEFAULT_QDISC" >/dev/null 2>&1 || true
   # 注释掉 /etc/sysctl.conf 中的同名键，避免旧方式残留导致关闭不彻底
   comment_out_sysctl_conf_key "$SYSCONF_KEY" || true
   comment_out_sysctl_conf_key "$SYSCONF_QDISC_KEY" || true
@@ -251,17 +246,13 @@ main() {
   fi
 
   local -a items=("临时启用 BBR" "永久启用 BBR" "临时停用 BBR" "永久停用 BBR" "查看 BBR 状态")
-  local choice exit_code menu_result
+  local choice menu_result
   while true; do
     menu_result=$(mktemp)
+    # ui_menu 非零（254 Esc / 255 Q 等）均退出模块
     UI_MENU_BLANK_BEFORE=1 UI_MENU_RESULT_FILE="$menu_result" ui_menu "配置 BBR 加速" "${items[@]}" || {
-      exit_code=$?
       rm -f "$menu_result"
-      case $exit_code in
-        254) return 0 ;;   # Esc：退出模块
-        255) return 0 ;;   # Q：退出模块
-        *)   return 0 ;;
-      esac
+      return 0
     }
     choice=$(cat "$menu_result")
     rm -f "$menu_result"

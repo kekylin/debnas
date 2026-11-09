@@ -407,8 +407,9 @@ installer_deploy() {
     if ! cp -R -- "${src_dir}/${d}" "${install_dir}/.${d}.new"; then
       log_error "复制失败：${d}"
       rm -rf -- "${install_dir}/.${d}.new"
-      for d in "${staged[@]+"${staged[@]}"}"; do
-        rm -rf -- "${install_dir}/.${d}.new"
+      local s
+      for s in "${staged[@]+"${staged[@]}"}"; do
+        rm -rf -- "${install_dir}/.${s}.new"
       done
       return 1
     fi

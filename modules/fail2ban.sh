@@ -33,6 +33,7 @@ configure_email() {
   local email_file="/etc/email-addresses"
   local default_recipient="root@local-system"
   local default_sender="root@system-hostname"
+  local dest_email sender_email
 
   # 通知收件邮箱：/etc/debnas/notify_email（旧位置 /etc/exim4/notify_email 回退），见 lib/system/layout.sh
   if ! dest_email=$(notify_email_get); then
@@ -41,7 +42,7 @@ configure_email() {
   fi
 
   if [[ -r "$email_file" ]]; then
-    sender_email=$(sed -n 's/^root:[[:space:]]*\(.*\)/\1/p' < "$email_file" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+    sender_email=$(sed -n '/^root:/{s/^root:[[:space:]]*//; s/[[:space:]]*$//; p}' "$email_file")
     [[ -z "$sender_email" ]] && sender_email="$default_sender"
   else
     sender_email="$default_sender"
@@ -56,25 +57,6 @@ configure_email() {
 
 # jail.local 由 DebNAS 管理的标识（首行）；无此标识且非旧版 DebNAS 生成的文件视为用户自定义，不覆盖
 readonly JAIL_LOCAL_MARKER="# DebNAS managed: 本文件由 DebNAS 生成，自定义配置请放 /etc/fail2ban/jail.d/*.local"
-
-# 检测 sshd 实际监听端口（逗号分隔）；自定义 SSH 端口时 port=ssh 只封 22，封禁形同虚设
-get_sshd_ports_csv() {
-  local ports="" cfg
-  local -a cfgs=()
-  if command -v sshd &>/dev/null; then
-    ports=$(sshd -T 2>/dev/null | awk '$1 == "port" && $2 ~ /^[0-9]+$/ {print $2}') || ports=""
-  fi
-  if [[ -z "$ports" ]]; then
-    for cfg in /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf; do
-      [[ -f "$cfg" ]] && cfgs+=("$cfg")
-    done
-    if [[ ${#cfgs[@]} -gt 0 ]]; then
-      ports=$(awk 'tolower($1) == "port" && $2 ~ /^[0-9]+$/ {print $2}' "${cfgs[@]}" 2>/dev/null) || ports=""
-    fi
-  fi
-  [[ -z "$ports" ]] && ports="22"
-  printf '%s\n' "$ports" | awk 'NF' | sort -un | paste -sd, -
-}
 
 # 本机直连的私有网段（RFC1918），加入 ignoreip 防止管理员在局域网内被误封
 # 排除 Docker 网桥（docker0 / br-xxxx），容器网段不应免封
@@ -91,8 +73,8 @@ get_local_private_subnets() {
 jail_local_is_managed() {
   local config_file="$1"
   [[ ! -e "$config_file" ]] && return 0
-  local first_line
-  first_line=$(head -n 1 "$config_file" 2>/dev/null) || first_line=""
+  local first_line=""
+  IFS= read -r first_line 2>/dev/null < "$config_file" || true
   [[ "$first_line" == "$JAIL_LOCAL_MARKER" ]] && return 0
   grep -qF '# 忽略本机流量，防止自身被封禁' "$config_file" 2>/dev/null \
     && grep -qF '# 使用 firewallcmd-ipset 作为封禁后端（适配 firewalld）' "$config_file" 2>/dev/null
@@ -107,7 +89,8 @@ configure_jail_local() {
   fi
 
   local ssh_ports lan_subnets
-  ssh_ports=$(get_sshd_ports_csv)
+  # 自定义 SSH 端口时 port=ssh 只封 22，封禁形同虚设；--no-session：只取 sshd 配置的端口
+  ssh_ports=$(sshd_listen_ports_csv --no-session)
   lan_subnets=$(get_local_private_subnets)
   log_info "SSH 封禁端口：${ssh_ports}"
   if [[ -n "$lan_subnets" ]]; then
@@ -216,10 +199,6 @@ start_fail2ban() {
 
 # ==================== 只读探测契约（docs/ARCHITECTURE.md §4.5） ====================
 
-_f2b_pkg_installed() {
-  [[ "$(dpkg-query -W -f='${db:Status-Status}' "$1" 2>/dev/null)" == "installed" ]]
-}
-
 # 列出运行中的 jail（逗号分隔）；需要 root（fail2ban 控制套接字仅 root 可写）
 # 返回：0 成功（stdout 为 jail 列表，可能为空），1 无权限/查询失败
 _f2b_running_jails() {
@@ -233,11 +212,11 @@ _f2b_running_jails() {
 
 # 当前状态：一行 "状态码|说明"
 module_status() {
-  if ! _f2b_pkg_installed fail2ban; then
+  if ! pkg_is_installed fail2ban; then
     echo "absent|未安装 fail2ban"
     return 0
   fi
-  if ! systemctl is-active --quiet fail2ban 2>/dev/null; then
+  if ! service_is_active fail2ban; then
     echo "warn|已安装但 fail2ban 未运行"
     return 0
   fi
@@ -253,7 +232,9 @@ module_status() {
     return 0
   fi
   # 非 root：读不到控制套接字，退回配置文件判断
-  if [[ -r /etc/fail2ban/jail.local ]] && head -n 1 /etc/fail2ban/jail.local 2>/dev/null | grep -qF "$JAIL_LOCAL_MARKER"; then
+  local first_line=""
+  [[ -r /etc/fail2ban/jail.local ]] && { IFS= read -r first_line < /etc/fail2ban/jail.local || true; }
+  if [[ "$first_line" == *"$JAIL_LOCAL_MARKER"* ]]; then
     echo "running|运行中 · DebNAS jail.local 已写入（jail 运行详情需 root 查看）"
   else
     echo "running|运行中（jail 详情需 root 查看）"
@@ -266,14 +247,14 @@ module_plan() {
   local jail_local="/etc/fail2ban/jail.local"
   local defaults="/etc/fail2ban/jail.d/defaults-debian.conf"
 
-  if _f2b_pkg_installed fail2ban; then
+  if pkg_is_installed fail2ban; then
     echo "info|fail2ban|已安装，跳过安装"
   else
     echo "pkg|fail2ban|apt 安装"
   fi
 
   if jail_local_is_managed "$jail_local"; then
-    echo "write|${jail_local}|DebNAS 默认规则（sshd 端口 $(get_sshd_ports_csv)，封禁 1h/5 次/1d，firewallcmd-ipset）；内容未变则跳过，旧文件备份到 /var/backups/debnas/"
+    echo "write|${jail_local}|DebNAS 默认规则（sshd 端口 $(sshd_listen_ports_csv --no-session)，封禁 1h/5 次/1d，firewallcmd-ipset）；内容未变则跳过，旧文件备份到 /var/backups/debnas/"
   else
     echo "info|${jail_local}|检测到用户自定义文件，保留不覆盖"
   fi
@@ -285,8 +266,8 @@ module_plan() {
     echo "write|${defaults}|追加 [pam-generic] enabled = true（Cockpit 登录防护；直接追加，不另做备份）"
   fi
 
-  if ! systemctl is-active --quiet firewalld 2>/dev/null; then
-    if _f2b_pkg_installed firewalld; then
+  if ! service_is_active firewalld; then
+    if pkg_is_installed firewalld; then
       echo "service|firewalld|启动（firewallcmd-ipset 封禁后端需要）"
     else
       echo "risk|firewalld|未安装 firewalld，封禁后端不可用，启动步骤会失败；请先执行 firewall 模块"

@@ -72,7 +72,7 @@ module_status() {
 module_plan() {
   local pam="$DEBNAS_PAM_SESSION_FILE" script="$DEBNAS_LOGIN_NOTIFY_SCRIPT"
   local legacy="$DEBNAS_LEGACY_LOGIN_NOTIFY_SCRIPT" script_dir
-  script_dir=$(dirname -- "$script")
+  script_dir="${script%/*}"
 
   echo "info|动作范围|交互菜单：启用 / 禁用登录邮件通知（cron 模式不适用）"
   command -v exim4 >/dev/null 2>&1 \
@@ -118,7 +118,7 @@ main() {
         *)   continue ;;
       esac
     }
-    choice=$(cat "$menu_result")
+    choice=$(<"$menu_result")
     rm -f "$menu_result"
     case "$choice" in
       0) enable_login_mail ;;

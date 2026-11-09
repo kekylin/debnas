@@ -209,7 +209,7 @@ do_uninstall() {
   # 移除 cron 定时任务
   local current_crontab
   current_crontab=$(crontab -l 2>/dev/null || true)
-  if echo "$current_crontab" | grep -q "DEBNAS-CRON" 2>/dev/null; then
+  if [[ "$current_crontab" == *DEBNAS-CRON* ]]; then
     echo "$current_crontab" | grep -v "DEBNAS-CRON" | crontab - 2>/dev/null || crontab -r 2>/dev/null || true
     _info "定时任务已清理"
   fi

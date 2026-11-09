@@ -142,7 +142,10 @@ check_debnas_status() {
   done < <(state_list_installed)
   printf "  %-20s %s 个\n" "模块:" "$installed_count"
   if [[ ${#installed_modules[@]} -gt 0 ]]; then
-    printf "  %-20s %s\n" "" "$(IFS=', '; echo "${installed_modules[*]}")"
+    # IFS=', ' 时 "${arr[*]}" 只用首字符 "," 连接，改为显式拼接 ", "
+    local mod_list
+    printf -v mod_list '%s, ' "${installed_modules[@]}"
+    printf "  %-20s %s\n" "" "${mod_list%, }"
   fi
 
   # Cron 任务

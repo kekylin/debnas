@@ -51,7 +51,6 @@ declare -g _UI_CURSOR_SAVED=0
 # SIGWINCH 处理（Phase 4.1）
 # ═══════════════════════════════════════════════════════════════
 
-_UI_LAST_FOOTER=""
 _UI_NEEDS_REDRAW=0
 
 ui_handle_resize() {
@@ -115,9 +114,6 @@ ui_clear_menu_area() {
 # 【进入菜单时】检测终端、注册信号、渲染 Header 并隐藏光标
 # 调用时机：每次进入/返回菜单时调用（含同级返回、跨级切换）
 ui_screen_init() {
-  local footer_text="${1:-}"
-  _UI_LAST_FOOTER="$footer_text"
-
   # 模块输出后旧保存位置已失效，以当前光标位置为基准重绘
   _UI_CURSOR_SAVED=0
 
@@ -152,8 +148,13 @@ _ui_register_cursor_trap() {
   if [[ -z "$current" ]]; then
     trap 'cursor_show 2>/dev/null || printf "\033[?25h"; stty echo 2>/dev/null || true' EXIT
   else
-    local existing_cmd
-    existing_cmd=$(echo "$current" | sed -n "s/^trap -- '\\(.*\\)' EXIT$/\\1/p")
+    local existing_cmd=""
+    # trap -p 输出形如 trap -- '命令' EXIT（命令内的单引号转义为 '\''）；多行命令同样适用
+    if [[ "$current" == "trap -- '"*"' EXIT" ]]; then
+      existing_cmd="${current#"trap -- '"}"
+      existing_cmd="${existing_cmd%"' EXIT"}"
+      existing_cmd="${existing_cmd//"'\\''"/"'"}"
+    fi
     if [[ -n "$existing_cmd" ]]; then
       # 原有 trap（如 _debnas_cleanup_on_exit）放在最前：它通过 $? 判断退出码，
       # 若先执行 cursor_show/stty，$? 会被覆盖为 0，异常退出将不再被识别

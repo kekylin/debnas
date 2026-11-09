@@ -5,80 +5,18 @@ set -euo pipefail
 IFS=$'\n\t'
 
 # ==================== 工具函数 ====================
+# 查询结果先取进变量再匹配：管道里 grep -q 提前退出会让 firewall-cmd 收到 SIGPIPE，pipefail 下误判为不存在
 check_ipset_exists() {
-  local ipset_name="$1"
-  firewall-cmd --permanent --get-ipsets | grep -qw "${ipset_name}"
+  local ipset_name="$1" out
+  out=$(firewall-cmd --permanent --get-ipsets) || return 1
+  grep -qw "${ipset_name}" <<< "${out}"
 }
 
 check_ipset_bound() {
-  local ipset_name="$1" zone="$2"
-  firewall-cmd --permanent --zone="${zone}" --list-sources \
-    | grep -qw "ipset:${ipset_name}"
+  local ipset_name="$1" zone="$2" out
+  out=$(firewall-cmd --permanent --zone="${zone}" --list-sources) || return 1
+  grep -qw "ipset:${ipset_name}" <<< "${out}"
 }
-
-# 使用 sipcalc 验证 IPv4 地址（支持 CIDR 格式）
-validate_ipv4() {
-  local ip=$1 sipcalc_output
-  if [[ ! "${ip}" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){0,3}(/[0-9]{1,2})?$ ]]; then
-    return 1
-  fi
-  if sipcalc_output=$(sipcalc "${ip}" 2>/dev/null); then
-    if printf "%s" "${sipcalc_output}" | grep -qiE "^\\-\\[ipv4\\s*:"; then
-      return 0
-    fi
-  fi
-  return 1
-}
-
-# 使用 sipcalc 验证 IPv6 地址（支持 CIDR 格式）
-validate_ipv6() {
-  local ip=$1 sipcalc_output
-  if [[ ! "${ip}" =~ ^[0-9a-fA-F:]+(/[0-9]{1,3})?$ ]]; then
-    return 1
-  fi
-  if sipcalc_output=$(sipcalc "${ip}" 2>/dev/null); then
-    if printf "%s" "${sipcalc_output}" | grep -qiE "^\\-\\[ipv6\\s*:"; then
-      return 0
-    fi
-  fi
-  return 1
-}
-
-# 使用 sipcalc 验证 IP 地址并返回类型（输出 "ipv4" 或 "ipv6"）
-validate_ip() {
-  local ip=$1 sipcalc_output
-  if sipcalc_output=$(sipcalc "${ip}" 2>/dev/null); then
-    if printf "%s" "${sipcalc_output}" | grep -qiE "^\\-\\[ipv4\\s*:"; then
-      printf "ipv4"
-      return 0
-    elif printf "%s" "${sipcalc_output}" | grep -qiE "^\\-\\[ipv6\\s*:"; then
-      printf "ipv6"
-      return 0
-    fi
-  fi
-  return 1
-}
-
-# 验证 IPv4 CIDR 格式并提取前缀和掩码（输出 "前缀 掩码"）
-validate_cidr_ipv4() {
-  local input=$1 prefix mask sipcalc_output
-  if [[ ! ${input} =~ ^([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3})/([0-9]{1,2})$ ]]; then
-    return 1
-  fi
-  prefix=${BASH_REMATCH[1]}
-  mask=${BASH_REMATCH[2]}
-  if [[ ! ${mask} =~ ^[0-9]+$ ]] || [[ ${mask} -gt 32 ]] || [[ ${mask} -lt 0 ]]; then
-    return 1
-  fi
-  if sipcalc_output=$(sipcalc "${input}" 2>/dev/null); then
-    if printf "%s" "${sipcalc_output}" | grep -qiE "^\\-\\[ipv4\\s*:"; then
-      printf "%s %s" "${prefix}" "${mask}"
-      return 0
-    fi
-  fi
-  return 1
-}
-
 
 # ==================== 通用 IPSet 操作模块 ====================
 # 配置单个 IPSet：创建并绑定到区域
@@ -127,7 +65,9 @@ configure_ipset() {
 }
 
 validate_zone() {
-  if ! firewall-cmd --get-zones | grep -qw "${ZONE}"; then
+  local zones
+  zones=$(firewall-cmd --get-zones) || zones=""
+  if ! grep -qw "${ZONE}" <<< "${zones}"; then
     log_error "无效 Firewalld 区域：${ZONE}"
     exit "${ERROR_GENERAL}"
   fi

@@ -20,18 +20,14 @@ DOCKER_MIRRORS=("${DOCKER_REGISTRY_MIRRORS[@]}")
 
 DAEMON_JSON="/etc/docker/daemon.json"
 
-# 将 Bash 数组转换为 JSON 数组字符串
+# 将 Bash 数组转换为 JSON 数组字符串（元素为镜像地址常量，不含引号/反斜杠）
 array_to_json_array() {
-  local arr=("$@")
-  local json_array="[\n"
-  local len=${#arr[@]}
-  for ((i = 0; i < len; i++)); do
-    json_array+="    \"${arr[i]}\""
-    [[ $i -lt $((len - 1)) ]] && json_array+=","
-    json_array+="\n"
+  local out="[" sep="" m
+  for m in "$@"; do
+    out+="${sep}"$'\n'"    \"${m}\""
+    sep=","
   done
-  json_array+="  ]"
-  echo -e "$json_array"
+  printf '%s\n  ]\n' "$out"
 }
 
 # 合并并去重 registry-mirrors，优先保留已有配置，返回最终 JSON 内容
@@ -90,16 +86,20 @@ _dm_json_valid() {
 
 # DebNAS 加速源中尚未配置的（每行一个）
 _dm_missing_mirrors() {
-  local configured m
-  configured=$(_dm_configured_mirrors)
+  local m
+  local -A have=()
+  while IFS= read -r m; do
+    [[ -n "$m" ]] && have[$m]=1
+  done < <(_dm_configured_mirrors)
   for m in "${DOCKER_MIRRORS[@]}"; do
-    grep -qxF -- "$m" <<< "$configured" || printf '%s\n' "$m"
+    [[ -n "${have[$m]:-}" ]] || printf '%s\n' "$m"
   done
 }
 
 # 当前状态：一行 "状态码|说明"
 module_status() {
-  local configured missing n_all=0 n_missing=0 total=${#DOCKER_MIRRORS[@]}
+  local n_all=0 n_missing=0 total=${#DOCKER_MIRRORS[@]}
+  local -a configured=() missing=()
   if ! command -v docker >/dev/null 2>&1; then
     echo "absent|未安装 Docker"
     return 0
@@ -116,10 +116,10 @@ module_status() {
     echo "error|${DAEMON_JSON} 不是合法 JSON 对象，执行时会跳过"
     return 0
   fi
-  configured=$(_dm_configured_mirrors)
-  [[ -n "$configured" ]] && n_all=$(grep -c . <<< "$configured")
-  missing=$(_dm_missing_mirrors)
-  [[ -n "$missing" ]] && n_missing=$(grep -c . <<< "$missing")
+  mapfile -t configured < <(_dm_configured_mirrors | grep .)
+  mapfile -t missing < <(_dm_missing_mirrors)
+  n_all=${#configured[@]}
+  n_missing=${#missing[@]}
   if [[ $n_all -eq 0 ]]; then
     echo "absent|daemon.json 未含 registry-mirrors"
   elif [[ $n_missing -eq 0 ]]; then
@@ -132,7 +132,7 @@ module_status() {
 # 预演：每行 "类型|目标|备注"
 module_plan() {
   local IFS=$' \n\t'
-  local missing
+  local -a missing=()
   if ! command -v docker >/dev/null 2>&1; then
     echo "info|docker|未安装 Docker，执行时会直接失败（请先运行 docker-ce 模块）"
     return 0
@@ -147,12 +147,12 @@ module_plan() {
     return 0
   else
     command -v jq >/dev/null 2>&1 || echo "pkg|jq|合并已有 daemon.json 需要"
-    missing=$(_dm_missing_mirrors)
-    if [[ -z "$missing" ]]; then
+    mapfile -t missing < <(_dm_missing_mirrors)
+    if [[ ${#missing[@]} -eq 0 ]]; then
       echo "info|${DAEMON_JSON}|DebNAS 加速源均已配置，不改动、不重启 Docker"
       return 0
     fi
-    echo "write|${DAEMON_JSON}|jq 合并追加 $(tr '\n' ' ' <<< "$missing" | sed 's/ $//')（保留已有镜像与其他键）；旧文件备份到 /var/backups/debnas/"
+    echo "write|${DAEMON_JSON}|jq 合并追加 ${missing[*]}（保留已有镜像与其他键）；旧文件备份到 /var/backups/debnas/"
   fi
   echo "service|docker|配置变化时重启 Docker"
   echo "risk|Docker 重启|运行中的容器会被停止，按各自 restart 策略恢复"
@@ -161,34 +161,37 @@ module_plan() {
 }
 
 main() {
-source "${SCRIPT_DIR}/lib/system/state.sh"
+  # 检查依赖，确保 Docker 已安装
+  if ! check_dependencies docker; then
+    log_error "依赖缺失，请先安装 Docker。"
+    exit "${ERROR_DEPENDENCY}"
+  fi
 
-# 检查依赖，确保 Docker 已安装
-REQUIRED_CMDS=(docker)
-if ! check_dependencies "${REQUIRED_CMDS[@]}"; then
-  log_error "依赖缺失，请先安装 Docker。"
-  exit "${ERROR_DEPENDENCY}"
-fi
-
-# 主流程：构建配置、智能写入、按需重启
-log_warning "镜像加速地址为第三方服务（$(printf "%s " "${DOCKER_MIRRORS[@]}")），拉取的镜像内容由其提供，请按需评估"
-if ! new_content=$(build_merged_daemon_json "${DOCKER_MIRRORS[@]}"); then
-  exit "${ERROR_GENERAL}"
-fi
-
-# daemon.json 变更只需重启 docker，无需 systemctl daemon-reload（未修改 unit 文件）
-if write_file_if_changed "$DAEMON_JSON" "$new_content"; then
-  log_info "重启 Docker 服务以应用配置..."
-  if ! service_ensure docker restarted; then
-    log_error "重启 Docker 服务失败，请检查 systemctl 状态或日志。"
+  # 主流程：构建配置、智能写入、按需重启
+  local IFS=$' \n\t'
+  log_warning "镜像加速地址为第三方服务（${DOCKER_MIRRORS[*]}），拉取的镜像内容由其提供，请按需评估"
+  local new_content rc=0
+  if ! new_content=$(build_merged_daemon_json "${DOCKER_MIRRORS[@]}"); then
     exit "${ERROR_GENERAL}"
   fi
-  log_success "镜像加速 就绪"
-else
-  log_info "镜像加速配置未变"
-fi
 
-
+  # daemon.json 变更只需重启 docker，无需 systemctl daemon-reload（未修改 unit 文件）
+  write_file_if_changed "$DAEMON_JSON" "$new_content" || rc=$?
+  case "$rc" in
+    0)
+      log_info "重启 Docker 服务以应用配置..."
+      if ! service_ensure docker restarted; then
+        log_error "重启 Docker 服务失败，请检查 systemctl 状态或日志。"
+        exit "${ERROR_GENERAL}"
+      fi
+      log_success "镜像加速 就绪"
+      ;;
+    1) log_info "镜像加速配置未变" ;;
+    *)
+      log_error "写入 ${DAEMON_JSON} 失败"
+      exit "${ERROR_GENERAL}"
+      ;;
+  esac
 }
 
 # 契约守卫：DEBNAS_MODULE_ACTION=status|plan 时只加载函数供只读探测，不执行 main（docs/ARCHITECTURE.md §4.5）

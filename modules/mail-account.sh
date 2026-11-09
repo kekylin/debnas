@@ -56,8 +56,7 @@ _mail_current_smarthost() {
 
 # exim4 是否已安装（命令或包）
 _mail_exim_installed() {
-  command -v exim4 >/dev/null 2>&1 && return 0
-  [[ "$(dpkg-query -W -f='${db:Status-Status}' exim4-base 2>/dev/null)" == "installed" ]]
+  command -v exim4 >/dev/null 2>&1 || pkg_is_installed exim4-base
 }
 
 # 当前状态：一行 "状态码|说明"（只读、< 300ms、不联网）
@@ -135,9 +134,7 @@ main() {
   fi
   # 检测当前系统上的实际邮件配置（基于系统文件，非 DebNAS 内部状态标记）
   local current_smarthost="" current_sender="" current_notify=""
-  if [[ -f /etc/exim4/update-exim4.conf.conf ]]; then
-    current_smarthost=$(grep -oP "dc_smarthost='\K[^']*" /etc/exim4/update-exim4.conf.conf 2>/dev/null || true)
-  fi
+  current_smarthost=$(_mail_current_smarthost)
   if [[ -f /etc/email-addresses ]]; then
     current_sender=$(awk '{print $2}' /etc/email-addresses 2>/dev/null || true)
   fi
@@ -182,16 +179,32 @@ declare -A SMTP_MAP=(
   ["yahoo.com"]="smtp.mail.yahoo.com:587"
 )
 
-# 用户输入提示
-prompt_message() {
-  printf '%b\n' "$1"
+# 交互读取一项必填输入：空值或校验失败时重试，最多 5 次，用尽（含输入流结束）退出
+# 参数：$1 - 结果变量名；$2 - 项目名称；$3 - 提示；$4 - 输入模式（hidden 或空）
+#       $5 - 校验函数（可选，参数为输入值）；$6 - 校验失败提示
+_mail_ask() {
+  local -n _mail_ask_out="$1"
+  local label="$2" prompt="$3" mode="${4:-}" validator="${5:-}" invalid_msg="${6:-}" attempt value
+  for ((attempt = 1; attempt <= 5; attempt++)); do
+    value=$(ui_input "$prompt" "" "$mode")
+    if [[ -z "$value" ]]; then
+      log_error "${label}不能为空"
+      continue
+    fi
+    if [[ -z "$validator" ]] || "$validator" "$value" >/dev/null; then
+      _mail_ask_out="$value"
+      return 0
+    fi
+    log_error "$invalid_msg"
+  done
+  log_error "${label}输入无效次数过多或输入流已结束"
+  exit "${ERROR_GENERAL}"
 }
 
-# 安全文件写入（避免内容出现在进程参数列表中）
-safe_write() {
-  local file="$1" content="$2"
-  printf '%s\n' "$content" > "$file" || { log_error "写入文件 $file 失败。"; return 1; }
-  return 0
+# 校验通知邮箱格式
+_mail_valid_notify_email() {
+  local notify_email="$1"
+  [[ "$notify_email" =~ ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]
 }
 
 # 验证发件邮箱格式与域名匹配（支持 SMTP_MAP 中所有域名）
@@ -307,9 +320,10 @@ restart_exim_service() {
 send_validation_email() {
   local notify_email="$1" sender_email="$2" smtp_server="$3"
   local os_name version_id codename sys_desc
-  os_name="$(awk -F= '/^ID=/ {print $2}' /etc/os-release | sed 's/"//g' | { read name; echo "${name^}"; })"
-  version_id="$(awk -F= '/^VERSION_ID=/ {print $2}' /etc/os-release | sed 's/"//g')"
-  codename="$(awk -F= '/^VERSION_CODENAME=/ {print $2}' /etc/os-release | sed 's/"//g')"
+  os_name=$(_get_os_id 2>/dev/null) || os_name=""
+  os_name="${os_name^}"
+  version_id=$(_get_os_version_id 2>/dev/null) || version_id=""
+  codename=$(get_system_codename 2>/dev/null) || codename=""
   if [[ "$os_name" == "Debian" ]]; then
     if [[ -n "$codename" ]]; then
       sys_desc="Debian ${version_id} (${codename})"
@@ -351,63 +365,12 @@ EOF
 # 主控制流程
 log_info "配置邮件服务..."
 
-# 读取发件邮箱
-email_domain=""
-smarthost=""
-input_attempt=0
-while true; do
-  ((input_attempt++)) || true
-  if [[ $input_attempt -gt 5 ]]; then
-    log_error "发件邮箱输入无效次数过多或输入流已结束"
-    exit "${ERROR_GENERAL}"
-  fi
-  email=$(ui_input "请输入 SMTP 发件邮箱地址")
-  if [[ -z "$email" ]]; then
-    log_error "发件邮箱不能为空"
-    continue
-  fi
-  smarthost=$(validate_sender_email "$email") || true
-  if [[ -n "$smarthost" ]]; then
-    email_domain="${email##*@}"
-    break
-  fi
-  log_error "邮箱域名不支持"
-done
-
-# 读取授权密码
-input_attempt=0
-while true; do
-  ((input_attempt++)) || true
-  if [[ $input_attempt -gt 5 ]]; then
-    log_error "授权密码输入无效次数过多或输入流已结束"
-    exit "${ERROR_GENERAL}"
-  fi
-  password=$(ui_input "请输入 SMTP 服务授权密码" "" "hidden")
-  if [[ -z "$password" ]]; then
-    log_error "授权密码不能为空"
-    continue
-  fi
-  break
-done
-
-# 读取通知接收邮箱
-input_attempt=0
-while true; do
-  ((input_attempt++)) || true
-  if [[ $input_attempt -gt 5 ]]; then
-    log_error "通知邮箱输入无效次数过多或输入流已结束"
-    exit "${ERROR_GENERAL}"
-  fi
-  notify_email=$(ui_input "请输入系统通知接收邮箱地址")
-  if [[ -z "$notify_email" ]]; then
-    log_error "通知邮箱不能为空"
-    continue
-  fi
-  if [[ "$notify_email" =~ ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
-    break
-  fi
-  log_error "邮箱格式无效"
-done
+local email password notify_email smarthost email_domain
+_mail_ask email "发件邮箱" "请输入 SMTP 发件邮箱地址" "" validate_sender_email "邮箱域名不支持"
+smarthost=$(validate_sender_email "$email")
+email_domain="${email##*@}"
+_mail_ask password "授权密码" "请输入 SMTP 服务授权密码" "hidden"
+_mail_ask notify_email "通知邮箱" "请输入系统通知接收邮箱地址" "" _mail_valid_notify_email "邮箱格式无效"
 
 generate_exim_config "$email_domain" "$smarthost"
 configure_smtp_auth "$email_domain" "$email" "$password" "$notify_email"

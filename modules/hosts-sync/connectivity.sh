@@ -43,27 +43,17 @@ test_tcp_connectivity() {
 # 参数：$1 - ping 输出文本
 # 返回：延迟值（毫秒，整数），失败返回空字符串
 parse_ping_delay() {
-  local ping_output="$1"
-  local delay=""
-  
+  local ping_output="$1" delay=""
+
   if [[ -z "$ping_output" ]]; then
     echo ""
     return 1
   fi
-  
-  if command -v grep >/dev/null 2>&1 && grep -oP 'time=\K[0-9.]+' <<< "$ping_output" >/dev/null 2>&1; then
-    delay=$(grep -oP 'time=\K[0-9.]+' <<< "$ping_output" | head -1)
+  # 取第一个 time=<毫秒>，四舍五入为整数（LC_ALL=C 保证小数点按 "." 解析）
+  if [[ "$ping_output" =~ time=([0-9.]+) ]]; then
+    LC_ALL=C printf -v delay '%.0f' "${BASH_REMATCH[1]}" 2>/dev/null || delay=""
   fi
-  
-  if [[ -z "$delay" ]] && command -v awk >/dev/null 2>&1; then
-    delay=$(awk -F'=' '/time=/{print $NF}' <<< "$ping_output" | awk '{print $1}' | head -1)
-  fi
-  
-  if [[ -n "$delay" ]] && command -v awk >/dev/null 2>&1; then
-    delay=$(awk "BEGIN {printf \"%.0f\", $delay}")
-  fi
-  
-  echo "${delay:-}"
+  echo "${delay}"
 }
 
 # Ping 连通性检测并返回延迟值
@@ -142,107 +132,43 @@ test_ip_connectivity() {
   return 1
 }
 
-# 并发检测 IP 地址连通性
-# 参数：$1 - IP 地址数组引用（格式：IP|DNS），$2 - 域名
-# 返回：可用 IP 地址列表（格式：IP|DNS|https|tcp|ping|延迟）
-
+# 并发检测 IP 地址连通性（最多 CONCURRENT_THREADS 路，任一路结束即补位）
+# 参数：$1 - IP 地址数组引用（格式：IP|DNS），$2 - 域名，$3 - 域名组名（GitHub 组严格检测）
+# 返回：可用 IP 地址列表（格式：IP|DNS|https|tcp|ping|延迟），按输入顺序
 test_ips_concurrently() {
   local -n ips_ref="$1"
-  local domain="$2"
-  local -a results=()
-  local pids=()
-  local tmp_files=()
-  local running=0
-  local index=0
-  
-  local -a valid_ips=()
+  local domain="$2" group="${3:-}"
+  local -a valid_ips=() tmp_files=()
+  local ip_dns ip dns tmp_file line running=0
+
   for ip_dns in "${ips_ref[@]}"; do
-    if [[ -n "$ip_dns" && "$ip_dns" != "" ]]; then
-      local ip
-      IFS='|' read -r ip _ <<< "$ip_dns"
-      if [[ -n "$ip" && "$ip" != "" ]]; then
-        valid_ips+=("$ip_dns")
-      fi
-    fi
+    [[ "${ip_dns%%|*}" != "" ]] && valid_ips+=("$ip_dns")
   done
 
-  if [[ ${#valid_ips[@]} -eq 0 ]]; then
-    return 0
-  fi
-  
   for ip_dns in "${valid_ips[@]}"; do
-    local ip safe_ip_hash
-    IFS='|' read -r ip _ <<< "$ip_dns"
-    safe_ip_hash=$(get_domain_hash "$ip")
-    local tmp_file
-    tmp_file=$(create_temp_file "test-${safe_ip_hash}") || continue
+    IFS='|' read -r ip dns <<< "$ip_dns"
+    tmp_file=$(create_temp_file "test") || continue
     tmp_files+=("$tmp_file")
-  done
-  
-  while [[ $index -lt ${#valid_ips[@]} ]] || [[ $running -gt 0 ]]; do
-    while [[ $running -lt $CONCURRENT_THREADS ]] && [[ $index -lt ${#valid_ips[@]} ]]; do
-      local ip_dns="${valid_ips[$index]}"
-      local tmp_file="${tmp_files[$index]}"
-      local ip dns
-      IFS='|' read -r ip dns <<< "$ip_dns"
-      
-      (
-        local test_result
-        local domain_group_info
-        domain_group_info=$(printf '%s\n' "${DOMAINS[@]}" | grep "^${domain}|" | head -1 || echo "")
-        local group=""
-        if [[ -n "$domain_group_info" ]]; then
-          IFS='|' read -r _ group <<< "$domain_group_info"
-        fi
-        test_result=$(test_ip_connectivity "$ip" "$domain" "$group")
-        if [[ -n "$test_result" ]]; then
-          echo "${ip}|${dns}|${test_result}" > "$tmp_file"
-        fi
-      ) &
-      pids+=($!)
-      ((running++)) || true
-      ((index++)) || true
-    done
-    
-    if [[ $running -gt 0 ]]; then
-      local wait_pid
-      for wait_pid in "${pids[@]}"; do
-        if wait "$wait_pid" 2>/dev/null; then
-          ((running--)) || true
-          local -a new_pids=()
-          local pid
-          for pid in "${pids[@]}"; do
-            if [[ "$pid" != "$wait_pid" ]]; then
-              new_pids+=("$pid")
-            fi
-          done
-          pids=("${new_pids[@]}")
-          break
-        fi
-      done
+    if (( running >= CONCURRENT_THREADS )); then
+      wait -n 2>/dev/null || true
+      ((running--)) || true
     fi
+    (
+      local test_result
+      test_result=$(test_ip_connectivity "$ip" "$domain" "$group")
+      [[ -z "$test_result" ]] || echo "${ip}|${dns}|${test_result}" > "$tmp_file"
+    ) &
+    ((running++)) || true
   done
-  
-  for pid in "${pids[@]}"; do
-    wait "$pid" 2>/dev/null || true
-  done
-  
+  wait 2>/dev/null || true
+
   for tmp_file in "${tmp_files[@]}"; do
-    if [[ -f "$tmp_file" ]]; then
-      while IFS= read -r line; do
-        if [[ -n "$line" ]]; then
-          local ip
-          IFS='|' read -r ip _ <<< "$line"
-          if [[ -n "$ip" && "$ip" != "" ]]; then
-            results+=("$line")
-          fi
-        fi
-      done < "$tmp_file"
-      rm -f "$tmp_file" 2>/dev/null || true
-    fi
+    [[ -s "$tmp_file" ]] || { rm -f "$tmp_file"; continue; }
+    while IFS= read -r line; do
+      [[ -n "${line%%|*}" ]] && printf '%s\n' "$line"
+    done < "$tmp_file"
+    rm -f "$tmp_file" 2>/dev/null || true
   done
-  
-  printf '%s\n' "${results[@]}"
 }
 
 # 计算延迟分数
@@ -327,7 +253,3 @@ get_detection_method() {
     echo ""
   fi
 }
-
-# 选择最优 IP 地址
-# 参数：$1 - 检测结果数组引用（格式：IP|DNS|https|tcp|ping|延迟），$2 - 域名（可选，用于日志）
-# 返回：选中的 IP 地址列表（格式：IP|DNS|检测方法，每行一个）

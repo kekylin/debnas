@@ -48,22 +48,18 @@ declare -Ar DNS_IP_BY_NAME=(
 
 declare -A DNS_NAMES=()
 DNS_SERVERS=()
+# shellcheck disable=SC2034  # DNS_NAMES 由 dns-resolve.sh 的 resolve_domain 读取（IP → DNS 名称）
 for dns_name in "${DNS_NAME_ORDER[@]}"; do
   ip="${DNS_IP_BY_NAME[$dns_name]}"
   DNS_SERVERS+=("$ip")
   DNS_NAMES["$ip"]="$dns_name"
 done
 
-
 setup_temp_environment() {
   # 复用 lib/system/tempfile.sh 的 init_temp_dir；放进本进程 PID 子目录（700，退出时随目录清理）
   init_temp_dir || return 1
   export TMP_DIR="${_DEBNAS_PID_DIR}"
 }
-
-# 生成域名哈希值用于临时文件名
-# 参数：$1 - 域名
-# 返回：MD5 哈希值（32 字符）
 
 module_enable_feature() {
   ensure_module_deps hosts-sync || return 1
@@ -161,13 +157,13 @@ module_status() {
   [[ "$ts" == "-" ]] && desc="${n} 条"
   if [[ "$n" -eq 0 ]]; then
     echo "warn|DebNAS 区块为空"
-  elif [[ ${EUID:-$(id -u)} -ne 0 ]]; then
-    echo "applied|已写入 ${desc}（定时任务需 root 查看）"
-  elif cron_is_registered "hosts-sync" 2>/dev/null; then
-    echo "applied|已写入 ${desc} · 定时更新已开启"
-  else
-    echo "partial|已写入 ${desc} · 未设置定时更新（IP 可能过期）"
+    return 0
   fi
+  case "$(cron_state hosts-sync)" in
+    on)  echo "applied|已写入 ${desc} · 定时更新已开启" ;;
+    off) echo "partial|已写入 ${desc} · 未设置定时更新（IP 可能过期）" ;;
+    *)   echo "applied|已写入 ${desc}（定时任务需 root 查看）" ;;
+  esac
 }
 
 # 预演：每行 "类型|目标|备注"（交互式模块：列出各菜单动作可能的影响）
@@ -189,7 +185,7 @@ module_plan() {
   fi
   echo "info|DNS 解析|联网经 AliDNS/TencentDNS/BaiduDNS/DNS114 解析 ${domain_count:-0} 个域名并测试连通性，执行时探测"
   echo "write|${HOSTS_FILE}|启用/更新：重写 DebNAS 区块（区块外内容保留；原地覆盖保留 inode，不另做备份）；禁用：移除区块"
-  if [[ ${EUID:-$(id -u)} -eq 0 ]] && cron_is_registered "hosts-sync" 2>/dev/null; then
+  if [[ "$(cron_state hosts-sync)" == "on" ]]; then
     echo "info|cron|定时更新已开启（$(cron_get_schedule hosts-sync 2>/dev/null || echo 已注册)）；禁用时移除"
   else
     echo "cron|hosts-sync|仅当在「定时设置」中启用时写入 root crontab（默认 0 0 * * *）；禁用时移除"

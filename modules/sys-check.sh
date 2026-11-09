@@ -17,12 +17,22 @@ source "${SCRIPT_DIR}/lib/system/state.sh"
 # 必备命令（依赖检查在 main 中进行，加载/只读探测阶段无副作用）
 REQUIRED_CMDS=(awk grep df uname curl)
 
+# 内存总量（KB，读 /proc/meminfo，不 fork；读不到输出空）
+_sys_check_mem_kb() {
+  local key val _
+  while IFS=$' \t' read -r key val _; do
+    if [[ "$key" == "MemTotal:" ]]; then
+      printf '%s' "$val"
+      return 0
+    fi
+  done 2>/dev/null < /proc/meminfo
+}
+
 # 系统兼容性检查（最小化检查，仅检查项目脚本运行必需项）
 check_system_compatibility() {
   local issues_system=()
   local issues_resource=()
   local issues_network=()
-  local issues_service=()
 
   log_info "检查系统兼容性..."
 
@@ -48,13 +58,16 @@ check_system_compatibility() {
 
   # 3. 资源检查（必需）
   echo "[资源检查]"
-  local mem_mb=$(( $(grep MemTotal /proc/meminfo | awk '{print $2}') / 1024 ))
+  local mem_kb mem_mb
+  mem_kb=$(_sys_check_mem_kb)
+  mem_mb=$(( ${mem_kb:-0} / 1024 ))
   echo "- 内存：${mem_mb}MB"
   if [[ $mem_mb -lt 1024 ]]; then
     issues_resource+=("内存低于1GB（建议>=1GB）")
   fi
 
-  local disk_gb=$(df / | awk 'NR==2 {print int($4/1024/1024)}')
+  local disk_gb
+  disk_gb=$(df / | awk 'NR==2 {print int($4/1024/1024)}')
   echo "- 磁盘可用空间：${disk_gb}GB"
   if [[ $disk_gb -lt 10 ]]; then
     issues_resource+=("根分区可用空间低于10GB（建议>=10GB）")
@@ -117,6 +130,7 @@ check_system_compatibility() {
     echo "- 兼容性结论：⚠ 存在风险"
     local all_issues=("${issues_system[@]}" "${issues_resource[@]}" "${issues_network[@]}")
     echo "- 发现问题："
+    local issue
     for issue in "${all_issues[@]}"; do
       echo "  • ${issue}"
     done
@@ -130,8 +144,8 @@ module_status() {
   local IFS=$' \n\t'
   local -a issues=()
   local os_id codename arch mem_kb disk_kb
-  os_id=$( [[ -r /etc/os-release ]] && . /etc/os-release 2>/dev/null && printf '%s' "${ID:-}" ) || os_id=""
-  codename=$( [[ -r /etc/os-release ]] && . /etc/os-release 2>/dev/null && printf '%s' "${VERSION_CODENAME:-}" ) || codename=""
+  os_id=$(_get_os_id 2>/dev/null) || os_id=""
+  codename=$(get_system_codename 2>/dev/null) || codename=""
   if [[ "$os_id" != "debian" ]]; then
     issues+=("非 Debian 系统")
   elif ! is_supported_codename "$codename" 2>/dev/null; then
@@ -139,7 +153,7 @@ module_status() {
   fi
   arch=$(uname -m 2>/dev/null) || arch=""
   [[ "$arch" == "x86_64" ]] || issues+=("架构 ${arch:-未知}")
-  mem_kb=$(awk '/^MemTotal:/ { print $2; exit }' /proc/meminfo 2>/dev/null) || mem_kb=""
+  mem_kb=$(_sys_check_mem_kb)
   [[ -n "$mem_kb" && "$mem_kb" -lt 1048576 ]] && issues+=("内存低于 1GB")
   disk_kb=$(df -Pk / 2>/dev/null | awk 'NR == 2 { print $4 }') || disk_kb=""
   [[ -n "$disk_kb" && "$disk_kb" -lt 10485760 ]] && issues+=("根分区可用低于 10GB")

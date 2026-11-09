@@ -25,9 +25,8 @@ source "${MODULE_DIR}/check.sh"
 source "${MODULE_DIR}/notify.sh"
 
 # ==================== 常量定义 ====================
-REQUIRED_CMDS=(apt grep awk mail systemctl)
-# 通知收件邮箱：见 lib/system/layout.sh 的 DEBNAS_NOTIFY_EMAIL_FILE / notify_email_get
-EMAIL_CONFIG_FILE="${DEBNAS_NOTIFY_EMAIL_FILE}"
+# 通知邮件经 /usr/sbin/exim4 发送；收件邮箱见 lib/system/layout.sh 的 notify_email_get
+REQUIRED_CMDS=(apt grep awk exim4 systemctl)
 
 # ==================== 菜单函数（交互模式） ====================
 
@@ -49,7 +48,7 @@ main_menu() {
         *)   continue ;;
       esac
     }
-    choice=$(cat "$menu_result")
+    choice=$(<"$menu_result")
     rm -f "$menu_result"
     case "$choice" in
       0) module_enable_feature ;;
@@ -86,13 +85,6 @@ module_disable_feature() {
 
 # ==================== 只读探测契约（docs/ARCHITECTURE.md §4.5） ====================
 
-# root crontab 中模块条目状态：on / off / unknown（非 root 无法读取 root crontab）
-_sp_cron_state() {
-  [[ "${EUID:-1}" -eq 0 ]] || { echo "unknown"; return 0; }
-  command -v crontab >/dev/null 2>&1 || { echo "off"; return 0; }
-  if cron_is_registered "sys-patches" 2>/dev/null; then echo "on"; else echo "off"; fi
-}
-
 # 上次执行结果（module-runner 写入的 state：last_result / last_run）
 # 输出："成功 2026-11-08 00:00" / "失败 …" / 空
 _sp_last_run_desc() {
@@ -112,7 +104,7 @@ _sp_last_run_desc() {
 # 当前状态：一行 "状态码|说明"（只读、< 300ms、不联网）
 module_status() {
   local cron enabled=0 last schedule="" sched_desc=""
-  cron=$(_sp_cron_state)
+  cron=$(cron_state "sys-patches")
   feature_enabled "sys-patches" 2>/dev/null && enabled=1
   last=$(_sp_last_run_desc)
   if [[ "$cron" == "on" ]]; then
@@ -146,14 +138,14 @@ module_plan() {
   local IFS=$' \n\t'
   local -a missing=()
   local cmd cron
-  cron=$(_sp_cron_state)
+  cron=$(cron_state "sys-patches")
 
   echo "info|动作范围|交互菜单：启用/禁用更新检查、定时设置；--yes 直接检测一次；cron 模式检测后有更新才发邮件"
   for cmd in "${REQUIRED_CMDS[@]}"; do
     command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
   done
   [[ ${#missing[@]} -gt 0 ]] \
-    && echo "risk|${missing[*]}|缺少依赖命令：启用/检测会直接报错退出（mail 由 mailutils 提供，模块不自动安装）"
+    && echo "risk|${missing[*]}|缺少依赖命令：启用/检测会直接报错退出（exim4 由「配置邮件账户」前置安装，模块不自动安装）"
   echo "info|apt update|检测时刷新软件包索引（联网，跨进程去重）并模拟 apt-get upgrade -s，不安装任何更新"
   echo "info|邮件|发现更新时经 exim4 发送到通知邮箱（未配置则跳过）"
   echo "write|${DEBNAS_FEATURE_DIR:-/var/lib/debnas/state}/sys-patches.enabled|启用/禁用：记录功能开关（DebNAS 自有目录）"
@@ -191,6 +183,7 @@ main() {
       exit "${ERROR_UNSUPPORTED_OS}"
     fi
     run_update_check
+    # shellcheck disable=SC2154  # 两个计数由 check.sh 的 run_update_check 以 declare -g 赋值
     if [[ $security_update_count -gt 0 || $regular_update_count -gt 0 ]]; then
       send_email_notification
     fi

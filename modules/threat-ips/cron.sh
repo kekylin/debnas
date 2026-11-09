@@ -115,15 +115,6 @@ disable_auto_update() {
   module_mark_action
 }
 
-view_cron_jobs() {
-  if cron_is_registered "threat-ips"; then
-    cron_list | grep "threat-ips" || \
-      log_info "定时任务已注册（使用 debnas cron list 查看详情）"
-  else
-    log_info "未设置任何与 IPThreat Firewalld 相关的定时任务"
-  fi
-}
-
 update_threat_ips() {
   local threat_level="${1:-${THREAT_LEVEL:-${DEFAULT_THREAT_LEVEL}}}"
   local temp_gz temp_txt temp_file_ipv4 temp_file_ipv6

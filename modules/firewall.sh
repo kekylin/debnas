@@ -14,51 +14,20 @@ IFS=$'\n\t'
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${SCRIPT_DIR}/lib/bootstrap.sh"
 
-# 检测 sshd 实际监听端口：firewalld 的 ssh 服务只含 22，自定义端口必须单独放行，否则会被锁在门外
-get_sshd_ports() {
-  local ports="" cfg
-  local -a cfgs=()
-  if command -v sshd &> /dev/null; then
-    ports=$(sshd -T 2>/dev/null | awk '$1 == "port" && $2 ~ /^[0-9]+$/ {print $2}') || ports=""
-  fi
-  if [[ -z "$ports" ]]; then
-    for cfg in /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf; do
-      [[ -f "$cfg" ]] && cfgs+=("$cfg")
-    done
-    if [[ ${#cfgs[@]} -gt 0 ]]; then
-      ports=$(awk 'tolower($1) == "port" && $2 ~ /^[0-9]+$/ {print $2}' "${cfgs[@]}" 2>/dev/null) || ports=""
-    fi
-  fi
-  # 未显式配置 Port 时 sshd 默认监听 22
-  [[ -z "$ports" ]] && ports="22"
-  # 当前 SSH 会话所连的服务端端口一并放行（SSH_CONNECTION 末字段）
-  local conn_port="${SSH_CONNECTION:-}"
-  conn_port="${conn_port##* }"
-  if [[ -n "${SSH_CONNECTION:-}" && "$conn_port" =~ ^[0-9]+$ ]]; then
-    ports="${ports}"$'\n'"${conn_port}"
-  fi
-  printf '%s\n' "$ports" | awk 'NF' | sort -un
-}
-
 # ==================== 只读探测契约（docs/ARCHITECTURE.md §4.5） ====================
-
-# 包是否已安装（只读查询 dpkg 数据库）
-_fw_pkg_installed() {
-  [[ "$(dpkg-query -W -f='${db:Status-Status}' "$1" 2>/dev/null)" == "installed" ]]
-}
 
 # 当前状态：一行 "状态码|说明"（只读、不联网）
 module_status() {
   local cfg="/etc/firewalld/zones/public.xml"
-  if ! _fw_pkg_installed firewalld; then
-    if command -v ufw &>/dev/null && systemctl is-active --quiet ufw 2>/dev/null; then
+  if ! pkg_is_installed firewalld; then
+    if command -v ufw &>/dev/null && service_is_active ufw; then
       echo "absent|未安装；UFW 运行中，安装时会停用 UFW"
     else
       echo "absent|未安装 firewalld"
     fi
     return 0
   fi
-  if ! systemctl is-active --quiet firewalld 2>/dev/null; then
+  if ! service_is_active firewalld; then
     echo "warn|已安装但 firewalld 未运行"
     return 0
   fi
@@ -74,9 +43,9 @@ module_plan() {
   local IFS=$' \n\t'
   local cfg="/etc/firewalld/zones/public.xml"
   local -a services=(ssh dhcpv6-client cockpit) ports=() missing=()
-  local port svc entry
+  local port svc
 
-  if _fw_pkg_installed firewalld; then
+  if pkg_is_installed firewalld; then
     echo "info|firewalld|已安装，跳过安装"
   else
     echo "pkg|firewalld|apt 安装（Debian 安装后立即启动）"
@@ -86,7 +55,8 @@ module_plan() {
     echo "risk|UFW|现有 UFW 规则将不再生效"
   fi
 
-  for port in $(get_sshd_ports); do
+  # firewalld 的 ssh 服务只含 22，自定义端口必须单独放行（含当前会话端口），否则会被锁在门外
+  for port in $(sshd_listen_ports); do
     [[ "$port" != "22" ]] && ports+=("$port")
   done
   service_is_installed smbd && services+=(samba)
@@ -114,7 +84,7 @@ module_plan() {
   done
   echo "port|${services[*]}|public 区放行服务（cockpit=9090）"
 
-  if systemctl is-active --quiet firewalld 2>/dev/null; then
+  if service_is_active firewalld; then
     echo "service|firewalld|已运行：新规则仅追加到运行时（不 reload，保留 fail2ban 规则）"
   else
     echo "service|firewalld|启动并设为开机自启"
@@ -128,9 +98,8 @@ module_plan() {
 }
 
 main() {
-  
   # 定义配置文件路径，便于后续统一管理
-  declare -r CONFIG_FILE="/etc/firewalld/zones/public.xml"
+  local -r CONFIG_FILE="/etc/firewalld/zones/public.xml"
   
   log_info "安装 Firewalld..."
   
@@ -146,7 +115,7 @@ main() {
   local -a services=(ssh dhcpv6-client cockpit)
   local -a ports=()
   local port
-  for port in $(get_sshd_ports); do
+  for port in $(sshd_listen_ports); do
     if [[ "$port" != "22" ]]; then
       ports+=("$port")
       log_info "检测到 SSH 监听端口 ${port}，将一并放行"
@@ -171,7 +140,7 @@ main() {
 
   # 配置 firewalld 防火墙规则，确保基础服务可用
   # 必须在安装之前写好：Debian 安装 firewalld 后会立即启动，先写配置才不会在启动瞬间挡掉自定义 SSH 端口
-  local entry entries_xml=""
+  local entry entries_xml="" firewall_config
   for entry in "${zone_entries[@]}"; do
     entries_xml+="  ${entry}"$'\n'
   done
@@ -184,7 +153,7 @@ main() {
   # 上方模板展开后包含 <service name="ssh"/>、<service name="dhcpv6-client"/>、<service name="cockpit"/>
 
   local config_changed=0
-  if [ ! -f "$CONFIG_FILE" ]; then
+  if [[ ! -f "$CONFIG_FILE" ]]; then
     log_info "配置防火墙规则..."
     if write_file_if_changed "$CONFIG_FILE" "$firewall_config"; then
       config_changed=1
@@ -233,8 +202,6 @@ main() {
   service_ensure firewalld started
   service_ensure firewalld enabled
   log_success "Firewalld 就绪"
-  
-  
 }
 
 # 契约守卫：DEBNAS_MODULE_ACTION=status|plan 时只加载函数供只读探测，不执行 main（docs/ARCHITECTURE.md §4.5）

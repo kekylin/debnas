@@ -1,8 +1,13 @@
 #!/bin/bash
 # Cockpit 外网访问 — 启用/禁用逻辑
 
+set -euo pipefail
+IFS=$'\n\t'
+
 enable_cockpit_ext() {
-  REQUIRED_CMDS=(hostname awk sed systemctl)
+  local -a REQUIRED_CMDS=(hostname awk sed systemctl)
+  local domain internal_ip origins_line current_config new_config=""
+  local config_file="/etc/cockpit/cockpit.conf"
   if ! check_dependencies "${REQUIRED_CMDS[@]}"; then
     log_error "依赖缺失，请先安装 hostname、awk、sed、systemctl。"
     return 1
@@ -10,7 +15,6 @@ enable_cockpit_ext() {
 
   # EOF 时 read 返回非零，不能让 set -e 直接退出整个工具
   read -r -p "Cockpit 外网访问地址（如 baidu.com 或 baidu.com:9090）：" domain || domain=""
-  config_file="/etc/cockpit/cockpit.conf"
   domain="${domain#http://}"
   domain="${domain#https://}"
   domain="${domain%%/*}"
@@ -35,7 +39,6 @@ enable_cockpit_ext() {
   log_info "配置 Cockpit 外网访问地址：$domain"
 
   origins_line="Origins = https://$domain wss://$domain${internal_ip:+ https://$internal_ip:9090}"
-  new_config=""
 
   if [[ -f "$config_file" ]]; then
     current_config=$(cat "$config_file")
@@ -43,8 +46,8 @@ enable_cockpit_ext() {
     if grep -qE '^[[:space:]]*Origins[[:space:]]*=' <<< "$current_config"; then
       new_config=$(sed -E "s#^[[:space:]]*Origins[[:space:]]*=.*#$origins_line#" <<< "$current_config")
     else
-      if echo "$current_config" | grep -q '\[WebService\]'; then
-        new_config=$(echo "$current_config" | sed "/\[WebService\]/a $origins_line")
+      if grep -q '\[WebService\]' <<< "$current_config"; then
+        new_config=$(sed "/\[WebService\]/a $origins_line" <<< "$current_config")
       else
         new_config="$current_config
 
@@ -73,14 +76,13 @@ $origins_line"
 }
 
 disable_cockpit_ext() {
-  REQUIRED_CMDS=(sed systemctl)
+  local -a REQUIRED_CMDS=(sed systemctl)
+  local config_file="/etc/cockpit/cockpit.conf" config_changed=0 current_config new_config
   if ! check_dependencies "${REQUIRED_CMDS[@]}"; then
     log_error "依赖缺失，请先安装 sed、systemctl。"
     return 1
   fi
 
-  config_file="/etc/cockpit/cockpit.conf"
-  config_changed=0
   if [[ -f "$config_file" ]]; then
     current_config=$(cat "$config_file")
     # 只删除未注释的 Origins 配置行，保留注释与其他段落

@@ -17,6 +17,18 @@ source "${SCRIPT_DIR}/lib/bootstrap.sh"
 # 必备命令（依赖检查在 main 中执行，保证只读探测时顶层无副作用）
 REQUIRED_CMDS=(sed grep systemctl mkdir chmod)
 
+# /etc/profile 中 DebNAS 审计配置块的标识（configure_* 与 module_status/plan 共用同一判据）
+_SECURITY_PROFILE_MARKER="# DebNAS 安全审计配置"
+# 旧版 HISTDIR 片段：/var/log/history 为 1733，任何用户都能抢先建出别人（含 root）
+# 名字的目录并窃取其命令历史；整段匹配才会迁移为新版（只在目录为本人所有的真实目录时才使用）
+# shellcheck disable=SC2016  # 变量写入 /etc/profile 后在用户登录时展开
+_SECURITY_LEGACY_HISTDIR_SIG='HISTDIR="/var/log/history/${LOGNAME}"
+if [ ! -d "$HISTDIR" ]; then
+    mkdir -m 300 -p "$HISTDIR"
+    chown "$USER:$USER" "$HISTDIR"
+fi
+export HISTFILE="${HISTDIR}/${USER}@${USER_IP}_$(date +"%Y%m%d_%H:%M:%S")"'
+
 # 判断启用 su 限制是否安全（不会锁死 root 或当前管理员）
 # 参数：$1 - /etc/pam.d/su 当前内容；返回：0 可以启用，1 应跳过（已输出原因）
 su_restriction_safe_to_apply() {
@@ -94,22 +106,13 @@ configure_timeout_and_logging() {
   fi
 
   # 读取当前 /etc/profile 内容，检查 DebNAS 审计配置块是否已存在
-  local debnas_marker="# DebNAS 安全审计配置"
   local current_content
   current_content=$(cat /etc/profile 2>/dev/null) || current_content=""
 
   # shellcheck disable=SC2016
   # 故意使用单引号：$(whoami)、${USER} 等变量不应在此处展开，
   # 而是写入 /etc/profile 后在用户登录时展开
-  # 旧版 HISTDIR 片段：/var/log/history 为 1733，任何用户都能抢先建出别人（含 root）
-  # 名字的目录并窃取其命令历史；新版只在目录为本人所有的真实目录时才使用
-  local legacy_histdir_block new_histdir_block
-  legacy_histdir_block='HISTDIR="/var/log/history/${LOGNAME}"
-if [ ! -d "$HISTDIR" ]; then
-    mkdir -m 300 -p "$HISTDIR"
-    chown "$USER:$USER" "$HISTDIR"
-fi
-export HISTFILE="${HISTDIR}/${USER}@${USER_IP}_$(date +"%Y%m%d_%H:%M:%S")"'
+  local new_histdir_block
   new_histdir_block='HISTDIR="/var/log/history/${USER}"
 if [ ! -e "$HISTDIR" ] && [ ! -L "$HISTDIR" ]; then
     mkdir -m 300 "$HISTDIR" 2>/dev/null
@@ -118,10 +121,10 @@ if [ -d "$HISTDIR" ] && [ ! -L "$HISTDIR" ] && [ "$(stat -c %u "$HISTDIR" 2>/dev
     export HISTFILE="${HISTDIR}/${USER}@${USER_IP}_$(date +"%Y%m%d_%H:%M:%S")"
 fi'
 
-  if grep -qF "${debnas_marker}" <<< "$current_content"; then
-    if [[ "$current_content" == *"$legacy_histdir_block"* ]]; then
+  if [[ "$current_content" == *"$_SECURITY_PROFILE_MARKER"* ]]; then
+    if [[ "$current_content" == *"$_SECURITY_LEGACY_HISTDIR_SIG"* ]]; then
       # 迁移旧版审计配置块中的不安全 HISTDIR 片段
-      if write_file_if_changed "/etc/profile" "${current_content/"$legacy_histdir_block"/"$new_histdir_block"}"; then
+      if write_file_if_changed "/etc/profile" "${current_content/"$_SECURITY_LEGACY_HISTDIR_SIG"/"$new_histdir_block"}"; then
         log_success "已升级命令记录日志目录的安全检查。"
       fi
       return 0
@@ -158,17 +161,6 @@ fi
 }
 
 # ==================== 只读探测契约（docs/ARCHITECTURE.md §4.5） ====================
-
-# 与 configure_* 保持一致的判据（只读）
-_SECURITY_PROFILE_MARKER="# DebNAS 安全审计配置"
-# 旧版不安全 HISTDIR 片段（与 configure_timeout_and_logging 中 legacy_histdir_block 一致，整段匹配才会迁移）
-# shellcheck disable=SC2016
-_SECURITY_LEGACY_HISTDIR_SIG='HISTDIR="/var/log/history/${LOGNAME}"
-if [ ! -d "$HISTDIR" ]; then
-    mkdir -m 300 -p "$HISTDIR"
-    chown "$USER:$USER" "$HISTDIR"
-fi
-export HISTFILE="${HISTDIR}/${USER}@${USER_IP}_$(date +"%Y%m%d_%H:%M:%S")"'
 
 # su 限制是否在 /etc/pam.d/su 中真正生效（未注释的 auth ... pam_wheel.so 行）
 # 返回：0 生效，1 未生效，2 无法读取
@@ -284,8 +276,6 @@ main() {
   configure_su_restrictions
   configure_timeout_and_logging
   log_success "安全加固 就绪"
-
-  return 0
 }
 
 # 契约守卫：DEBNAS_MODULE_ACTION=status|plan 时只加载函数供只读探测，不执行 main（docs/ARCHITECTURE.md §4.5）

@@ -36,6 +36,20 @@ acl_error() {
   _ACL_FAILED=1
 }
 
+# 执行 setfacl，输出同时写入 ACL_OUTPUT，并记录成功/失败
+# 参数：$1 - tee 选项（-a 追加，空为覆盖），$2 - 成功提示，$3 - 审计日志内容，$4 - 失败提示，其余 - setfacl 参数
+_acl_run() {
+  local tee_opt="$1" ok_msg="$2" audit_msg="$3" fail_msg="$4"
+  shift 4
+  if setfacl "$@" 2>&1 | tee ${tee_opt:+"$tee_opt"} "$ACL_OUTPUT"; then
+    log_success "$ok_msg"
+    module_mark_action
+    log_acl_action "$audit_msg"
+  else
+    acl_error "$fail_msg"
+  fi
+}
+
 # 验证权限字符串格式，防止无效输入
 validate_permissions() {
   local perms="$1"
@@ -104,7 +118,7 @@ view_acl() {
   local path
   path=$(ui_input "请输入文件或目录路径")
   [[ -z "$path" ]] && { log_info "已取消"; return; }
-  if [ ! -e "$path" ]; then
+  if [[ ! -e "$path" ]]; then
     log_error "$path 不存在"
     return
   fi
@@ -118,7 +132,7 @@ set_user_acl() {
   local path username permissions recursive
   path=$(ui_input "请输入文件或目录路径")
   [[ -z "$path" ]] && { log_info "已取消"; return; }
-  if [ ! -e "$path" ]; then
+  if [[ ! -e "$path" ]]; then
     log_error "$path 不存在"
     return
   fi
@@ -135,23 +149,12 @@ set_user_acl() {
     log_info "已取消"
     return
   }
-  if [[ "$recursive" == "y" ]]; then
-    if setfacl -R -m u:"$username":"$permissions" "$path" 2>&1 | tee "$ACL_OUTPUT"; then
-      log_success "ACL: u:$username:$permissions $path"
-      module_mark_action
-      log_acl_action "设置用户ACL: u:$username:$permissions $path (递归: $recursive)"
-    else
-      acl_error "无法设置权限。请检查输入或查看 $ACL_OUTPUT。"
-    fi
-  else
-    if setfacl -m u:"$username":"$permissions" "$path" 2>&1 | tee "$ACL_OUTPUT"; then
-      log_success "ACL: u:$username:$permissions $path"
-      module_mark_action
-      log_acl_action "设置用户ACL: u:$username:$permissions $path (递归: $recursive)"
-    else
-      acl_error "无法设置权限。请检查输入或查看 $ACL_OUTPUT。"
-    fi
-  fi
+  local -a rflag=()
+  [[ "$recursive" == "y" ]] && rflag=(-R)
+  _acl_run "" "ACL: u:$username:$permissions $path" \
+    "设置用户ACL: u:$username:$permissions $path (递归: $recursive)" \
+    "无法设置权限。请检查输入或查看 $ACL_OUTPUT。" \
+    "${rflag[@]}" -m u:"$username":"$permissions" "$path"
 }
 
 # 为组设置ACL权限
@@ -159,7 +162,7 @@ set_group_acl() {
   local path groupname permissions recursive
   path=$(ui_input "请输入文件或目录路径")
   [[ -z "$path" ]] && { log_info "已取消"; return; }
-  if [ ! -e "$path" ]; then
+  if [[ ! -e "$path" ]]; then
     log_error "$path 不存在"
     return
   fi
@@ -176,23 +179,12 @@ set_group_acl() {
     log_info "已取消"
     return
   }
-  if [[ "$recursive" == "y" ]]; then
-    if setfacl -R -m g:"$groupname":"$permissions" "$path" 2>&1 | tee "$ACL_OUTPUT"; then
-      log_success "ACL: g:$groupname:$permissions $path"
-      module_mark_action
-      log_acl_action "设置组ACL: g:$groupname:$permissions $path (递归: $recursive)"
-    else
-      acl_error "无法设置权限。请检查输入或查看 $ACL_OUTPUT。"
-    fi
-  else
-    if setfacl -m g:"$groupname":"$permissions" "$path" 2>&1 | tee "$ACL_OUTPUT"; then
-      log_success "ACL: g:$groupname:$permissions $path"
-      module_mark_action
-      log_acl_action "设置组ACL: g:$groupname:$permissions $path (递归: $recursive)"
-    else
-      acl_error "无法设置权限。请检查输入或查看 $ACL_OUTPUT。"
-    fi
-  fi
+  local -a rflag=()
+  [[ "$recursive" == "y" ]] && rflag=(-R)
+  _acl_run "" "ACL: g:$groupname:$permissions $path" \
+    "设置组ACL: g:$groupname:$permissions $path (递归: $recursive)" \
+    "无法设置权限。请检查输入或查看 $ACL_OUTPUT。" \
+    "${rflag[@]}" -m g:"$groupname":"$permissions" "$path"
 }
 
 # 设置目录的默认ACL权限
@@ -200,7 +192,7 @@ set_default_acl() {
   local path entry permissions
   path=$(ui_input "请输入目录路径")
   [[ -z "$path" ]] && { log_info "已取消"; return; }
-  if [ ! -d "$path" ]; then
+  if [[ ! -d "$path" ]]; then
     log_error "目录 $path 不存在，请检查路径。"
     return
   fi
@@ -216,13 +208,9 @@ set_default_acl() {
     log_info "已取消"
     return
   }
-  if setfacl -d -m "$entry":"$permissions" "$path" 2>&1 | tee "$ACL_OUTPUT"; then
-    log_success "ACL 默认: $path"
-    module_mark_action
-    log_acl_action "设置默认ACL: $entry:$permissions $path"
-  else
-    acl_error "无法设置默认ACL权限。请检查输入或查看 $ACL_OUTPUT。"
-  fi
+  _acl_run "" "ACL 默认: $path" "设置默认ACL: $entry:$permissions $path" \
+    "无法设置默认ACL权限。请检查输入或查看 $ACL_OUTPUT。" \
+    -d -m "$entry":"$permissions" "$path"
 }
 
 # 取消目录的默认ACL权限
@@ -230,7 +218,7 @@ remove_default_acl() {
   local path
   path=$(ui_input "请输入目录路径")
   [[ -z "$path" ]] && { log_info "已取消"; return; }
-  if [ ! -d "$path" ]; then
+  if [[ ! -d "$path" ]]; then
     log_error "目录 $path 不存在，请检查路径。"
     return
   fi
@@ -240,13 +228,9 @@ remove_default_acl() {
     log_info "已取消"
     return
   }
-  if setfacl -k "$path" 2>&1 | tee "$ACL_OUTPUT"; then
-    log_success "ACL 默认取消: $path"
-    module_mark_action
-    log_acl_action "取消默认ACL: $path"
-  else
-    acl_error "无法取消默认ACL权限。请检查输入或查看 $ACL_OUTPUT。"
-  fi
+  _acl_run "" "ACL 默认取消: $path" "取消默认ACL: $path" \
+    "无法取消默认ACL权限。请检查输入或查看 $ACL_OUTPUT。" \
+    -k "$path"
 }
 
 # 删除ACL权限
@@ -254,7 +238,7 @@ remove_acl() {
   local path entry recursive
   path=$(ui_input "请输入文件或目录路径")
   [[ -z "$path" ]] && { log_info "已取消"; return; }
-  if [ ! -e "$path" ]; then
+  if [[ ! -e "$path" ]]; then
     log_error "$path 不存在"
     return
   fi
@@ -268,23 +252,11 @@ remove_acl() {
     log_info "已取消"
     return
   }
-  if [[ "$recursive" == "y" ]]; then
-    if setfacl -R -x "$entry" "$path" 2>&1 | tee "$ACL_OUTPUT"; then
-      log_success "ACL 删除: $entry"
-      module_mark_action
-      log_acl_action "删除ACL: $entry $path (递归: $recursive)"
-    else
-      acl_error "无法删除ACL条目。请检查输入或查看 $ACL_OUTPUT。"
-    fi
-  else
-    if setfacl -x "$entry" "$path" 2>&1 | tee "$ACL_OUTPUT"; then
-      log_success "ACL 删除: $entry"
-      module_mark_action
-      log_acl_action "删除ACL: $entry $path (递归: $recursive)"
-    else
-      acl_error "无法删除ACL条目。请检查输入或查看 $ACL_OUTPUT。"
-    fi
-  fi
+  local -a rflag=()
+  [[ "$recursive" == "y" ]] && rflag=(-R)
+  _acl_run "" "ACL 删除: $entry" "删除ACL: $entry $path (递归: $recursive)" \
+    "无法删除ACL条目。请检查输入或查看 $ACL_OUTPUT。" \
+    "${rflag[@]}" -x "$entry" "$path"
 }
 
 # 批量设置ACL权限
@@ -304,32 +276,20 @@ batch_set_acl() {
     log_info "已取消"
     return
   }
+  local path
+  local -a rflag=()
+  [[ "$recursive" == "y" ]] && rflag=(-R)
   shopt -s nullglob
   for path in $pattern; do
-    if [ ! -e "$path" ]; then
+    if [[ ! -e "$path" ]]; then
       log_warning "$path 不存在，已跳过。"
       continue
     fi
-    if ! validate_acl_path "$path"; then
-      continue
-    fi
-    if [[ "$recursive" == "y" ]]; then
-      if setfacl -R -m "$entry":"$permissions" "$path" 2>&1 | tee -a "$ACL_OUTPUT"; then
-        log_success "已为 $path 设置 $entry:$permissions"
-        module_mark_action
-        log_acl_action "批量设置ACL: $entry:$permissions $path (递归: $recursive)"
-      else
-        acl_error "无法为 $path 设置权限，请查看 $ACL_OUTPUT。"
-      fi
-    else
-      if setfacl -m "$entry":"$permissions" "$path" 2>&1 | tee -a "$ACL_OUTPUT"; then
-        log_success "已为 $path 设置 $entry:$permissions"
-        module_mark_action
-        log_acl_action "批量设置ACL: $entry:$permissions $path (递归: $recursive)"
-      else
-        acl_error "无法为 $path 设置权限，请查看 $ACL_OUTPUT。"
-      fi
-    fi
+    validate_acl_path "$path" || continue
+    _acl_run -a "已为 $path 设置 $entry:$permissions" \
+      "批量设置ACL: $entry:$permissions $path (递归: $recursive)" \
+      "无法为 $path 设置权限，请查看 $ACL_OUTPUT。" \
+      "${rflag[@]}" -m "$entry":"$permissions" "$path"
   done
   shopt -u nullglob
 }
@@ -356,7 +316,7 @@ module_status() {
 # 预演：每行 "类型|目标|备注"（交互式模块：列出可能的动作范围）
 module_plan() {
   local IFS=$' \n\t'   # 全局 IFS 不含空格，拼接数组前需局部设置
-  if [[ "$(dpkg-query -W -f='${db:Status-Status}' acl 2>/dev/null)" != "installed" ]]; then
+  if ! pkg_is_installed acl; then
     echo "pkg|acl|首次选择操作时按 @depends 安装"
   fi
   echo "info|acl-manager|交互式菜单，需逐项输入路径/用户或组/权限并确认：查看 / 设置用户 ACL / 设置组 ACL / 设置默认 ACL / 取消默认 ACL / 删除 ACL / 批量设置"
@@ -384,17 +344,13 @@ main() {
     "删除 ACL"
     "批量设置 ACL"
   )
-  local choice exit_code menu_result
+  local choice menu_result
   while true; do
     menu_result=$(mktemp)
+    # ui_menu 非零（254 Esc 返回上级 / 255 Q 退出等）均结束菜单
     UI_MENU_BLANK_BEFORE=1 UI_MENU_BACK_LABEL="← 返回上级" UI_MENU_RESULT_FILE="$menu_result" ui_menu "ACL 权限管理" "${items[@]}" || {
-      exit_code=$?
       rm -f "$menu_result"
-      case $exit_code in
-        254) return "$_ACL_FAILED" ;;   # Esc：返回上级
-        255) return "$_ACL_FAILED" ;;   # Q：退出
-        *)   return "$_ACL_FAILED" ;;
-      esac
+      return "$_ACL_FAILED"
     }
     choice=$(cat "$menu_result")
     rm -f "$menu_result"

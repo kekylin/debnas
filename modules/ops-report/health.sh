@@ -3,10 +3,11 @@
 set -euo pipefail
 IFS=$'\n\t'
 
+# 采集 SMART/RAID/只读挂载/内核日志异常；结果写入 OPS_HEALTH_* 全局变量，由 report.sh 判定与渲染
+# shellcheck disable=SC2034  # OPS_HEALTH_* 结果变量在 report.sh 中读取
 ops_collect_health() {
   OPS_HEALTH_SMART_SUMMARY="无数据/未启用"
   OPS_HEALTH_SMART_ALERT=0
-  OPS_HEALTH_MDSTAT=""
   OPS_HEALTH_RAID_STATE="无 RAID/未启用"
   OPS_HEALTH_RAID_ALERT=0
   OPS_HEALTH_FS_LIST=""
@@ -22,8 +23,8 @@ ops_collect_health() {
 
   if command -v smartctl >/dev/null 2>&1 && [[ "${OPS_INCLUDE_SMART:-1}" -eq 1 ]]; then
     local smart_rows=""
-    local disk_name disk_type disk_size disk
-    while IFS=' ' read -r disk_name disk_size disk_type; do
+    local disk_name disk_type disk
+    while IFS=' ' read -r disk_name _ disk_type; do
       [[ "$disk_type" == "disk" ]] || continue
       disk="/dev/${disk_name}"
       [[ -b "$disk" ]] || continue
@@ -51,7 +52,6 @@ ops_collect_health() {
   fi
 
   if [[ -r /proc/mdstat ]]; then
-    OPS_HEALTH_MDSTAT=$(cat /proc/mdstat)
     if grep -Eq 'degraded|recovering|FAILED|resync.*PENDING' /proc/mdstat 2>/dev/null; then
       OPS_HEALTH_RAID_STATE="需关注"
       OPS_HEALTH_RAID_ALERT=1

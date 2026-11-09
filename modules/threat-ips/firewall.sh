@@ -250,19 +250,12 @@ cleanup_drop_zone_config() {
   drop_zone_info=$(firewall-cmd --permanent --zone=drop --list-all \
     2>/dev/null || true)
 
-  local has_services has_ports has_protocols has_rich_rules
-  has_services=$(printf "%s" "${drop_zone_info}" \
-    | grep -E "^  services:" | grep -v "services: $" || true)
-  has_ports=$(printf "%s" "${drop_zone_info}" \
-    | grep -E "^  ports:" | grep -v "ports: $" || true)
-  has_protocols=$(printf "%s" "${drop_zone_info}" \
-    | grep -E "^  protocols:" | grep -v "protocols: $" || true)
-  has_rich_rules=$(printf "%s" "${drop_zone_info}" \
-    | grep -E "^  rich rules:" | grep -v "rich rules: $" || true)
+  # 非空的 services/ports/protocols/rich rules 行（为空时 firewall-cmd 输出 "  services: "）
+  local has_rules
+  has_rules=$(grep -E '^  (services|ports|protocols|rich rules):' <<< "${drop_zone_info}" \
+    | grep -vE '^  (services|ports|protocols|rich rules): $' || true)
 
-  if [[ -z "${remaining_sources}" ]] && [[ -z "${has_services}" ]] \
-    && [[ -z "${has_ports}" ]] && [[ -z "${has_protocols}" ]] \
-    && [[ -z "${has_rich_rules}" ]]; then
+  if [[ -z "${remaining_sources}" && -z "${has_rules}" ]]; then
     if [[ -f "${drop_xml_file}" ]]; then
       log_info \
         "drop 区域已清空，删除自定义配置文件：${drop_xml_file}"

@@ -1,11 +1,9 @@
 #!/bin/bash
 # 功能：统一错误码定义模块
+# shellcheck disable=SC2034  # 错误码由 modules/、bin/、lib/system/*.sh 在 source 后引用
 
 set -euo pipefail
 IFS=$'\n\t'
-
-# 获取脚本目录
-# SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # 标准错误码定义
 SUCCESS=0                    # 成功

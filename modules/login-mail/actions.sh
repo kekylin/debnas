@@ -2,8 +2,7 @@
 # 登录通知 — 启用/禁用逻辑
 
 enable_login_mail() {
-  REQUIRED_CMDS=(exim4)
-  if ! check_dependencies "${REQUIRED_CMDS[@]}"; then
+  if ! check_dependencies exim4; then
     log_error "缺少 exim4 依赖，请先配置邮件账户并安装 exim4。"
     return 1
   fi
@@ -17,7 +16,7 @@ enable_login_mail() {
   log_info "通知邮箱地址：$notify_email"
 
   # 脚本放在 DebNAS 自有目录（旧版位于 /etc/pam.d/login-notify.sh，由 migration.sh 迁移）
-  NOTIFY_SCRIPT="$DEBNAS_LOGIN_NOTIFY_SCRIPT"
+  local NOTIFY_SCRIPT="$DEBNAS_LOGIN_NOTIFY_SCRIPT" PAM_FILE="$DEBNAS_PAM_SESSION_FILE"
   local script_content=""
   IFS= read -r -d '' script_content << 'EOF' || true
 #!/bin/bash
@@ -144,7 +143,7 @@ EOF
 
   # 目录 755 root，脚本 750 root（pam_exec 以 root 身份通过 /bin/bash 调用）
   local script_dir rc=0
-  script_dir=$(dirname -- "$NOTIFY_SCRIPT")
+  script_dir="${NOTIFY_SCRIPT%/*}"
   if ! mkdir -p -- "$script_dir"; then
     log_error "创建目录失败：${script_dir}"
     return 1
@@ -160,7 +159,6 @@ EOF
   chown root:root -- "$NOTIFY_SCRIPT" 2>/dev/null || true
 
   # PAM 行：旧路径（/etc/pam.d/login-notify.sh）的行原位替换为新路径，保证只有一条
-  PAM_FILE="$DEBNAS_PAM_SESSION_FILE"
   rc=0
   login_notify_pam_sync "$NOTIFY_SCRIPT" "$PAM_FILE" || rc=$?
   case "$rc" in
@@ -181,8 +179,7 @@ EOF
 }
 
 disable_login_mail() {
-  PAM_FILE="$DEBNAS_PAM_SESSION_FILE"
-  local rc=0
+  local PAM_FILE="$DEBNAS_PAM_SESSION_FILE" rc=0
 
   # 新旧两种路径的 pam_exec 行一并移除
   login_notify_pam_sync "" "$PAM_FILE" || rc=$?

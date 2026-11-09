@@ -41,7 +41,7 @@ probe_mirror() {
 # 选择可用镜像站
 # 返回：选定的镜像站 URL
 detect_best_mirror() {
-  local selected_mirror=""
+  local selected_mirror="" mirror
 
   # 无探测工具时，直接使用第一个国内镜像（不探测）
   if [[ "${_HAS_PROBE_TOOL}" -eq 0 ]]; then
@@ -94,15 +94,9 @@ _backup_file() {
     log_info "已移除 ${file}（备份 → ${DEBNAS_BACKUP_ROOT}/${DEBNAS_BACKUP_RUN_ID}${file}）"
     return 0
   fi
-  dest="${file}.$(date +%Y%m%d%H%M%S).bak"
+  dest="${file}.$(printf '%(%Y%m%d%H%M%S)T' -1).bak"
   mv -- "${file}" "${dest}"
   log_info "已备份 ${file} → ${dest}"
-}
-
-# 备份旧配置文件（不覆盖已有的原始 .bak）
-backup_config_files() {
-  _backup_file "${TRADITIONAL_PATH}" mv
-  _backup_file "${DEB822_PATH}" mv
 }
 
 # 构建 DEB822 格式的软件源配置内容
@@ -168,15 +162,6 @@ update_package_lists() {
 
 # ==================== 只读探测契约（docs/ARCHITECTURE.md §4.5） ====================
 
-# 读取 /etc/os-release 字段（子 shell，不污染全局；只读）
-# 参数：$1 - 字段名（ID / VERSION_CODENAME）
-_sources_os_field() {
-  local field="$1"
-  [[ -r /etc/os-release ]] || return 0
-  # shellcheck source=/dev/null
-  (. /etc/os-release 2>/dev/null && printf '%s' "${!field:-}") || true
-}
-
 # 由源地址得到镜像显示名（去掉 /debian 后缀后查 urls.sh 名称表）
 # 参数：$1 - URI（如 https://mirrors.ustc.edu.cn/debian）
 _sources_mirror_label() {
@@ -212,7 +197,7 @@ _sources_legacy_uri() {
 # 当前状态：一行 "状态码|说明"（只读、不联网）
 module_status() {
   local codename uri suites label legacy_uri
-  codename=$(_sources_os_field VERSION_CODENAME)
+  codename=$(get_system_codename 2>/dev/null) || codename=""
   legacy_uri=$(_sources_legacy_uri)
 
   if [[ ! -f "$DEB822_PATH" ]]; then
@@ -250,8 +235,8 @@ module_plan() {
   local IFS=$' \n\t'
   local os_id codename current="" uri mirror
   local -a names=()
-  os_id=$(_sources_os_field ID)
-  codename=$(_sources_os_field VERSION_CODENAME)
+  os_id=$(_get_os_id 2>/dev/null) || os_id=""
+  codename=$(get_system_codename 2>/dev/null) || codename=""
   if [[ "$os_id" != "debian" ]]; then
     echo "info|-|当前系统不是 Debian（${os_id:-未知}），执行时直接跳过，不修改系统"
     return 0
@@ -281,9 +266,7 @@ module_plan() {
 }
 
 main() {
-  local selected_mirror
-  local mirror_name
-  local new_content
+  local selected_mirror mirror_name new_content rc=0
 
   if ! verify_debian_12_13_support; then
     return 0
@@ -301,17 +284,23 @@ main() {
   # 构建 DEB822 内容，使用 write_file_if_changed 实现幂等写入
   new_content=$(build_deb822_content "${selected_mirror}")
   # 内容变更时 write_file_if_changed 会先把现有 debian.sources 备份到 /var/backups/debnas
-  if write_file_if_changed "$DEB822_PATH" "$new_content"; then
-    # 内容变更：备份并移除传统 sources.list（避免与 DEB822 源重复，APT 不再读取）
-    _backup_file "${TRADITIONAL_PATH}" mv
-    log_success "源已写入"
-    if ! update_package_lists "${selected_mirror}"; then
-      log_warning "apt update 失败，源已写入"
+  write_file_if_changed "$DEB822_PATH" "$new_content" || rc=$?
+  case "$rc" in
+    0)
+      # 内容变更：备份并移除传统 sources.list（避免与 DEB822 源重复，APT 不再读取）
+      _backup_file "${TRADITIONAL_PATH}" mv
+      log_success "源已写入"
+      if ! update_package_lists "${selected_mirror}"; then
+        log_warning "apt update 失败，源已写入"
+        return 1
+      fi
+      ;;
+    1) log_info "源未变更，跳过更新" ;;
+    *)
+      log_error "写入 ${DEB822_PATH} 失败"
       return 1
-    fi
-  else
-    log_info "源未变更，跳过更新"
-  fi
+      ;;
+  esac
 
   # 状态由 module-runner.sh 的 run_report() 统一管理
 }

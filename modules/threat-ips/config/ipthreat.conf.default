@@ -1,5 +1,4 @@
 # ==================== 常量定义 ====================
-REQUIRED_CMDS=(firewall-cmd ipset wget gzip awk sed grep sort head crontab sipcalc)
 
 # 数据与日志位于 DebNAS 自有目录（旧版 /var/lib/firewalld-ipthreat、/var/log/firewalld-ipthreat.log
 # 由 lib/system/migration.sh 的 migration_layout_threat_ips 迁移）

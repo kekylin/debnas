@@ -37,95 +37,6 @@ FD45_DEFAULT_REPO_URL="https://repo.45drives.com/enterprise/debian"
 # 与 keyserver.ubuntu.com 上同指纹公钥一致，且该密钥能验证 bookworm/trixie 的 InRelease 签名。
 FD45_GPG_FINGERPRINT="3FBD7E034E80BAF63D5AA9BB9889DBBC731C472B"
 
-# 读取可配置的地址（留空=官方地址）；只接受 http(s):// 且不含空白的单个 URL，去掉末尾 /
-# 参数：$1 - 配置键名，$2 - 默认地址
-read_45drives_url() {
-	local key="$1" default_url="$2" url
-	url=$(config_read "global" "$key" "" 2>/dev/null) || url=""
-	[[ -n "$url" ]] || url="$default_url"
-	if [[ ! "$url" =~ ^https?://[^[:space:]]+$ ]]; then
-		log_error "debnas.conf 中 ${key} 不是合法的 http(s) 地址：${url}"
-		return 1
-	fi
-	echo "${url%/}"
-}
-
-# 校验公钥文件：只允许包含一个主密钥，且指纹等于固定指纹
-# 参数：$1 - 公钥文件路径（armored 或二进制均可）
-# 返回：0 校验通过，1 失败
-verify_45drives_gpg_fingerprint() {
-	local key_file="$1"
-	local gpg_home fprs
-
-	gpg_home=$(create_temp_dir "45drives-gpg") || return 1
-	# --with-colons 输出中 pub 行之后的第一条 fpr 为主密钥指纹（跳过子密钥）
-	fprs=$(gpg --homedir "$gpg_home" --batch --quiet --show-keys --with-colons "$key_file" 2>/dev/null \
-		| awk -F: '$1 == "pub" { want = 1; next } $1 == "fpr" && want { print $10; want = 0 }') || return 1
-
-	if [[ "$fprs" != "$FD45_GPG_FINGERPRINT" ]]; then
-		log_error "45Drives GPG 公钥指纹不匹配（期望 ${FD45_GPG_FINGERPRINT}，实际 ${fprs:-无}），拒绝安装"
-		return 1
-	fi
-	return 0
-}
-
-# 下载 45Drives 公钥 → 校验指纹 → dearmor → 原子替换 keyring（任一步失败都不动已有 keyring）
-# 参数：$1 - 公钥下载地址
-install_45drives_keyring() {
-	local key_url="$1"
-	local tmp_key tmp_bin gpg_home keyring_dir tmp_dst attempt downloaded=0
-
-	command -v gpg >/dev/null 2>&1 || apt_install_packages gnupg || {
-		log_error "gnupg 安装失败，无法校验 45Drives 公钥"
-		return 1
-	}
-
-	tmp_key=$(create_temp_file "45drives-gpg" ".asc") || return 1
-	tmp_bin=$(create_temp_file "45drives-gpg" ".gpg") || return 1
-	# 下载失败重试 1 次
-	for attempt in 1 2; do
-		if curl -fsSL --max-time 30 --connect-timeout 10 -o "$tmp_key" "$key_url" && [[ -s "$tmp_key" ]]; then
-			downloaded=1
-			break
-		fi
-		[[ $attempt -eq 2 ]] || { log_warning "45Drives GPG 公钥下载失败，重试中..."; sleep 2; }
-	done
-	if [[ $downloaded -ne 1 ]]; then
-		log_error "45Drives GPG 公钥下载失败：${key_url}"
-		log_error "网络不通时可在 /etc/debnas/debnas.conf 配置 repo_45drives_key_url / repo_45drives_url 镜像地址（指纹校验不变）"
-		return 1
-	fi
-	verify_45drives_gpg_fingerprint "$tmp_key" || return 1
-
-	# 官方提供 ASCII armored 公钥，转为二进制 keyring（与官方脚本相同格式）；镜像若已是二进制则原样使用
-	if grep -q "BEGIN PGP PUBLIC KEY BLOCK" "$tmp_key" 2>/dev/null; then
-		gpg_home=$(create_temp_dir "45drives-gpg") || return 1
-		gpg --homedir "$gpg_home" --batch --yes --dearmor -o "$tmp_bin" "$tmp_key" 2>/dev/null || tmp_bin=""
-	else
-		cp -- "$tmp_key" "$tmp_bin" || tmp_bin=""
-	fi
-	if [[ -z "$tmp_bin" || ! -s "$tmp_bin" ]] || ! verify_45drives_gpg_fingerprint "$tmp_bin"; then
-		log_error "45Drives GPG 公钥转换失败"
-		return 1
-	fi
-
-	if [[ -f "$FD45_KEYRING_FILE" ]] && cmp -s "$tmp_bin" "$FD45_KEYRING_FILE"; then
-		log_info "45Drives GPG 密钥未变更，跳过"
-		return 0
-	fi
-	# 同目录临时文件 + rename 原子替换，不截断已有 keyring
-	keyring_dir=$(dirname -- "$FD45_KEYRING_FILE")
-	install -m 0755 -d "$keyring_dir"
-	tmp_dst=$(mktemp -- "${keyring_dir}/.45drives-keyring.debnas.XXXXXX") || return 1
-	if ! cat -- "$tmp_bin" > "$tmp_dst" || ! chmod 644 "$tmp_dst" \
-		|| ! mv -fT -- "$tmp_dst" "$FD45_KEYRING_FILE"; then
-		[[ -n "$tmp_dst" ]] && rm -f -- "$tmp_dst"
-		log_error "45Drives GPG 密钥写入失败：${FD45_KEYRING_FILE}"
-		return 1
-	fi
-	log_info "45Drives GPG 密钥已更新（指纹 ${FD45_GPG_FINGERPRINT}）"
-}
-
 # 配置 45Drives APT 源（不执行任何远程脚本）
 # 参数：$1 - 系统代号（bookworm/trixie）
 configure_45drives_repo() {
@@ -133,10 +44,18 @@ configure_45drives_repo() {
 	local repo_url key_url legacy content rc=0
 	log_info "配置 45Drives 源..."
 
-	repo_url=$(read_45drives_url "repo_45drives_url" "$FD45_DEFAULT_REPO_URL") || return 1
-	key_url=$(read_45drives_url "repo_45drives_key_url" "$FD45_DEFAULT_KEY_URL") || return 1
+	repo_url=$(config_get_url repo_45drives_url "$FD45_DEFAULT_REPO_URL") || return 1
+	key_url=$(config_get_url repo_45drives_key_url "$FD45_DEFAULT_KEY_URL") || return 1
 
-	install_45drives_keyring "$key_url" || return 1
+	# 官方提供 ASCII armored 公钥，dearmor 为二进制 keyring（与官方脚本相同格式）；镜像若已是二进制则原样使用
+	command -v gpg >/dev/null 2>&1 || apt_install_packages gnupg || {
+		log_error "gnupg 安装失败，无法校验 45Drives 公钥"
+		return 1
+	}
+	if ! keyring_install_verified "$key_url" "$FD45_GPG_FINGERPRINT" "$FD45_KEYRING_FILE" --dearmor --label 45Drives; then
+		log_error "网络不通时可在 /etc/debnas/debnas.conf 配置 repo_45drives_key_url / repo_45drives_url 镜像地址（指纹校验不变）"
+		return 1
+	fi
 
 	# 官方脚本写入的 .list（及更早的 45drives.list）与本模块的 .sources 重复，备份停用，避免重复源告警
 	for legacy in "${FD45_SOURCES_DIR}/45drives-enterprise-${codename}.list" "${FD45_SOURCES_DIR}/45drives.list"; do
@@ -146,7 +65,7 @@ configure_45drives_repo() {
 				rm -f -- "$legacy"
 				log_info "旧 45Drives 源已移除（原件在 ${DEBNAS_BACKUP_ROOT}/）：${legacy}"
 			else
-				mv -f -- "$legacy" "${legacy}.$(date +%Y%m%d%H%M%S).bak"
+				mv -f -- "$legacy" "${legacy}.$(printf '%(%Y%m%d%H%M%S)T' -1).bak"
 				log_info "旧 45Drives 源已改名备份：${legacy}.*.bak"
 			fi
 		fi
@@ -184,6 +103,17 @@ remove_debnas_shares_plugin_dir() {
 	log_success "已移除 DebNAS 共享管理插件：${dir}"
 }
 
+# 读取 file_sharing_ui（只读，小写；非法值按 debnas）
+_fd45_ui_choice() {
+	local v
+	v=$(config_read "global" "file_sharing_ui" "debnas" 2>/dev/null) || v="debnas"
+	v="${v,,}"
+	case "$v" in
+	debnas | 45drives) echo "$v" ;;
+	*) echo "debnas" ;;
+	esac
+}
+
 # 检测到自研插件时提示二选一：交互模式询问；非交互 / --yes 时仅当 file_sharing_ui=45drives 才移除
 # 返回：0 可继续安装 45Drives，1 用户取消
 ensure_debnas_shares_removed() {
@@ -196,8 +126,8 @@ ensure_debnas_shares_removed() {
 			return 1
 		fi
 	else
-		choice=$(config_read "global" "file_sharing_ui" "debnas" 2>/dev/null) || choice="debnas"
-		if [[ "${choice,,}" != "45drives" ]]; then
+		choice=$(_fd45_ui_choice)
+		if [[ "$choice" != "45drives" ]]; then
 			log_error "非交互模式下不自动替换：请先在 /etc/debnas/debnas.conf 设置 file_sharing_ui=45drives"
 			return 1
 		fi
@@ -215,30 +145,14 @@ install_45drives_components_repo() {
 
 # ==================== 只读探测契约（docs/ARCHITECTURE.md §4.5） ====================
 
-# 包是否已安装（只读）
-_fd45_pkg_installed() {
-	[[ "$(dpkg-query -W -f='${db:Status-Status}' "$1" 2>/dev/null)" == "installed" ]]
-}
-
-# 读取 file_sharing_ui（只读，小写；非法值按 debnas）
-_fd45_ui_choice() {
-	local v
-	v=$(config_read "global" "file_sharing_ui" "debnas" 2>/dev/null) || v="debnas"
-	v="${v,,}"
-	case "$v" in
-	debnas | 45drives) echo "$v" ;;
-	*) echo "debnas" ;;
-	esac
-}
-
 # 当前状态：一行 "状态码|说明"（只读、< 300ms、不联网）
 module_status() {
 	local IFS=$' \n\t'
 	local choice fs=0 ids=0 src=0 key=0
 	local -a lacks=()
 	choice=$(_fd45_ui_choice)
-	_fd45_pkg_installed cockpit-file-sharing && fs=1
-	_fd45_pkg_installed cockpit-identities && ids=1
+	pkg_is_installed cockpit-file-sharing && fs=1
+	pkg_is_installed cockpit-identities && ids=1
 	[[ -f "${FD45_SOURCES_DIR}/45drives.sources" ]] && src=1
 	[[ -f "$FD45_KEYRING_FILE" ]] && key=1
 
@@ -293,18 +207,20 @@ module_plan() {
 	fi
 
 	command -v gpg >/dev/null 2>&1 || echo "pkg|gnupg|apt 安装（用于校验 45Drives 公钥指纹）"
-	repo_url=$(config_read "global" "repo_45drives_url" "" 2>/dev/null) || repo_url=""
-	key_url=$(config_read "global" "repo_45drives_key_url" "" 2>/dev/null) || key_url=""
-	echo "info|45Drives 公钥|执行时从 ${key_url:-$FD45_DEFAULT_KEY_URL} 下载（需联网）"
-	echo "write|${FD45_KEYRING_FILE}|公钥指纹校验通过后原子替换；内容相同跳过；不另做备份"
+	repo_url=$(config_get_url repo_45drives_url "$FD45_DEFAULT_REPO_URL" 2>/dev/null) \
+		|| { repo_url="$FD45_DEFAULT_REPO_URL"; echo "risk|repo_45drives_url|debnas.conf 中地址不是合法的 http(s) 地址，执行时会中止"; }
+	key_url=$(config_get_url repo_45drives_key_url "$FD45_DEFAULT_KEY_URL" 2>/dev/null) \
+		|| { key_url="$FD45_DEFAULT_KEY_URL"; echo "risk|repo_45drives_key_url|debnas.conf 中地址不是合法的 http(s) 地址，执行时会中止"; }
+	echo "info|45Drives 公钥|执行时从 ${key_url} 下载（需联网）"
+	echo "write|${FD45_KEYRING_FILE}|公钥指纹校验通过后原子替换；内容相同跳过；旧文件备份到 /var/backups/debnas/"
 	echo "risk|45Drives 公钥|指纹 ${FD45_GPG_FINGERPRINT} 为首次获取固定（TOFU），官方未公布指纹"
 	for legacy in "${FD45_SOURCES_DIR}/45drives-enterprise-${codename}.list" "${FD45_SOURCES_DIR}/45drives.list"; do
 		[[ -f "$legacy" ]] && echo "write|${legacy}|旧格式源集中备份到 /var/backups/debnas/ 后移除"
 	done
-	echo "write|${FD45_SOURCES_DIR}/45drives.sources|DEB822 源 ${repo_url:-$FD45_DEFAULT_REPO_URL} ${codename} main（amd64）；内容未变则跳过，变更时原件备份到 /var/backups/debnas/"
+	echo "write|${FD45_SOURCES_DIR}/45drives.sources|DEB822 源 ${repo_url} ${codename} main（amd64）；内容未变则跳过，变更时原件备份到 /var/backups/debnas/"
 
 	for pkg in cockpit-file-sharing cockpit-identities; do
-		_fd45_pkg_installed "$pkg" || missing+=("$pkg")
+		pkg_is_installed "$pkg" || missing+=("$pkg")
 	done
 	if [[ ${#missing[@]} -gt 0 ]]; then
 		echo "pkg|${missing[*]}|apt update 后从 45Drives 第三方仓库安装（依赖由 apt 解析）"
@@ -330,8 +246,8 @@ main() {
 	"bookworm"|"trixie")
 		log_info "Debian ${system_codename}: 45Drives 仓库"
 		ensure_debnas_shares_removed || exit "${ERROR_GENERAL}"
-		configure_45drives_repo "${system_codename}"
-		install_45drives_components_repo
+		configure_45drives_repo "${system_codename}" || exit "${ERROR_DEPENDENCY}"
+		install_45drives_components_repo || exit "${ERROR_GENERAL}"
 		# 记录选择，避免之后运行一键方案时又切回自研插件
 		config_write "global" "file_sharing_ui" "45drives" || log_warning "写入 file_sharing_ui=45drives 失败"
 		;;
@@ -341,7 +257,6 @@ main() {
 		exit "${ERROR_UNSUPPORTED_OS}"
 		;;
 	esac
-
 }
 
 # 契约守卫：DEBNAS_MODULE_ACTION=status|plan 时只加载函数供只读探测，不执行 main（docs/ARCHITECTURE.md §4.5）

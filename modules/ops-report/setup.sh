@@ -23,29 +23,6 @@ ops_ensure_report_dirs() {
   return 0
 }
 
-ops_sysstat_upsert() {
-  local file="$1" key="$2" value="$3"
-  local content=""
-  [[ -f "$file" ]] && content=$(cat "$file" 2>/dev/null || true)
-
-  local new_content
-  new_content=$(printf '%s\n' "${content}" | awk -v k="$key" -v v="$value" '
-    BEGIN { replaced = 0 }
-    {
-      if ($0 ~ "^[[:space:]]*" k "=") {
-        print k "=" v
-        replaced = 1
-      } else {
-        print
-      }
-    }
-    END {
-      if (!replaced) print k "=" v
-    }
-  ')
-  write_file_if_changed "$file" "$new_content" 644 || true
-}
-
 ops_configure_sysstat() {
   # sadc 在 Debian 上位于 /usr/lib/sysstat/sadc，不在 PATH；由 sysstat 服务保证可用
   install_missing_dependencies sar smartctl || log_warning "部分报告依赖安装失败，缺失能力将自动降级"

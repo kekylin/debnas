@@ -28,10 +28,14 @@ SHARES_SMB_CONF="${SHARES_SMB_CONF:-/etc/samba/smb.conf}"
 SHARES_EXPORTS_DIR="${SHARES_EXPORTS_DIR:-/etc/exports.d}"
 # 45Drives 文件共享插件包名（cockpit-identities 是用户/组插件，与本插件不冲突，不处理）
 SHARES_45DRIVES_PKG="cockpit-file-sharing"
+# _shares_plugin_diff 的输出
+SHARES_DIFF_CHANGED=()
+SHARES_DIFF_STALE=()
 
 # ==================== 配置读取 ====================
 
-# 读取界面选择：debnas | 45drives（非法值告警并按默认 debnas 处理）
+# 读取界面选择：debnas | 45drives（非法值按默认 debnas 处理）
+# 参数：$1 - --quiet 时不打告警日志（只读探测用）
 shares_ui_choice() {
 	local v
 	v=$(config_read "global" "file_sharing_ui" "debnas" 2>/dev/null) || v="debnas"
@@ -39,7 +43,7 @@ shares_ui_choice() {
 	case "$v" in
 	debnas | 45drives) echo "$v" ;;
 	*)
-		log_warning "debnas.conf 中 file_sharing_ui=${v} 无效（可选 debnas | 45drives），按 debnas 处理"
+		[[ "${1:-}" == "--quiet" ]] || log_warning "debnas.conf 中 file_sharing_ui=${v} 无效（可选 debnas | 45drives），按 debnas 处理"
 		echo "debnas"
 		;;
 	esac
@@ -48,15 +52,10 @@ shares_ui_choice() {
 # 是否安装 NFS 服务端：file_sharing_nfs=1 装 / 0 不装 / 留空：已装则保持，交互模式询问，非交互不装
 # 返回：0 安装，1 不安装
 shares_want_nfs() {
-	local v
-	v=$(config_read "global" "file_sharing_nfs" "" 2>/dev/null) || v=""
-	case "$v" in
-	1 | yes | true) return 0 ;;
-	0 | no | false) return 1 ;;
-	esac
-	if shares_pkg_installed nfs-kernel-server; then
-		return 0
-	fi
+	local rc=0
+	config_get_bool file_sharing_nfs "" || rc=$?
+	[[ $rc -ne 2 ]] && return "$rc"
+	pkg_is_installed nfs-kernel-server && return 0
 	if [[ -t 0 && "${DEBNAS_FORCE_YES:-0}" -ne 1 ]]; then
 		[[ "$(ui_confirm "同时安装 NFS 服务端（nfs-kernel-server）？" "供 Linux / macOS 客户端以 NFS 挂载共享目录。\n不需要可选否，以后可在 debnas.conf 设置 file_sharing_nfs=1 后重新运行本模块。")" == "0" ]]
 		return $?
@@ -66,13 +65,6 @@ shares_want_nfs() {
 }
 
 # ==================== 工具函数 ====================
-
-# 包是否已安装（只认 install ok installed，已卸载仅剩配置的不算）
-shares_pkg_installed() {
-	local status
-	status=$(dpkg-query -W -f='${Status}' "$1" 2>/dev/null) || return 1
-	[[ "$status" == "install ok installed" ]]
-}
 
 # 是否切换（移除另一种插件）：交互模式询问；非交互 / --yes 按 file_sharing_ui 配置
 # 参数：$1 - 本模块要安装的界面（debnas|45drives），$2 - 提示标题，$3 - 说明
@@ -135,8 +127,8 @@ shares_ensure_registry_include() {
 		log_warning "未找到 ${conf}，跳过启用 Samba 注册表"
 		return 0
 	fi
-	current=$(cat -- "$conf") || return 1
-	new=$(printf '%s\n' "$current" | smbconf_with_registry) || return 1
+	current=$(< "$conf") || return 1
+	new=$(smbconf_with_registry <<< "$current") || return 1
 	if [[ "$new" == "$current" ]]; then
 		log_info "Samba 注册表已启用（include = registry）"
 		return 0
@@ -154,11 +146,31 @@ shares_ensure_registry_include() {
 
 # ==================== 插件部署 ====================
 
+# 比较插件源目录与目标目录（只读）
+# 参数：$1 - 源目录，$2 - 目标目录
+# 输出：写全局数组 SHARES_DIFF_CHANGED（将新增/更新的文件名）、SHARES_DIFF_STALE（目标中多余的文件名）
+_shares_plugin_diff() {
+	local src="$1" dst="$2" f name
+	SHARES_DIFF_CHANGED=()
+	SHARES_DIFF_STALE=()
+	for f in "$src"/*; do
+		[[ -f "$f" ]] || continue
+		name="${f##*/}"
+		[[ -f "${dst}/${name}" ]] && cmp -s -- "$f" "${dst}/${name}" && continue
+		SHARES_DIFF_CHANGED+=("$name")
+	done
+	for f in "$dst"/*; do
+		[[ -f "$f" ]] || continue
+		name="${f##*/}"
+		[[ -e "${src}/${name}" ]] || SHARES_DIFF_STALE+=("$name")
+	done
+}
+
 # 把插件文件安装到目标目录：目录 755、文件 644、root 属主；内容相同的文件跳过；删除目标中多余的旧文件
 # 参数：$1 - 源目录，$2 - 目标目录，$3 - 属主（可选，默认 root；测试时传当前用户）
 shares_deploy_plugin() {
 	local src="$1" dst="$2" owner="${3:-root}"
-	local f name changed=0
+	local name changed=0
 	local -a own_opts=()
 	[[ -n "$src" && -d "$src" && -f "${src}/manifest.json" ]] || {
 		log_error "插件源目录不完整：${src}"
@@ -168,23 +180,16 @@ shares_deploy_plugin() {
 	[[ "$owner" == "root" ]] && own_opts=(-o root -g root)
 
 	install -d -m 755 "${own_opts[@]}" -- "$dst" || return 1
-	for f in "$src"/*; do
-		[[ -f "$f" ]] || continue
-		name=$(basename -- "$f")
-		if [[ -f "${dst}/${name}" ]] && cmp -s -- "$f" "${dst}/${name}"; then
-			continue
-		fi
-		install -m 644 "${own_opts[@]}" -- "$f" "${dst}/${name}" || return 1
+	_shares_plugin_diff "$src" "$dst"
+	for name in "${SHARES_DIFF_CHANGED[@]}"; do
+		install -m 644 "${own_opts[@]}" -- "${src}/${name}" "${dst}/${name}" || return 1
 		changed=1
 	done
 	# 目标目录只属于本插件：清理源中已不存在的文件
-	for f in "$dst"/*; do
-		[[ -f "$f" ]] || continue
-		name=$(basename -- "$f")
-		if [[ -n "$name" && ! -e "${src}/${name}" ]]; then
-			rm -f -- "${dst}/${name}"
-			changed=1
-		fi
+	for name in "${SHARES_DIFF_STALE[@]}"; do
+		[[ -n "$name" ]] || continue
+		rm -f -- "${dst}/${name}"
+		changed=1
 	done
 	if [[ $changed -eq 1 ]]; then
 		log_success "共享管理插件已部署到 ${dst}"
@@ -195,7 +200,7 @@ shares_deploy_plugin() {
 
 # 检测到 45Drives 文件共享插件时按二选一规则移除
 shares_remove_45drives() {
-	shares_pkg_installed "$SHARES_45DRIVES_PKG" || return 0
+	pkg_is_installed "$SHARES_45DRIVES_PKG" || return 0
 	log_warning "检测到 45Drives 文件共享插件（${SHARES_45DRIVES_PKG}），两种共享管理插件只能保留一个"
 	if ! shares_confirm_switch "debnas" "卸载 45Drives 文件共享插件，改用 DebNAS 共享管理？" \
 		"两者共用 Samba 注册表与 ${SHARES_EXPORTS_DIR}/cockpit-file-sharing.exports，已有共享不会丢失。\ncockpit-identities（用户/组插件）保留不动。"; then
@@ -205,7 +210,7 @@ shares_remove_45drives() {
 	# apt_remove_safe 会 autoremove：先把 Samba/NFS 标记为手动安装，避免随 45Drives 插件被连带卸载
 	local -a keep=() p
 	for p in samba samba-common-bin nfs-kernel-server; do
-		shares_pkg_installed "$p" && keep+=("$p")
+		pkg_is_installed "$p" && keep+=("$p")
 	done
 	if [[ ${#keep[@]} -gt 0 ]]; then
 		apt-mark manual "${keep[@]}" >/dev/null 2>&1 || log_warning "apt-mark manual 失败：${keep[*]}"
@@ -215,25 +220,14 @@ shares_remove_45drives() {
 
 # ==================== 只读探测契约（docs/ARCHITECTURE.md §4.5） ====================
 
-# 读取 file_sharing_ui（只读、不打日志；非法值按 debnas，与 shares_ui_choice 一致）
-_shares_probe_choice() {
-	local v
-	v=$(config_read "global" "file_sharing_ui" "debnas" 2>/dev/null) || v="debnas"
-	v="${v,,}"
-	case "$v" in
-	debnas | 45drives) echo "$v" ;;
-	*) echo "debnas" ;;
-	esac
-}
-
 # smb.conf 是否已启用注册表：yes | no | missing（文件不存在）| unreadable（非 root 读不到）
 # 判据与 shares_ensure_registry_include 相同：smbconf_with_registry 输出与原文相同即已启用
 _shares_probe_registry() {
 	local conf="$SHARES_SMB_CONF" current new
 	[[ -e "$conf" ]] || { echo "missing"; return 0; }
 	[[ -r "$conf" ]] || { echo "unreadable"; return 0; }
-	current=$(cat -- "$conf" 2>/dev/null) || { echo "unreadable"; return 0; }
-	new=$(printf '%s\n' "$current" | smbconf_with_registry 2>/dev/null) || { echo "unreadable"; return 0; }
+	current=$(< "$conf") 2>/dev/null || { echo "unreadable"; return 0; }
+	new=$(smbconf_with_registry <<< "$current" 2>/dev/null) || { echo "unreadable"; return 0; }
 	if [[ "$new" == "$current" ]]; then echo "yes"; else echo "no"; fi
 }
 
@@ -254,7 +248,7 @@ _shares_probe_delegate() {
 # 当前状态：一行 "状态码|说明"（只读、< 300ms、不联网）
 module_status() {
 	local choice reg nfs_note smbd_note reg_note manifest="${SHARES_PLUGIN_DIR}/manifest.json" sub
-	choice=$(_shares_probe_choice)
+	choice=$(shares_ui_choice --quiet)
 	if [[ "$choice" == "45drives" ]]; then
 		# 配置为 45Drives：本模块执行时改为安装 45Drives 插件，状态取 cockpit-45drives 的检测结果
 		sub=$(_shares_probe_delegate status) || sub=""
@@ -268,22 +262,22 @@ module_status() {
 	fi
 
 	if [[ ! -f "$manifest" ]]; then
-		if shares_pkg_installed "$SHARES_45DRIVES_PKG"; then
+		if pkg_is_installed "$SHARES_45DRIVES_PKG"; then
 			echo "absent|未部署共享管理插件；已装 45Drives cockpit-file-sharing（执行时会卸载）"
 		else
 			echo "absent|未部署共享管理插件"
 		fi
 		return 0
 	fi
-	if shares_pkg_installed "$SHARES_45DRIVES_PKG"; then
+	if pkg_is_installed "$SHARES_45DRIVES_PKG"; then
 		echo "warn|共享管理插件与 45Drives cockpit-file-sharing 同时存在"
 		return 0
 	fi
-	if ! shares_pkg_installed samba; then
+	if ! pkg_is_installed samba; then
 		echo "partial|插件已部署，未安装 samba"
 		return 0
 	fi
-	if shares_pkg_installed nfs-kernel-server; then nfs_note="NFS 已装"; else nfs_note="未装 NFS"; fi
+	if pkg_is_installed nfs-kernel-server; then nfs_note="NFS 已装"; else nfs_note="未装 NFS"; fi
 	reg=$(_shares_probe_registry)
 	case "$reg" in
 	yes) reg_note="注册表已启用" ;;
@@ -306,8 +300,8 @@ module_status() {
 # 预演：每行 "类型|目标|备注"（无副作用；不联网；与 main 的判断保持一致；已满足的不列）
 module_plan() {
 	local IFS=$' \n\t'
-	local codename choice nfs_cfg nfs="0" reg f name sub
-	local -a want=(samba samba-common-bin) missing=() changed=() stale=() p
+	local codename choice nfs="0" nfs_rc=0 reg sub
+	local -a want=(samba samba-common-bin) missing=() p
 	codename=$(get_system_codename 2>/dev/null) || codename=""
 	case "$codename" in
 	bookworm | trixie) ;;
@@ -317,7 +311,7 @@ module_plan() {
 		;;
 	esac
 
-	choice=$(_shares_probe_choice)
+	choice=$(shares_ui_choice --quiet)
 	if [[ "$choice" == "45drives" ]]; then
 		echo "info|cockpit-45drives|file_sharing_ui=45drives：本模块改为执行 cockpit-45drives（exec），以下为该模块的预演"
 		sub=$(_shares_probe_delegate plan) || sub=""
@@ -329,21 +323,21 @@ module_plan() {
 		return 0
 	fi
 
-	if shares_pkg_installed "$SHARES_45DRIVES_PKG"; then
+	if pkg_is_installed "$SHARES_45DRIVES_PKG"; then
 		for p in samba samba-common-bin nfs-kernel-server; do
-			shares_pkg_installed "$p" && missing+=("$p")
+			pkg_is_installed "$p" && missing+=("$p")
 		done
 		[[ ${#missing[@]} -gt 0 ]] && echo "info|${missing[*]}|apt-mark manual，防止随 45Drives 插件被 autoremove 连带卸载"
 		missing=()
 		echo "risk|${SHARES_45DRIVES_PKG}|二选一：apt remove（不 purge，随后 autoremove）卸载 45Drives 文件共享插件；交互模式先确认，非交互按 file_sharing_ui=debnas 执行；cockpit-identities 保留"
 	fi
 
-	nfs_cfg=$(config_read "global" "file_sharing_nfs" "" 2>/dev/null) || nfs_cfg=""
-	case "$nfs_cfg" in
-	1 | yes | true) nfs=1 ;;
-	0 | no | false) nfs=0 ;;
+	config_get_bool file_sharing_nfs "" || nfs_rc=$?
+	case "$nfs_rc" in
+	0) nfs=1 ;;
+	1) nfs=0 ;;
 	*)
-		if shares_pkg_installed nfs-kernel-server; then
+		if pkg_is_installed nfs-kernel-server; then
 			nfs=1
 		else
 			echo "info|nfs-kernel-server|file_sharing_nfs 未设置：交互模式询问是否安装，非交互不装"
@@ -352,7 +346,7 @@ module_plan() {
 	esac
 	[[ "$nfs" == "1" ]] && want+=(nfs-kernel-server)
 	for p in "${want[@]}"; do
-		shares_pkg_installed "$p" || missing+=("$p")
+		pkg_is_installed "$p" || missing+=("$p")
 	done
 	[[ ${#missing[@]} -gt 0 ]] && echo "pkg|${missing[*]}|apt 安装"
 
@@ -365,25 +359,13 @@ module_plan() {
 	[[ "$nfs" == "1" && ! -d "$SHARES_EXPORTS_DIR" ]] && echo "write|${SHARES_EXPORTS_DIR}/|创建目录（不写导出规则）"
 
 	# 插件文件：与源逐个比较，列出将新增/更新与将删除的文件
-	for f in "$SHARES_PLUGIN_SRC"/*; do
-		[[ -f "$f" ]] || continue
-		name=$(basename -- "$f")
-		if [[ -f "${SHARES_PLUGIN_DIR}/${name}" ]] && cmp -s -- "$f" "${SHARES_PLUGIN_DIR}/${name}"; then
-			continue
-		fi
-		changed+=("$name")
-	done
-	for f in "$SHARES_PLUGIN_DIR"/*; do
-		[[ -f "$f" ]] || continue
-		name=$(basename -- "$f")
-		[[ -e "${SHARES_PLUGIN_SRC}/${name}" ]] || stale+=("$name")
-	done
-	if [[ ${#changed[@]} -gt 0 ]]; then
-		echo "write|${SHARES_PLUGIN_DIR}/|install 部署 ${changed[*]}（目录 755/文件 644，root 属主；直接覆盖，不另做备份；登记到文件清单）"
+	_shares_plugin_diff "$SHARES_PLUGIN_SRC" "$SHARES_PLUGIN_DIR"
+	if [[ ${#SHARES_DIFF_CHANGED[@]} -gt 0 ]]; then
+		echo "write|${SHARES_PLUGIN_DIR}/|install 部署 ${SHARES_DIFF_CHANGED[*]}（目录 755/文件 644，root 属主；直接覆盖，不另做备份；登记到文件清单）"
 	else
 		echo "info|${SHARES_PLUGIN_DIR}/|插件文件与源一致，跳过"
 	fi
-	[[ ${#stale[@]} -gt 0 ]] && echo "write|${SHARES_PLUGIN_DIR}/|删除源中已不存在的旧文件 ${stale[*]}（不另做备份）"
+	[[ ${#SHARES_DIFF_STALE[@]} -gt 0 ]] && echo "write|${SHARES_PLUGIN_DIR}/|删除源中已不存在的旧文件 ${SHARES_DIFF_STALE[*]}（不另做备份）"
 
 	if systemctl is-active --quiet smbd 2>/dev/null; then
 		echo "service|smbd|已运行；确保开机自启"
@@ -399,7 +381,7 @@ module_plan() {
 	fi
 	echo "port|445/tcp 139/tcp|Samba（smbd）；本模块不改防火墙（firewall 模块放行 samba 服务）"
 	[[ "$nfs" == "1" ]] && echo "port|2049/tcp 111/tcp+udp|NFS（nfs-server/rpcbind）；本模块不改防火墙"
-	shares_pkg_installed samba || echo "risk|smbd|安装并启用 Samba 服务，局域网可访问 445/139 端口（一键方案默认包含）"
+	pkg_is_installed samba || echo "risk|smbd|安装并启用 Samba 服务，局域网可访问 445/139 端口（一键方案默认包含）"
 	return 0
 }
 

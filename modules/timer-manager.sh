@@ -16,11 +16,6 @@ source "${SCRIPT_DIR}/lib/bootstrap.sh"
 
 readonly TIMER_MODULES=("sys-patches" "wallpaper" "hosts-sync" "threat-ips" "ops-report")
 
-_timer_display_name() {
-  local module_name="$1"
-  get_module_field "$module_name" "name" "$module_name" 2>/dev/null || echo "$module_name"
-}
-
 _timer_list_all() {
   echo "定时任务概览"
   echo "────────────────────────────────────────────"
@@ -28,7 +23,7 @@ _timer_list_all() {
   echo "────────────────────────────────────────────"
   local module_name display status schedule
   for module_name in "${TIMER_MODULES[@]}"; do
-    display=$(_timer_display_name "$module_name")
+    get_module_field_var display "$module_name" "name" "$module_name" || true
     if cron_is_registered "$module_name"; then
       schedule=$(cron_get_schedule "$module_name")
       printf "  %-20s %-8s %s（%s）\n" "$display" "已启用" "$schedule" "$(cron_describe "$schedule")"
@@ -56,7 +51,7 @@ module_status() {
   entries=$(crontab -l 2>/dev/null | grep -cF "$CRON_MARKER" || true)
   entries="${entries:-0}"
   for module_name in "${TIMER_MODULES[@]}"; do
-    cron_is_registered "$module_name" 2>/dev/null && enabled=$((enabled + 1))
+    [[ "$(cron_state "$module_name")" == "on" ]] && enabled=$((enabled + 1))
   done
   if [[ "$entries" -eq 0 ]]; then
     echo "absent|未启用任何 DebNAS 定时任务"

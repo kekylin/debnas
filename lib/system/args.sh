@@ -160,6 +160,7 @@ parse_global_args() {
 	done
 
 	# 将剩余参数存入全局数组（避免 eval 反序列化，安全传递含空格/特殊字符的参数）
+	# shellcheck disable=SC2034  # 被 bin/debnas、bin/module-runner.sh 读取
 	DEBNAS_REMAINING_ARGS_ARRAY=("${remaining_args[@]+"${remaining_args[@]}"}")
 	return 0
 }

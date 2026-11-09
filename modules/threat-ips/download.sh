@@ -48,22 +48,155 @@ prepare_input_file() {
   printf "%s" "${temp_input}"
 }
 
-# 解析 IP 条目：逐行解析并统计
+# 解析 IP 条目：一次 awk 批量完成清洗、分类与校验（旧实现每行起 5 个以上进程，6.5 万行需十几分钟）
+# 规则逐条复刻旧实现，输出逐行一致：
+#   清洗 = cut -d'#' -f1 | xargs（去注释；按空格/Tab 分词，处理引号与反斜杠，/bin/echo 吃掉开头的 -n/-e/-E）
+#   判定顺序 = IPv4 CIDR > IPv6 CIDR > IPv4 范围（展开，≤ MAX_RANGE_SIZE）> IPv6 范围（只取两端）> 单个地址
+#   地址合法性 = sipcalc 1.1.6 的 validate_v4addr / validate_netmask / validate_v6addr 判定（含其宽松之处）
+# 参数：$1 - 已去空行/注释行的列表，$2/$3 - IPv4/IPv6 输出文件（追加）
+# 返回：0 有有效条目，1 全部无效
 parse_ip_entries() {
   local temp_input="$1" temp_file_ipv4="$2" temp_file_ipv6="$3"
-  local total_count valid_count=0 invalid_count=0 ip
+  local warn_file stats msg total_count=0 valid_count=0 invalid_count=0
 
-  total_count=$(wc -l < "${temp_input}")
+  warn_file=$(create_temp_file "parse_warn" ".txt") || return 1
   log_info "解析 IP 列表中..."
+  stats=$(LC_ALL=C awk -v out4="${temp_file_ipv4}" -v out6="${temp_file_ipv6}" \
+    -v warnf="${warn_file}" -v maxr="${MAX_RANGE_SIZE}" '
+    function warn(m) { print m >> warnf }
+    # 形如 d{1,3}.d{1,3}.d{1,3}.d{1,3}（mawk 旧版不支持 {m,n}，逐段判断）
+    function quad(s,   o, i) {
+      if (split(s, o, ".") != 4) return 0
+      for (i = 1; i <= 4; i++) if (o[i] !~ /^[0-9]+$/ || length(o[i]) > 3) return 0
+      return 1
+    }
+    # sipcalc validate_v4addr：四段、每段 1~3 位且 ≤ 255
+    function v4ok(s,   o) {
+      if (!quad(s)) return 0
+      split(s, o, ".")
+      return o[1] + 0 <= 255 && o[2] + 0 <= 255 && o[3] + 0 <= 255 && o[4] + 0 <= 255
+    }
+    function ip2n(s,   o) { split(s, o, "."); return ((o[1] * 256 + o[2]) * 256 + o[3]) * 256 + o[4] }
+    # sipcalc validate_netmask == 2：a.b.c.d/m（"/" 前最多取 15 个字符），m 为 1~2 位且 ≤ 32
+    function v4mask(s,   p, m) {
+      p = index(s, "/")
+      if (!p || length(s) > 18) return 0
+      if (!v4ok(substr(s, 1, p - 1 < 15 ? p - 1 : 15))) return 0
+      m = substr(s, p + 1)
+      return m ~ /^[0-9][0-9]?$/ && m + 0 <= 32
+    }
+    # sipcalc validate_s_v6addr；v4in6=1 时 a 为内嵌 IPv4 之前的部分（如 "::ffff:"）
+    function v6s(a, v4in6,   n, u, t, nc, cp, g, i) {
+      n = length(a)
+      if (n < 2 || n > 39 || a ~ /[^0-9A-Fa-f:]/ || index(a, ":::")) return 0
+      if (substr(a, 1, 1) == ":" && substr(a, 2, 1) != ":") return 0
+      if (!v4in6 && substr(a, n, 1) == ":" && substr(a, n - 1, 1) != ":") return 0
+      u = a; nc = gsub(/:/, "", u)
+      u = a; cp = gsub(/::/, "", u)
+      if (cp > 1 || (!cp && nc != 7 - v4in6) || (cp && nc > 7 - v4in6)) return 0
+      g = split(a, t, ":")
+      for (i = 1; i <= g; i++) if (length(t[i]) > 4) return 0
+      return 1
+    }
+    # sipcalc validate_v6addr（含 split_ipv6addr 的拆分方式：前缀长度 1~3 个任意字符、内嵌 IPv4）
+    function v6ok(s,   n, p, t, nm, v4, pd, pc, x, y, k, e, len) {
+      n = length(s); nm = ""; v4 = ""
+      p = index(s, "/")
+      t = s
+      if (p && gsub(/\//, "/", t) == 1 && n - p + 1 > 1 && n - p + 1 < 5) nm = substr(s, p + 1)
+      pd = index(s, "."); pc = index(s, ":")
+      x = pd ? n - pd + 1 : 0; y = pc ? n - pc + 1 : 0
+      t = s
+      if (gsub(/\./, ".", t) == 3 && x < y) {
+        for (k = pd - 1; substr(s, k, 1) != ":"; k--) ;
+        e = p ? p - 1 : n
+        if (e - k >= 7 && e - k <= 15) v4 = substr(s, k + 1, e - k)
+      }
+      len = n - length(v4) - length(nm) - (nm != "")
+      if (len <= 1 || len >= 40) return 0
+      if (!v6s(substr(s, 1, len), v4 != "")) return 0
+      return v4 == "" || v4ok(v4)
+    }
+    # 旧实现 validate_ip（sipcalc 输出 -[ipv4 / -[ipv6）：4 / 6 / 0
+    # "-" 开头的参数会被 sipcalc 当作选项（"-" 本身还会读走 stdin），一律视为无效
+    function sipclass(s) {
+      if (substr(s, 1, 1) == "-") return 0
+      if (v6ok(s)) return 6
+      if (v4mask(s) || v4ok(s)) return 4
+      return 0
+    }
+    # cut -d"#" -f1 | xargs（GNU xargs + /bin/echo）
+    function norm(s,   p, n, i, c, q, cur, hq, tk, nt, st, r) {
+      p = index(s, "#"); if (p) s = substr(s, 1, p - 1)
+      n = length(s); q = ""; cur = ""; hq = 0; nt = 0
+      for (i = 1; i <= n; i++) {
+        c = substr(s, i, 1)
+        if (q != "") { if (c == q) q = ""; else cur = cur c; continue }
+        # 参数开始前跳过所有空白字符（含 \r \v \f）；参数内部只有空格/Tab 才分隔
+        if (cur == "" && !hq && index(" \t\r\v\f", c)) continue
+        # 引号括起的空串（""）也算一个参数，echo 输出时会多出空格
+        if (c == " " || c == "\t") { if (cur != "" || hq) tk[++nt] = cur; cur = ""; hq = 0; continue }
+        if (c == "\\") { cur = cur (i < n ? substr(s, ++i, 1) : "\n"); continue }
+        if (c == "\"" || c == "\047") { q = c; hq = 1; continue }
+        cur = cur c
+      }
+      # 引号未闭合：xargs 只执行已完整的参数
+      if (q == "" && (cur != "" || hq)) tk[++nt] = cur
+      for (st = 1; st <= nt && tk[st] ~ /^-[neE]+$/; st++) ;
+      r = ""
+      for (i = st; i <= nt; i++) r = r (i > st ? " " : "") tk[i]
+      sub(/\n+$/, "", r)
+      return r
+    }
+    function parse(c,   t, p, m, sn, en, cnt, i, k) {
+      if (c ~ /^[0-9.]+\/[0-9]+$/ && split(c, t, "/") == 2 && quad(t[1]) && length(t[2]) <= 2 \
+        && t[2] + 0 <= 32 && v4ok(t[1])) { print c >> out4; return 1 }
+      if (c ~ /^[0-9a-fA-F:]+\/[0-9]+$/) {
+        p = index(c, "/"); m = substr(c, p + 1)
+        if (length(m) <= 3) {
+          if (m + 0 > 128) warn("无效 IPv6 CIDR 掩码：" c)
+          else if (!v6ok(c)) warn("无效 IPv6 CIDR 格式：" c)
+          else { print c >> out6; return 1 }
+        }
+      }
+      if (c ~ /^[0-9.]+-[0-9.]+$/ && split(c, t, "-") == 2 && quad(t[1]) && quad(t[2])) {
+        if (!v4ok(t[1]) || !v4ok(t[2])) warn("无效 IPv4 范围地址：" c)
+        else {
+          sn = ip2n(t[1]); en = ip2n(t[2]); cnt = en - sn + 1
+          if (sn > en) warn("无效 IPv4 范围：" c "（起始地址大于结束地址）")
+          else if (cnt > maxr) warn("IPv4 范围过大：" c "（" sprintf("%.0f", cnt) " 条，建议使用 CIDR 格式）")
+          else {
+            for (i = sn; i <= en; i++)
+              printf("%d.%d.%d.%d\n", int(i / 16777216), int(i / 65536) % 256, int(i / 256) % 256, i % 256) >> out4
+            return 1
+          }
+        }
+      }
+      if (c ~ /^[0-9a-fA-F:]+-[0-9a-fA-F:]+$/) {
+        split(c, t, "-")
+        if (!v6ok(t[1]) || !v6ok(t[2])) warn("无效 IPv6 范围：" c)
+        else { print t[1] >> out6; print t[2] >> out6; return 1 }
+      }
+      k = sipclass(c)
+      if (k == 4) { print c >> out4; return 1 }
+      if (k == 6) { print c >> out6; return 1 }
+      return 0
+    }
+    $0 == "" { next }
+    {
+      c = norm($0)
+      if (c == "") { bad++; next }
+      if (parse(c)) ok++
+      else { warn("无效输入：" $0); bad++ }
+    }
+    END { printf "%d %d %d\n", NR, ok, bad }
+  ' "${temp_input}") || { rm -f "${warn_file}"; log_error "解析 IP 列表失败"; return 1; }
 
-  while IFS= read -r ip; do
-    [[ -z "${ip}" ]] && continue
-    if parse_ip_range "${ip}" "${temp_file_ipv4}" "${temp_file_ipv6}"; then
-      ((valid_count += 1))
-    else
-      ((invalid_count += 1))
-    fi
-  done < "${temp_input}"
+  while IFS= read -r msg; do
+    log_warning "${msg}"
+  done < "${warn_file}"
+  rm -f "${warn_file}"
+  IFS=' ' read -r total_count valid_count invalid_count <<< "${stats}"
 
   if [[ ${valid_count} -gt 0 ]]; then
     log_info \

@@ -18,15 +18,11 @@ source "${SCRIPT_DIR}/lib/system/state.sh"
 
 # 依赖由 module-runner preflight 自动检测（@depends 元数据）
 
-# 检查指定服务是否处于激活状态，便于后续判断
+# 检查指定服务是否处于激活状态（无后缀时按 .service）
 is_service_active() {
   local svc="$1"
   [[ "$svc" == *.* ]] || svc="${svc}.service"
-  if systemctl is-active --quiet "$svc"; then
-    return 0
-  else
-    return 1
-  fi
+  systemctl is-active --quiet "$svc"
 }
 
 # 打印服务已运行的状态信息和访问地址
@@ -41,7 +37,7 @@ check_system_services() {
   local host_ip="$1"
   if is_service_active cockpit || is_service_active cockpit.socket; then
     print_service_status "cockpit" "https://${host_ip}:9090"
-  elif is_package_installed cockpit; then
+  elif pkg_is_installed cockpit; then
     log_warning "cockpit 已安装但未运行，可执行：systemctl enable --now cockpit.socket"
   else
     log_info "cockpit 未安装"
@@ -49,41 +45,43 @@ check_system_services() {
 }
 
 # 检查 Docker 容器模块，自动发现 compose 目录下声明了 @web_port 的容器
+# 说明：容器名取 compose 中首个 container_name，未声明时为文件名（与 docker-apps 一致）
 check_docker_containers() {
   local host_ip="$1"
   local compose_dir="${SCRIPT_DIR}/compose"
 
   [[ -d "$compose_dir" ]] || return 0
 
-  local yaml_file key web_port
+  local yaml_file key web_port cname line running
   for yaml_file in "$compose_dir"/*.yaml "$compose_dir"/*.yml; do
     [[ -f "$yaml_file" ]] || continue
-    key=$(basename "$yaml_file" | sed 's/\.\(yaml\|yml\)$//')
-    # 提取 Web 访问端口（可选元数据），无声明则跳过（非 Web 容器）
-    web_port=$(grep -m1 '^# *@web_port:' "$yaml_file" 2>/dev/null | sed 's/^# *@web_port: *//' || true)
+    key="${yaml_file##*/}"
+    key="${key%.yaml}"
+    key="${key%.yml}"
+    web_port="" cname=""
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      if [[ -z "$web_port" && "$line" =~ ^#\ *@web_port:\ *(.*)$ ]]; then
+        web_port="${BASH_REMATCH[1]}"
+      elif [[ -z "$cname" && "$line" =~ ^[[:space:]]*container_name:[[:space:]]*[\"\']?([A-Za-z0-9][A-Za-z0-9_.-]*) ]]; then
+        cname="${BASH_REMATCH[1]}"
+      fi
+    done < "$yaml_file"
+    # 无 Web 端口声明则跳过（非 Web 容器）
     [[ -n "$web_port" ]] || continue
 
-    if docker inspect -f '{{.State.Running}}' "$key" 2>/dev/null | grep -q "true"; then
+    running=$(docker inspect -f '{{.State.Running}}' "${cname:-$key}" 2>/dev/null) || running=""
+    if [[ "$running" == "true" ]]; then
       print_service_status "$key" "https://${host_ip}:${web_port}"
     fi
   done
 }
 
-# 检查指定软件包是否已安装
-is_package_installed() {
-  local pkg="$1"
-  dpkg -s "$pkg" >/dev/null 2>&1 && return 0 || return 1
-}
-
 # 显示 firewalld 和 fail2ban 的安装状态提示
 display_firewalld_fail2ban_info() {
-  local firewalld_installed=$(is_package_installed firewalld && echo "yes" || echo "no")
-  local fail2ban_installed=$(is_package_installed fail2ban && echo "yes" || echo "no")
-
-  if [[ "$firewalld_installed" == "yes" ]]; then
+  if pkg_is_installed firewalld; then
     log_info "Firewalld 防火墙服务已安装，请确保已放行必要端口。"
   fi
-  if [[ "$fail2ban_installed" == "yes" ]]; then
+  if pkg_is_installed fail2ban; then
     log_info "Fail2ban 服务已安装，登录失败达到阈值后将自动封禁访问 IP。"
   fi
 }
@@ -95,7 +93,7 @@ module_status() {
   local cockpit="未安装" docker="未安装"
   if systemctl is-active --quiet cockpit.socket 2>/dev/null || systemctl is-active --quiet cockpit 2>/dev/null; then
     cockpit="运行中"
-  elif [[ "$(dpkg-query -W -f='${db:Status-Status}' cockpit 2>/dev/null)" == "installed" ]]; then
+  elif pkg_is_installed cockpit; then
     cockpit="未运行"
   fi
   if systemctl is-active --quiet docker 2>/dev/null; then
@@ -113,8 +111,9 @@ module_plan() {
 
 # 主执行流程，串联各功能模块
 main() {
-  # 获取主机 IP 地址
-  host_ip=$(hostname -I | awk '{print $1}')
+  # 获取主机 IP 地址（hostname -I 的第一个）
+  local host_ip="" _
+  IFS=" " read -r host_ip _ < <(hostname -I 2>/dev/null) || true
 
   # 检查并显示系统服务状态
   check_system_services "$host_ip"

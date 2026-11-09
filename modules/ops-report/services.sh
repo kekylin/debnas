@@ -3,14 +3,14 @@
 set -euo pipefail
 IFS=$'\n\t'
 
+# 采集 systemd/Docker/VM/监听端口；结果写入 OPS_* 全局变量，由 report.sh 渲染与 security.sh 端口基线使用
+# shellcheck disable=SC2034  # OPS_* 结果变量在 report.sh / security.sh 中读取
 ops_collect_services() {
   OPS_SYSTEMD_FAILED_COUNT=0
   OPS_SYSTEMD_FAILED_LIST=""
   OPS_DOCKER_PS=""
   OPS_DOCKER_RUNNING_COUNT=0
   OPS_DOCKER_STOPPED_COUNT=0
-  OPS_DOCKER_RESTARTS=""
-  OPS_DOCKER_SERVICE_NAMES=""
   OPS_VM_LIST=""
   OPS_VM_RUNNING_COUNT=0
   OPS_VM_COUNT=0
@@ -56,9 +56,12 @@ ops_collect_services() {
       local service_log
       service_log=$(timeout 20 journalctl -u "${service_name}" --since "${OPS_REPORT_SINCE:-$(date '+%Y-%m-%d %H:%M:%S')}" \
         --no-pager 2>/dev/null || true)
-      service_errors=$(printf '%s\n' "$service_log" | grep -cEi 'fail|error|panic|oom' || true)
-      service_restarts=$(printf '%s\n' "$service_log" \
-        | grep -cEi 'Starting|Started|Stopped|Failed to start' || true)
+      # 错误与启停计数一次 awk 完成（等价于两次 grep -cEi，按行计数、不区分大小写）
+      IFS=' ' read -r service_errors service_restarts < <(awk '
+        { l = tolower($0) }
+        l ~ /fail|error|panic|oom/ { e++ }
+        l ~ /starting|started|stopped|failed to start/ { r++ }
+        END { printf "%d %d\n", e, r }' <<< "$service_log")
       service_log=""
       [[ "$service_errors" =~ ^[0-9]+$ ]] || service_errors=0
       [[ "$service_restarts" =~ ^[0-9]+$ ]] || service_restarts=0
@@ -88,14 +91,9 @@ ops_collect_services() {
 
   if command -v docker >/dev/null 2>&1 && [[ "${OPS_INCLUDE_DOCKER:-1}" -eq 1 ]]; then
     OPS_DOCKER_PS=$(timeout 15 docker ps -a --format '{{.Names}}\t{{.State}}\t{{.Status}}' 2>/dev/null || true)
-    OPS_DOCKER_RUNNING_COUNT=$(printf '%s\n' "${OPS_DOCKER_PS}" | awk -F '\t' '$2 == "running" {n++} END {print n+0}' || true)
-    OPS_DOCKER_STOPPED_COUNT=$(printf '%s\n' "${OPS_DOCKER_PS}" | awk -F '\t' '$2 != "running" && $2 != "" {n++} END {print n+0}' || true)
-
-    local containers
-    containers=$(timeout 10 docker ps -aq 2>/dev/null || true)
-    if [[ -n "$containers" ]]; then
-      OPS_DOCKER_RESTARTS=$(timeout 20 docker inspect -f '{{.Name}} {{.RestartCount}}' $containers 2>/dev/null || true)
-    fi
+    IFS=' ' read -r OPS_DOCKER_RUNNING_COUNT OPS_DOCKER_STOPPED_COUNT < <(awk -F '\t' '
+      $2 == "running" { up++ } $2 != "running" && $2 != "" { down++ }
+      END { printf "%d %d\n", up, down }' <<< "${OPS_DOCKER_PS}")
   fi
 
   if command -v virsh >/dev/null 2>&1 && [[ "${OPS_INCLUDE_VM:-1}" -eq 1 ]]; then

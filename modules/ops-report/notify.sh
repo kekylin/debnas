@@ -3,11 +3,6 @@
 set -euo pipefail
 IFS=$'\n\t'
 
-# 通知收件邮箱由 lib/system/layout.sh 统一读取（/etc/debnas/notify_email，旧位置回退）
-ops_get_notify_email() {
-  notify_email_get
-}
-
 ops_build_markdown_report() {
   cat <<EOF
 # DebNAS 运维报告
@@ -50,7 +45,8 @@ EOF
 ops_send_report_email() {
   local days="${1:-${OPS_DEFAULT_PERIOD}}"
   local notify_email
-  notify_email=$(ops_get_notify_email) || {
+  # 收件邮箱由 lib/system/layout.sh 统一读取（/etc/debnas/notify_email，旧位置回退）
+  notify_email=$(notify_email_get) || {
     log_warning "邮件未配置，跳过邮件发送（终端报告仍已生成）"
     return 0
   }
@@ -68,11 +64,11 @@ ops_send_report_email() {
   if [[ "${OPS_EMAIL_ATTACH_HTML:-1}" -eq 1 ]] \
     && [[ -n "${OPS_LAST_REPORT:-}" ]] && [[ -f "$OPS_LAST_REPORT" ]]; then
     local attach_size
-    attach_size=$(wc -c < "$OPS_LAST_REPORT" | tr -d '[:space:]')
+    attach_size=$(stat -c '%s' -- "$OPS_LAST_REPORT" 2>/dev/null || echo 0)
     if [[ "$attach_size" -le "${OPS_EMAIL_MAX_ATTACH_BYTES:-2097152}" ]] \
       && command -v base64 >/dev/null 2>&1; then
       attach="$OPS_LAST_REPORT"
-      attach_name=$(basename "$OPS_LAST_REPORT")
+      attach_name="${OPS_LAST_REPORT##*/}"
     else
       log_warning "HTML 附件缺失或超过大小上限，降级为仅发送正文"
     fi
@@ -82,18 +78,20 @@ ops_send_report_email() {
   boundary="----=_DebNAS_$(date +%s)_$$"
   # exim4 -oi：正文中单独一行 "." 不会被当作消息结束而截断邮件
   log_info "发送运维报告邮件 → ${notify_email}"
-  if [[ -n "$attach" ]]; then
-    {
-      echo "Subject: ${subject}"
-      echo "To: ${notify_email}"
+  {
+    echo "Subject: ${subject}"
+    echo "To: ${notify_email}"
+    if [[ -n "$attach" ]]; then
       echo "MIME-Version: 1.0"
       echo "Content-Type: multipart/mixed; boundary=\"${boundary}\""
       echo
       echo "--${boundary}"
-      echo "Content-Type: text/plain; charset=UTF-8"
-      echo "Content-Transfer-Encoding: 8bit"
-      echo
-      ops_build_markdown_report
+    fi
+    echo "Content-Type: text/plain; charset=UTF-8"
+    echo "Content-Transfer-Encoding: 8bit"
+    echo
+    ops_build_markdown_report
+    if [[ -n "$attach" ]]; then
       echo
       echo "--${boundary}"
       echo "Content-Type: text/html; charset=UTF-8"
@@ -103,17 +101,8 @@ ops_send_report_email() {
       base64 "$attach"
       echo
       echo "--${boundary}--"
-    } | timeout 30 /usr/sbin/exim4 -oi -t 2>/dev/null && send_rc=0 || send_rc=1
-  else
-    {
-      echo "Subject: ${subject}"
-      echo "To: ${notify_email}"
-      echo "Content-Type: text/plain; charset=UTF-8"
-      echo "Content-Transfer-Encoding: 8bit"
-      echo
-      ops_build_markdown_report
-    } | timeout 30 /usr/sbin/exim4 -oi -t 2>/dev/null && send_rc=0 || send_rc=1
-  fi
+    fi
+  } | timeout 30 /usr/sbin/exim4 -oi -t 2>/dev/null && send_rc=0 || send_rc=1
 
   if [[ "$send_rc" -eq 0 ]]; then
     log_success "运维报告邮件已发送"

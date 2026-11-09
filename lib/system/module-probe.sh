@@ -16,8 +16,6 @@
 set -euo pipefail
 IFS=$'\n\t'
 
-# 守卫标记（保留旧常量供外部引用）
-readonly MODULE_PROBE_GUARD_MARK='DEBNAS_MODULE_ACTION:-run'
 # 守卫行：模块入口文件中有以此开头的行（行首、非注释）才视为支持探测
 readonly MODULE_PROBE_GUARD_RE='^if \[\[ "\$\{DEBNAS_MODULE_ACTION:-run\}" == "run" \]\]'
 # 只读工具约定：module_status 返回 unknown 且说明以此开头时，不用执行记录改写为 applied
@@ -31,6 +29,8 @@ readonly MODULE_PLAN_TYPES=" pkg write service port cron user risk info "
 MODULE_PROBE_STATUS_TIMEOUT="${MODULE_PROBE_STATUS_TIMEOUT:-3}"
 MODULE_PROBE_PLAN_TIMEOUT="${MODULE_PROBE_PLAN_TIMEOUT:-8}"
 
+declare -g _MP_CLEAN=""
+
 # 状态缓存：模块名 → "code|desc"
 declare -g -A _MODULE_STATUS=()
 # 异步采集中的模块：模块名 → pid
@@ -40,12 +40,11 @@ declare -g _MODULE_PROBE_DIR=""
 
 # ==================== 规范化 ====================
 
-# 去除控制字符（含 ESC/CR/LF），防止模块输出破坏终端
+# 去除控制字符（含 ESC/CR/LF），防止模块输出破坏终端；结果写入 _MP_CLEAN（不经命令替换，逐行调用不 fork）
 _module_probe_clean() {
-  local s="${1:-}"
-  s="${s//$'\t'/ }"
-  s="${s//[$'\001'-$'\037'$'\177']/}"
-  printf '%s' "$s"
+  _MP_CLEAN="${1:-}"
+  _MP_CLEAN="${_MP_CLEAN//$'\t'/ }"
+  _MP_CLEAN="${_MP_CLEAN//[$'\001'-$'\037'$'\177']/}"
 }
 
 # 规范化 module_status 输出（取第一行非空行）
@@ -67,7 +66,8 @@ module_status_normalize() {
     desc="${line}"
     code="unknown"
   fi
-  printf '%s|%s\n' "$code" "$(_module_probe_clean "$desc")"
+  _module_probe_clean "$desc"
+  printf '%s|%s\n' "$code" "$_MP_CLEAN"
 }
 
 # 规范化 module_plan 输出
@@ -77,7 +77,7 @@ module_plan_normalize() {
   local raw="${1:-}" line type target note rest
   while IFS= read -r line; do
     [[ -n "${line//[[:space:]]/}" ]] || continue
-    line=$(_module_probe_clean "$line")
+    _module_probe_clean "$line"; line="$_MP_CLEAN"
     type="${line%%|*}"
     if [[ "$line" == *"|"* ]]; then rest="${line#*|}"; else rest=""; fi
     target="${rest%%|*}"
@@ -113,8 +113,8 @@ _module_probe_fallback() {
   if [[ "$action" == "status" ]]; then
     printf 'unknown|未提供状态检测\n'
   else
-    local interactive
-    interactive=$(get_module_field "$module_name" "interactive" "false" 2>/dev/null) || interactive="false"
+    local interactive=""
+    get_module_field_var interactive "$module_name" "interactive" "false" || interactive="false"
     if [[ "$interactive" == "true" ]]; then
       printf 'info|%s|未提供预演；交互式模块，执行时进入模块自身菜单\n' "$module_name"
     else

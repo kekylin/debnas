@@ -44,6 +44,7 @@ _apt_lock_available() {
 # 等待 APT 锁释放
 # 参数：$1 - 超时秒数（可选，默认 APT_LOCK_TIMEOUT）
 # 返回：0 成功获取锁，1 超时
+# shellcheck disable=SC2120  # 超时参数可选，库内调用用默认值
 apt_wait_for_lock() {
   local timeout="${1:-$APT_LOCK_TIMEOUT}"
   local elapsed=0
@@ -96,11 +97,13 @@ apt_update_safe() {
 # 返回：0 成功，1 失败
 # 说明：先检测哪些包未安装，只安装缺失的包；全部已装则直接返回
 apt_install_packages() {
+  local IFS=' '  # 日志中 "${arr[*]}" 以空格连接包名（全局 IFS 首字符是换行）
   if [[ $# -eq 0 ]]; then
     return 0
   fi
 
   local -a to_install=()
+  local pkg
   for pkg in "$@"; do
     if ! dpkg -s "$pkg" &>/dev/null; then
       to_install+=("$pkg")
@@ -132,6 +135,7 @@ pkg_is_installed() {
 # 参数：$@ - 包名列表
 # 返回：0 成功，1 失败
 apt_install_safe() {
+  local IFS=' '  # 日志中 "${arr[*]}" 以空格连接包名（全局 IFS 首字符是换行）
   if [[ $# -eq 0 ]]; then
     log_error "apt_install_safe: 未指定包名"
     return 1
@@ -162,6 +166,7 @@ apt_install_safe() {
 # 选项：通过环境变量控制行为
 #   APT_REMOVE_PURGE=1  同时清除配置文件（默认启用）
 apt_remove_safe() {
+  local IFS=' '  # 日志中 "${arr[*]}" 以空格连接包名（全局 IFS 首字符是换行）
   if [[ $# -eq 0 ]]; then
     log_error "apt_remove_safe: 未指定包名"
     return 1

@@ -70,7 +70,9 @@ _debnas_backup_ensure_root() {
   _debnas_backup_root_ok || return 1
   local root="$DEBNAS_BACKUP_ROOT"
   if [[ ! -d "$root" ]]; then
-    mkdir -p -m 700 -- "$root" 2>/dev/null || return 1
+    # 上级目录按默认权限创建，只有备份根目录本身为 700（mkdir -p -m 只作用于最深一级）
+    [[ -z "${root%/*}" ]] || mkdir -p -- "${root%/*}" 2>/dev/null || return 1
+    mkdir -m 700 -- "$root" 2>/dev/null || [[ -d "$root" ]] || return 1
   fi
   [[ -d "$root" && ! -L "$root" ]] || return 1
   chmod 700 -- "$root" 2>/dev/null || true
@@ -150,6 +152,7 @@ debnas_backup_file() {
 # 保留策略：只保留最近 N 次运行的备份目录（按目录名排序，original/ 不参与）
 # 参数：$1 - 保留数（可选，默认 _debnas_backup_keep）
 # 返回：0 成功，1 备份根目录不合法
+# shellcheck disable=SC2120  # 保留数参数可选，库内调用用默认值
 debnas_backup_prune() {
   _debnas_backup_root_ok || return 1
   local root="$DEBNAS_BACKUP_ROOT"

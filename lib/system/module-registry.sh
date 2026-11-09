@@ -62,6 +62,33 @@ _get_modules_dir() {
   fi
 }
 
+# 注册表字段（_reset_registry_entry 写默认值；@module 改名时按此清除旧条目）
+readonly -a _MODULE_FIELDS=(module name category description depends depend_modules version debian_min arch order path type cron cron_schedule author since interactive kind)
+
+# 写入一个模块的全部默认字段
+# 参数：$1 - 模块名，$2 - 入口文件路径
+_reset_registry_entry() {
+  local m="$1"
+  _MODULE_REGISTRY["${m}.module"]="$m"
+  _MODULE_REGISTRY["${m}.name"]="$m"
+  _MODULE_REGISTRY["${m}.category"]="未分类"
+  _MODULE_REGISTRY["${m}.description"]=""
+  _MODULE_REGISTRY["${m}.depends"]=""
+  _MODULE_REGISTRY["${m}.depend_modules"]=""
+  _MODULE_REGISTRY["${m}.version"]="1.0.0"
+  _MODULE_REGISTRY["${m}.debian_min"]="bookworm"
+  _MODULE_REGISTRY["${m}.arch"]=""
+  _MODULE_REGISTRY["${m}.order"]="$DEFAULT_ORDER"
+  _MODULE_REGISTRY["${m}.path"]="$2"
+  _MODULE_REGISTRY["${m}.type"]="file"
+  _MODULE_REGISTRY["${m}.cron"]="false"
+  _MODULE_REGISTRY["${m}.cron_schedule"]=""
+  _MODULE_REGISTRY["${m}.author"]=""
+  _MODULE_REGISTRY["${m}.since"]=""
+  _MODULE_REGISTRY["${m}.interactive"]="false"
+  _MODULE_REGISTRY["${m}.kind"]=""
+}
+
 # 解析单个模块文件的元数据
 # 参数：$1 - 模块文件路径
 #       $2 - 默认模块名（可选，默认取文件名；目录模块传目录名，避免缺少 @module 时注册成 "module"）
@@ -73,27 +100,10 @@ _parse_single_file() {
   file_name="${file_name%.sh}"
   local module_name="${2:-$file_name}"
 
-  # 默认值
-  _MODULE_REGISTRY["${module_name}.module"]="$module_name"
-  _MODULE_REGISTRY["${module_name}.name"]="$module_name"
-  _MODULE_REGISTRY["${module_name}.category"]="未分类"
-  _MODULE_REGISTRY["${module_name}.description"]=""
-  _MODULE_REGISTRY["${module_name}.depends"]=""
-  _MODULE_REGISTRY["${module_name}.depend_modules"]=""
-  _MODULE_REGISTRY["${module_name}.version"]="1.0.0"
-  _MODULE_REGISTRY["${module_name}.debian_min"]="bookworm"
-  _MODULE_REGISTRY["${module_name}.arch"]=""
-  _MODULE_REGISTRY["${module_name}.order"]="$DEFAULT_ORDER"
-  _MODULE_REGISTRY["${module_name}.path"]="$file_path"
-  _MODULE_REGISTRY["${module_name}.type"]="file"
-  _MODULE_REGISTRY["${module_name}.cron"]="false"
-  _MODULE_REGISTRY["${module_name}.cron_schedule"]=""
-  _MODULE_REGISTRY["${module_name}.author"]=""
-  _MODULE_REGISTRY["${module_name}.since"]=""
-  _MODULE_REGISTRY["${module_name}.interactive"]="false"
+  _reset_registry_entry "$module_name" "$file_path"
 
   # 从文件头部提取元数据（只扫描前 30 行，避免性能问题；mapfile 一次读入，不 fork head）
-  local line key value
+  local line key value field
   local has_metadata=0
   local -a head_lines=()
   mapfile -n 30 -t head_lines 2>/dev/null < "$file_path" || true
@@ -119,47 +129,20 @@ _parse_single_file() {
 
       case "$key" in
         module)
-          local old_name="$module_name"
-          module_name="$value"
           # 清除以文件名为键的旧条目（防止 module.sh 残留 "module" 幽灵条目）
-          if [[ "$old_name" != "$module_name" ]]; then
-            local suffix
-            for suffix in module name category description depends depend_modules version debian_min order path type cron cron_schedule author since interactive; do
-              unset "_MODULE_REGISTRY[${old_name}.${suffix}]"
+          if [[ "$module_name" != "$value" ]]; then
+            for field in "${_MODULE_FIELDS[@]}"; do
+              unset "_MODULE_REGISTRY[${module_name}.${field}]"
             done
           fi
-          _MODULE_REGISTRY["${module_name}.module"]="$module_name"
-          _MODULE_REGISTRY["${module_name}.path"]="$file_path"
-          _MODULE_REGISTRY["${module_name}.type"]="file"
-          _MODULE_REGISTRY["${module_name}.name"]="$module_name"
-          _MODULE_REGISTRY["${module_name}.category"]="未分类"
-          _MODULE_REGISTRY["${module_name}.description"]=""
-          _MODULE_REGISTRY["${module_name}.depends"]=""
-          _MODULE_REGISTRY["${module_name}.depend_modules"]=""
-          _MODULE_REGISTRY["${module_name}.version"]="1.0.0"
-          _MODULE_REGISTRY["${module_name}.debian_min"]="bookworm"
-  _MODULE_REGISTRY["${module_name}.arch"]=""
-          _MODULE_REGISTRY["${module_name}.order"]="$DEFAULT_ORDER"
-          _MODULE_REGISTRY["${module_name}.cron"]="false"
-          _MODULE_REGISTRY["${module_name}.cron_schedule"]=""
-          _MODULE_REGISTRY["${module_name}.author"]=""
-          _MODULE_REGISTRY["${module_name}.since"]=""
-          _MODULE_REGISTRY["${module_name}.interactive"]="false"
+          module_name="$value"
+          _reset_registry_entry "$module_name" "$file_path"
           ;;
-        name)          _MODULE_REGISTRY["${module_name}.name"]="$value" ;;
-        category)      _MODULE_REGISTRY["${module_name}.category"]="$value" ;;
-        description)   _MODULE_REGISTRY["${module_name}.description"]="$value" ;;
-        depends)       _MODULE_REGISTRY["${module_name}.depends"]="$value" ;;
-        depend_modules) _MODULE_REGISTRY["${module_name}.depend_modules"]="$value" ;;
-        version)       _MODULE_REGISTRY["${module_name}.version"]="$value" ;;
-        debian_min)    _MODULE_REGISTRY["${module_name}.debian_min"]="$value" ;;
-        arch)          _MODULE_REGISTRY["${module_name}.arch"]="$value" ;;
-        order)         _MODULE_REGISTRY["${module_name}.order"]="$value" ;;
-        cron)          _MODULE_REGISTRY["${module_name}.cron"]="$value" ;;
-        cron_schedule) _MODULE_REGISTRY["${module_name}.cron_schedule"]="$value" ;;
-        author)        _MODULE_REGISTRY["${module_name}.author"]="$value" ;;
-        since)         _MODULE_REGISTRY["${module_name}.since"]="$value" ;;
-        interactive)   _MODULE_REGISTRY["${module_name}.interactive"]="$value" ;;
+        path|type) ;;  # 由发现流程决定，不接受头部声明
+        *)
+          # 只接受已知字段（默认值已写入的键），未知 @key 忽略
+          [[ -v "_MODULE_REGISTRY[${module_name}.${key}]" ]] && _MODULE_REGISTRY["${module_name}.${key}"]="$value"
+          ;;
       esac
       has_metadata=1
     fi

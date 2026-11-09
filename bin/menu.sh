@@ -33,7 +33,7 @@ load_solutions() {
   local solution_file name display_name
   for solution_file in "$solutions_dir"/*.list; do
     [[ -f "$solution_file" ]] || continue
-    name=$(basename "$solution_file" .list)
+    name="${solution_file##*/}"; name="${name%.list}"
     display_name=$(sed -n '1s/^#[[:space:]]*//p' "$solution_file" 2>/dev/null)
     [[ -z "$display_name" ]] && display_name="$name"
     SOLUTION_NAMES+=("$name")

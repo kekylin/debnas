@@ -52,8 +52,11 @@ ops_period_reports_dir() {
   esac
 }
 
+# HTML 转义（纯 bash，不起 sed 子进程；替换串里的 & 需转义，bash 5.2 的 patsub_replacement 会把 & 当作匹配文本）
 ops_html_escape() {
-  printf '%s' "$1" | sed "s/&/\\&amp;/g; s/</\\&lt;/g; s/>/\\&gt;/g; s/\"/\\&quot;/g; s/'/\\&#39;/g"
+  local s="$1"
+  s="${s//&/\&amp;}"; s="${s//</\&lt;}"; s="${s//>/\&gt;}"; s="${s//\"/\&quot;}"; s="${s//\'/\&#39;}"
+  printf '%s' "$s"
 }
 
 ops_normalize_date() {
@@ -63,12 +66,6 @@ ops_normalize_date() {
     return 0
   fi
   date -d "$value" '+%Y-%m-%d %H:%M' 2>/dev/null || echo "$value"
-}
-
-ops_normalize_ip() {
-  local ip="$1"
-  ip="${ip#::ffff:}"
-  printf '%s' "$ip"
 }
 
 ops_value_count() {
@@ -91,35 +88,67 @@ ops_auto_labels() {
   if [[ -z "$n" || "$n" -eq 0 ]]; then
     n="${OPS_REPORT_DAYS:-7}"
   fi
+  # 以截止日正午为基准按天回推（正午避开夏令时切换），不再每个标签起两次 date
+  local until_noon
+  until_noon=$(ops_until_noon_epoch)
   for ((i = n - 1; i >= 0; i--)); do
-    local until_date
-    until_date=$(date -d "${OPS_REPORT_UNTIL:-today}" '+%Y-%m-%d' 2>/dev/null || echo "today")
-    label=$(date -d "${until_date} -$i days" '+%m-%d' 2>/dev/null || echo "-")
+    printf -v label '%(%m-%d)T' "$((until_noon - i * 86400))"
     out="${out:+${out}, }${label}"
   done
   printf '%s' "$out"
 }
 
+# 报告截止日（OPS_REPORT_UNTIL 所在日期，缺省今天）正午的 epoch 秒，供按天/按周回推日期
+ops_until_noon_epoch() {
+  local until_date
+  until_date=$(date -d "${OPS_REPORT_UNTIL:-today}" '+%Y-%m-%d' 2>/dev/null || echo "today")
+  date -d "${until_date} 12:00" '+%s' 2>/dev/null || date '+%s'
+}
+
+# 把 OPS_UPDATE_LIST 每行的 "日期 时间" 一次性换算成 epoch，结果按行号存入 OPS_UPDATE_EPOCHS
+# 说明：可用性/事件/更新表三处原来逐行（可用性里还按重启次数嵌套）起 date；这里只起一次，
+#       个别行无法解析导致 date -f 输出行数不符时，回退为逐行解析（无法解析的行为空）
+ops_update_epochs() {
+  OPS_UPDATE_EPOCHS=()
+  [[ -n "${OPS_UPDATE_LIST:-}" ]] || return 0
+  local line d t idx=0 k
+  local -a stamps=() stamp_idx=() epochs=()
+  while IFS= read -r line; do
+    IFS=' ' read -r d t _ <<< "$line"
+    OPS_UPDATE_EPOCHS[idx]=""
+    if [[ -n "$d" ]]; then
+      stamps+=("$d $t")
+      stamp_idx+=("$idx")
+    fi
+    idx=$((idx + 1))
+  done <<< "$OPS_UPDATE_LIST"
+  [[ ${#stamps[@]} -gt 0 ]] || return 0
+  mapfile -t epochs < <(printf '%s\n' "${stamps[@]}" | date -f - '+%s' 2>/dev/null)
+  if [[ ${#epochs[@]} -ne ${#stamps[@]} ]]; then
+    epochs=()
+    for k in "${!stamps[@]}"; do
+      epochs[k]=$(date -d "${stamps[k]}" '+%s' 2>/dev/null || true)
+    done
+  fi
+  for k in "${!stamps[@]}"; do
+    OPS_UPDATE_EPOCHS[${stamp_idx[k]}]="${epochs[k]}"
+  done
+}
+
+# 统计 sysstat 数据覆盖天数与最早日期（参数 $1 报告天数，仅为调用兼容保留）
 ops_set_coverage() {
-  local days="$1"
   OPS_SYSSTAT_DATA_DAYS=0
   OPS_DATA_START="无数据"
   if [[ -d /var/log/sysstat ]]; then
-    local data_days oldest
-    data_days=$(find /var/log/sysstat -maxdepth 1 -type f -name 'sa*' \
-      -printf '%TY-%Tm-%Td\n' 2>/dev/null | sort -u | wc -l || true)
-    OPS_SYSSTAT_DATA_DAYS="${data_days:-0}"
-    oldest=$(find /var/log/sysstat -maxdepth 1 -type f -name 'sa*' \
-      -printf '%TY-%Tm-%Td\n' 2>/dev/null | sort | head -1 || true)
-    if [[ -n "$oldest" ]]; then
-      OPS_DATA_START="$oldest"
+    local -a data_dates=()
+    mapfile -t data_dates < <(find /var/log/sysstat -maxdepth 1 -type f -name 'sa*' \
+      -printf '%TY-%Tm-%Td\n' 2>/dev/null | sort -u)
+    OPS_SYSSTAT_DATA_DAYS="${#data_dates[@]}"
+    if [[ ${#data_dates[@]} -gt 0 ]]; then
+      OPS_DATA_START="${data_dates[0]}"
     fi
   fi
   OPS_DATA_COVERAGE="sysstat 数据覆盖 ${OPS_SYSSTAT_DATA_DAYS} 天；登录日志覆盖范围以系统 wtmp/wtmpdb 保留策略为准"
-  OPS_COVERAGE_WARNING=""
-  if [[ "${OPS_SYSSTAT_DATA_DAYS}" -gt 0 ]] && [[ "${OPS_SYSSTAT_DATA_DAYS}" -lt "$days" ]]; then
-    OPS_COVERAGE_WARNING="报告周期为 ${days} 天，但 sysstat 数据仅覆盖 ${OPS_SYSSTAT_DATA_DAYS} 天。缺失历史无法回填。"
-  fi
 }
 
 ops_collect_resources() {
@@ -127,22 +156,13 @@ ops_collect_resources() {
   OPS_CPU_MAX="N/A"
   OPS_MEM_AVG="N/A"
   OPS_MEM_MAX="N/A"
-  OPS_NET_AVG_RX="N/A"
-  OPS_NET_AVG_TX="N/A"
   OPS_NET_TOTAL_RX_BYTES=0
   OPS_NET_TOTAL_TX_BYTES=0
   OPS_NET_TOTAL_LABEL="待周期数据"
   OPS_NET_IFACES=""
-  OPS_SAR_CPU_LINES=""
-  OPS_SAR_MEM_LINES=""
-  OPS_SAR_SWAP_LINES=""
-  OPS_SAR_NET_LINES=""
-  OPS_SAR_DISK_LINES=""
-  OPS_DISK_IO_LINES=""
   OPS_DISK_IO_SUMMARY=""
   OPS_CPU_DAILY_LIST=""
   OPS_MEM_DAILY_LIST=""
-  OPS_NET_DAILY_LIST=""
   OPS_NET_DAILY_RX_LIST=""
   OPS_NET_DAILY_TX_LIST=""
   OPS_NET_IFACE_SUMMARY=""
@@ -155,18 +175,11 @@ ops_collect_resources() {
   OPS_CPU_PEAK_DATE=""
   OPS_MEM_PEAK_DATE=""
   OPS_DISK_IO_PEAK_DATE=""
-  OPS_CPU_PEAK_UTIL=""
-  OPS_MEM_PEAK_UTIL=""
-  OPS_DISK_IO_PEAK_UTIL=""
   OPS_PHYS_NET_IFACES=""
   OPS_UPTIME_DAYS=0
   OPS_LOAD_AVG="N/A"
   OPS_KERNEL="N/A"
-  OPS_TOP_PROCESSES=""
-  OPS_DF_LINES=""
   OPS_DISK_USAGE_LINES=""
-  OPS_DISK_FORECAST=""
-  OPS_DISK_GROWTH=""
   OPS_NET_DEV=""
   OPS_MEM_TOTAL_KB=0
   OPS_MEM_AVAIL_KB=0
@@ -175,8 +188,6 @@ ops_collect_resources() {
   OPS_SWAP_USED_KB=0
   OPS_SWAP_PEAK_KB=0
   OPS_REBOOT_COUNT=0
-  OPS_AVAILABILITY_PERIOD_SECONDS=0
-  OPS_AVAILABILITY_ONLINE_SECONDS=0
 
   if [[ -r /proc/uptime ]]; then
     OPS_UPTIME_DAYS=$(awk '{print int($1 / 86400)}' /proc/uptime)
@@ -185,16 +196,8 @@ ops_collect_resources() {
     OPS_LOAD_AVG=$(awk '{print $1, $2, $3}' /proc/loadavg)
   fi
   OPS_KERNEL=$(uname -r 2>/dev/null || echo "N/A")
-  OPS_TOP_PROCESSES=$(ps -eo comm,%cpu,%mem --sort=-%cpu --no-headers 2>/dev/null | head -8 || true)
-  OPS_DF_LINES=$(df -hP 2>/dev/null | awk 'NR > 1 && $1 ~ /^\// {print}' | head -30 || true)
   OPS_DISK_USAGE_LINES=$(ops_physical_disk_usage || true)
   OPS_NET_DEV=$(cat /proc/net/dev 2>/dev/null || true)
-  if [[ -r /proc/diskstats ]]; then
-    OPS_DISK_IO_LINES=$(awk '
-      $3 ~ /^(sd[a-z]|nvme[0-9]+n[0-9]+|vd[a-z]|hd[a-z])$/ {
-        printf "%s %d %d\n", $3, $6 * 512, $10 * 512
-      }' /proc/diskstats 2>/dev/null || true)
-  fi
   if [[ -n "$OPS_NET_DEV" ]]; then
     local net_iface net_rx net_tx
     local phys_ifaces=""
@@ -233,281 +236,219 @@ ops_collect_resources() {
   OPS_SWAP_USED_KB=$(awk '/^SwapFree:/ {print $2}' /proc/meminfo 2>/dev/null || echo 0)
   OPS_SWAP_USED_KB=$((OPS_SWAP_TOTAL_KB > 0 ? OPS_SWAP_TOTAL_KB - OPS_SWAP_USED_KB : 0))
 
+  OPS_SWAP_PEAK_KB=0
   if command -v sar >/dev/null 2>&1; then
-    local f cpu_day mem_day net_day_rx net_day_tx day_label file_s
-    local full_day cpu_day_max mem_day_max disk_day_peak
-    local -a sysstat_files=()
-    # 只取报告周期内有写入的二进制数据文件（sa[0-9]*，排除 sa2 生成的 sarDD 文本报告），
-    # 否则周报会把 HISTORY=400 天的全部历史算进平均值，且每次全量跑 sar
-    local sysstat_since="${OPS_REPORT_SINCE:-$(date -d "${OPS_REPORT_DAYS:-7} days ago" '+%Y-%m-%d %H:%M:%S')}"
-    while IFS= read -r f; do
-      [[ -n "$f" ]] && sysstat_files+=("$f")
-    done < <(find /var/log/sysstat -maxdepth 1 -type f -name 'sa[0-9]*' \
-      -newermt "$sysstat_since" -printf '%T@ %p\n' 2>/dev/null | sort -n | awk '{print $2}')
+    ops_collect_sysstat
+  fi
+}
 
+# 读取 sysstat 历史并汇总 CPU/内存/网络/磁盘 I/O/Swap（ops_collect_resources 调用）
+# 说明：每个数据文件只跑 5 次 sar，输出按类别追加到临时目录（文件前插入 "\001F <日期>" 分隔行），
+#       最后由一个 awk 一次算出逐日序列、全周期统计与峰值日期；sar -n DEV 等原始输出不再整段
+#       留在 shell 变量里拼接（年报 365 个文件时占用大量内存且拼接为平方级）。
+# 输出：写入 OPS_CPU_* / OPS_MEM_* / OPS_NET_* / OPS_DISK_IO_* / OPS_SWAP_PEAK_KB / OPS_SYSSTAT_SAMPLE_DAYS
+ops_collect_sysstat() {
+  local f epoch full_day sar_src sar_dir="" i
+  local -a sysstat_files=() sysstat_days=()
+  # 只取报告周期内有写入的二进制数据文件（sa[0-9]*，排除 sa2 生成的 sarDD 文本报告），
+  # 否则周报会把 HISTORY=400 天的全部历史算进平均值，且每次全量跑 sar
+  local sysstat_since="${OPS_REPORT_SINCE:-$(date -d "${OPS_REPORT_DAYS:-7} days ago" '+%Y-%m-%d %H:%M:%S')}"
+  while IFS=' ' read -r epoch f; do
+    [[ -n "$f" ]] || continue
+    sysstat_files+=("$f")
+    printf -v full_day '%(%Y-%m-%d)T' "${epoch%.*}"
+    sysstat_days+=("$full_day")
+  done < <(find /var/log/sysstat -maxdepth 1 -type f -name 'sa[0-9]*' \
+    -newermt "$sysstat_since" -printf '%T@ %p\n' 2>/dev/null | sort -n)
+
+  # 单独 source report.sh（测试）时没有 create_temp_dir，回退 mktemp；都失败则不做历史统计
+  sar_dir=$(create_temp_dir "ops-sar" 2>/dev/null) || sar_dir=$(mktemp -d 2>/dev/null) || sar_dir=""
+  [[ -n "$sar_dir" ]] || return 0
+  : > "${sar_dir}/u"; : > "${sar_dir}/r"; : > "${sar_dir}/S"; : > "${sar_dir}/n"; : > "${sar_dir}/d"
+  for i in "${!sysstat_files[@]}"; do
+    f="${sysstat_files[$i]}"
+    [[ -f "$f" ]] || continue
+    sar_src="$f"
     # COMPRESSAFTER=14 后历史文件被压缩，sar 无法直接读取，需先解压到临时文件
-    local sysstat_tmp="" sar_src sar_nl=$'\n'
-    for f in "${sysstat_files[@]}"; do
-      [[ -f "$f" ]] || continue
-      sar_src="$f"
-      case "$f" in
-        *.xz|*.gz|*.bz2|*.zst)
-          if [[ -z "$sysstat_tmp" ]]; then
-            sysstat_tmp=$(create_temp_file "ops-sysstat" ".sa" 2>/dev/null || true)
-          fi
-          [[ -n "$sysstat_tmp" ]] || continue
-          case "$f" in
-            *.xz) timeout 30 xz -dc -- "$f" > "$sysstat_tmp" 2>/dev/null || continue ;;
-            *.gz) timeout 30 gzip -dc -- "$f" > "$sysstat_tmp" 2>/dev/null || continue ;;
-            *.bz2) timeout 30 bzip2 -dc -- "$f" > "$sysstat_tmp" 2>/dev/null || continue ;;
-            *.zst) timeout 30 zstd -qdc -- "$f" > "$sysstat_tmp" 2>/dev/null || continue ;;
-          esac
-          sar_src="$sysstat_tmp"
-          ;;
-      esac
-      local file_u file_r file_n file_d
-      file_u=$(timeout 10 sar -u -f "$sar_src" 2>/dev/null || true)
-      file_r=$(timeout 10 sar -r -f "$sar_src" 2>/dev/null || true)
-      file_s=$(timeout 10 sar -S -f "$sar_src" 2>/dev/null || true)
-      file_n=$(timeout 10 sar -n DEV -f "$sar_src" 2>/dev/null || true)
-      file_d=$(timeout 10 sar -d -f "$sar_src" 2>/dev/null || true)
-      OPS_SAR_CPU_LINES="${OPS_SAR_CPU_LINES:+${OPS_SAR_CPU_LINES}${sar_nl}}${file_u}"
-      OPS_SAR_MEM_LINES="${OPS_SAR_MEM_LINES:+${OPS_SAR_MEM_LINES}${sar_nl}}${file_r}"
-      OPS_SAR_SWAP_LINES="${OPS_SAR_SWAP_LINES:+${OPS_SAR_SWAP_LINES}${sar_nl}}${file_s}"
-      OPS_SAR_NET_LINES="${OPS_SAR_NET_LINES:+${OPS_SAR_NET_LINES}${sar_nl}}${file_n}"
-      OPS_SAR_DISK_LINES="${OPS_SAR_DISK_LINES:+${OPS_SAR_DISK_LINES}${sar_nl}}${file_d}"
+    case "$f" in
+      *.xz|*.gz|*.bz2|*.zst)
+        sar_src="${sar_dir}/raw.sa"
+        case "$f" in
+          *.xz) timeout 30 xz -dc -- "$f" > "$sar_src" 2>/dev/null || continue ;;
+          *.gz) timeout 30 gzip -dc -- "$f" > "$sar_src" 2>/dev/null || continue ;;
+          *.bz2) timeout 30 bzip2 -dc -- "$f" > "$sar_src" 2>/dev/null || continue ;;
+          *.zst) timeout 30 zstd -qdc -- "$f" > "$sar_src" 2>/dev/null || continue ;;
+        esac
+        ;;
+    esac
+    full_day="${sysstat_days[$i]}"
+    { printf '\001F %s\n' "$full_day"; timeout 10 sar -u -f "$sar_src" 2>/dev/null || true; } >> "${sar_dir}/u"
+    { printf '\001F %s\n' "$full_day"; timeout 10 sar -r -f "$sar_src" 2>/dev/null || true; } >> "${sar_dir}/r"
+    { printf '\001F %s\n' "$full_day"; timeout 10 sar -S -f "$sar_src" 2>/dev/null || true; } >> "${sar_dir}/S"
+    { printf '\001F %s\n' "$full_day"; timeout 10 sar -n DEV -f "$sar_src" 2>/dev/null || true; } >> "${sar_dir}/n"
+    { printf '\001F %s\n' "$full_day"; timeout 10 sar -d -f "$sar_src" 2>/dev/null || true; } >> "${sar_dir}/d"
+  done
 
-      cpu_day=$(printf '%s\n' "$file_u" | awk '
-        function is_num(x) { return x ~ /^[0-9]+([.][0-9]+)?$/ }
-        {
-          if ($1 ~ /^[0-9][0-9]:/) {
-            all_i = 0
-            for (i = 2; i <= NF; i++) if ($i == "all") { all_i = i; break }
-            if (all_i && (all_i + 6) <= NF && is_num($(all_i + 6))) {
-              v = 100 - ($(all_i + 6) + 0); if (v < 0) v = 0; sum += v; n++; if (v > max) max = v
-            }
-          }
-        }
-        END { if (n > 0) printf "%.0f %.1f", sum / n, max }' || true)
-      mem_day=$(printf '%s\n' "$file_r" | awk '
-        function is_num(x) { return x ~ /^[0-9]+([.][0-9]+)?$/ }
-        {
-          if ($0 ~ /%memused/) for (i = 2; i <= NF; i++) if ($i == "%memused") mem_i = i
-          if ($1 ~ /^[0-9][0-9]:/ && mem_i && is_num($mem_i)) { v = $mem_i + 0; sum += v; n++; if (v > max) max = v }
-        }
-        END { if (n > 0) printf "%.0f %.1f", sum / n, max }' || true)
-      net_day_rx=$(printf '%s\n' "$file_n" | awk -v phys="$OPS_PHYS_NET_IFACES" '
-        function is_num(x) { return x ~ /^[0-9]+([.][0-9]+)?$/ }
-        BEGIN {
-          pc = (phys == "") ? 0 : split(phys, p, " ")
-          for (i = 1; i <= pc; i++) pm[p[i]] = 1
-        }
-        {
-          if ($0 ~ /IFACE/) for (i = 2; i <= NF; i++) if ($i == "IFACE") iface = i
-          if ($1 ~ /^[0-9][0-9]:/ && iface && $iface != "lo" && (pc == 0 || pm[$iface] == 1)) {
-            rx += $(iface + 3) + 0; tx += $(iface + 4) + 0; n++
-          }
-        }
-        END { if (n > 0) printf "%.4f %.4f", rx / n, tx / n }' || true)
-      if [[ -n "$net_day_rx" ]]; then
-        IFS=' ' read -r net_day_rx net_day_tx <<< "$net_day_rx"
-      else
-        net_day_tx=""
-      fi
-
-      day_label=$(date -r "$f" '+%m-%d' 2>/dev/null || true)
-      full_day=$(date -r "$f" '+%Y-%m-%d' 2>/dev/null || true)
-      cpu_day_max=""
-      mem_day_max=""
-      if [[ "$cpu_day" =~ ^[0-9]+([.][0-9]+)?([[:space:]]+[0-9]+([.][0-9]+)?)?$ ]]; then
-        IFS=' ' read -r cpu_day cpu_day_max <<< "$cpu_day"
-      fi
-      if [[ "$mem_day" =~ ^[0-9]+([.][0-9]+)?([[:space:]]+[0-9]+([.][0-9]+)?)?$ ]]; then
-        IFS=' ' read -r mem_day mem_day_max <<< "$mem_day"
-      fi
-      if [[ "$cpu_day" =~ ^[0-9]+([.][0-9]+)?$ ]] && [[ -n "$day_label" ]]; then
-        OPS_CPU_DAILY_LIST="${OPS_CPU_DAILY_LIST:+${OPS_CPU_DAILY_LIST}, }${cpu_day}"
-        OPS_CPU_DAILY_LABELS="${OPS_CPU_DAILY_LABELS:+${OPS_CPU_DAILY_LABELS}, }${day_label}"
-      fi
-      if [[ "$mem_day" =~ ^[0-9]+([.][0-9]+)?$ ]] && [[ -n "$day_label" ]]; then
-        OPS_MEM_DAILY_LIST="${OPS_MEM_DAILY_LIST:+${OPS_MEM_DAILY_LIST}, }${mem_day}"
-        OPS_MEM_DAILY_LABELS="${OPS_MEM_DAILY_LABELS:+${OPS_MEM_DAILY_LABELS}, }${day_label}"
-      fi
-      # 峰值日期回填：记录 CPU/内存/磁盘单日峰值与全局峰值日期（供事件脉冲图长周期分桶定位）
-      if [[ "$cpu_day_max" =~ ^[0-9]+([.][0-9]+)?$ ]] && [[ -n "$full_day" ]] \
-        && awk -v a="$cpu_day_max" -v b="${OPS_CPU_PEAK_UTIL:-0}" 'BEGIN { exit !(a > b) }'; then
-        OPS_CPU_PEAK_UTIL="$cpu_day_max"
-        OPS_CPU_PEAK_DATE="$full_day"
-      fi
-      if [[ "$mem_day_max" =~ ^[0-9]+([.][0-9]+)?$ ]] && [[ -n "$full_day" ]] \
-        && awk -v a="$mem_day_max" -v b="${OPS_MEM_PEAK_UTIL:-0}" 'BEGIN { exit !(a > b) }'; then
-        OPS_MEM_PEAK_UTIL="$mem_day_max"
-        OPS_MEM_PEAK_DATE="$full_day"
-      fi
-      disk_day_peak=$(printf '%s\n' "$file_d" | awk '
-        function is_phys(d) { return d ~ /^(sd[a-z]|nvme[0-9]+n[0-9]+|vd[a-z]|hd[a-z])$/ }
-        {
-          if ($0 ~ /DEV/) for (i = 2; i <= NF; i++) if ($i == "DEV") dev_i = i
-          if ($1 ~ /^[0-9][0-9]:/ && dev_i && is_phys($dev_i)) { u = $(dev_i + 8) + 0; if (u > m) m = u }
-        }
-        END { if (m != "") printf "%.1f", m }' || true)
-      if [[ "$disk_day_peak" =~ ^[0-9]+([.][0-9]+)?$ ]] && [[ -n "$full_day" ]] \
-        && awk -v a="$disk_day_peak" -v b="${OPS_DISK_IO_PEAK_UTIL:-0}" 'BEGIN { exit !(a > b) }'; then
-        OPS_DISK_IO_PEAK_UTIL="$disk_day_peak"
-        OPS_DISK_IO_PEAK_DATE="$full_day"
-      fi
-      if [[ "$net_day_rx" =~ ^[0-9]+([.][0-9]+)?$ ]] \
-        && [[ "$net_day_tx" =~ ^[0-9]+([.][0-9]+)?$ ]] && [[ -n "$day_label" ]]; then
-        net_day_rx=$(awk -v v="$net_day_rx" 'BEGIN { printf "%.2f", v * 86400 / 1048576 }')
-        net_day_tx=$(awk -v v="$net_day_tx" 'BEGIN { printf "%.2f", v * 86400 / 1048576 }')
-        OPS_NET_DAILY_RX_LIST="${OPS_NET_DAILY_RX_LIST:+${OPS_NET_DAILY_RX_LIST}, }${net_day_rx}"
-        OPS_NET_DAILY_TX_LIST="${OPS_NET_DAILY_TX_LIST:+${OPS_NET_DAILY_TX_LIST}, }${net_day_tx}"
-        OPS_NET_DAILY_LABELS="${OPS_NET_DAILY_LABELS:+${OPS_NET_DAILY_LABELS}, }${day_label}"
-        OPS_NET_DAILY_LIST="${OPS_NET_DAILY_LIST:+${OPS_NET_DAILY_LIST}, }$(awk -v r="$net_day_rx" -v t="$net_day_tx" 'BEGIN { printf "%.2f", r + t }')"
-      fi
-    done
-    if [[ -n "$sysstat_tmp" ]]; then
-      rm -f "$sysstat_tmp"
-    fi
-
-    local cpu_stats mem_stats net_stats
-    cpu_stats=$(printf '%s\n' "${OPS_SAR_CPU_LINES}" | awk '
-      function is_num(x) { return x ~ /^[0-9]+([.][0-9]+)?$/ }
-      {
-        if ($1 ~ /^[0-9][0-9]:/) {
-          all_i = 0
-          for (i = 2; i <= NF; i++) if ($i == "all") { all_i = i; break }
-          if (all_i && (all_i + 6) <= NF && is_num($(all_i + 6))) {
-            v = 100 - ($(all_i + 6) + 0); if (v < 0) v = 0; sum += v; if (v > max) max = v; n++
-          }
+  local key value
+  while IFS=$'\t' read -r key value; do
+    case "$key" in
+      CPU_AVG) OPS_CPU_AVG="$value" ;;
+      CPU_MAX) OPS_CPU_MAX="$value" ;;
+      MEM_AVG) OPS_MEM_AVG="$value" ;;
+      MEM_MAX) OPS_MEM_MAX="$value" ;;
+      NET_TOTAL_RX) OPS_NET_TOTAL_RX_BYTES="$value"; OPS_NET_TOTAL_LABEL="报告周期" ;;
+      NET_TOTAL_TX) OPS_NET_TOTAL_TX_BYTES="$value" ;;
+      NET_IFACE) OPS_NET_IFACE_SUMMARY="${OPS_NET_IFACE_SUMMARY:+${OPS_NET_IFACE_SUMMARY}$'\n'}${value}" ;;
+      NET_PEAK) OPS_NET_IFACE_PEAK_SUMMARY="${OPS_NET_IFACE_PEAK_SUMMARY:+${OPS_NET_IFACE_PEAK_SUMMARY}$'\n'}${value}" ;;
+      NET_PEAK_RATE) OPS_NET_PEAK_RATE_MBPS="$value" ;;
+      DISK_IO) OPS_DISK_IO_SUMMARY="${OPS_DISK_IO_SUMMARY:+${OPS_DISK_IO_SUMMARY}$'\n'}${value}" ;;
+      CPU_LIST) OPS_CPU_DAILY_LIST="$value" ;;
+      CPU_LABELS) OPS_CPU_DAILY_LABELS="$value" ;;
+      MEM_LIST) OPS_MEM_DAILY_LIST="$value" ;;
+      MEM_LABELS) OPS_MEM_DAILY_LABELS="$value" ;;
+      NET_RX_LIST) OPS_NET_DAILY_RX_LIST="$value" ;;
+      NET_TX_LIST) OPS_NET_DAILY_TX_LIST="$value" ;;
+      NET_LABELS) OPS_NET_DAILY_LABELS="$value" ;;
+      CPU_PEAK) OPS_CPU_PEAK_DATE="${value#* }" ;;
+      MEM_PEAK) OPS_MEM_PEAK_DATE="${value#* }" ;;
+      DISK_PEAK) OPS_DISK_IO_PEAK_DATE="${value#* }" ;;
+      SWAP_PEAK) OPS_SWAP_PEAK_KB="$value" ;;
+      SAMPLE_DAYS) OPS_SYSSTAT_SAMPLE_DAYS="$value" ;;
+    esac
+  done < <(awk -v phys="$OPS_PHYS_NET_IFACES" -v report_days="${OPS_REPORT_DAYS:-7}" '
+    function is_num(x) { return x ~ /^[0-9]+([.][0-9]+)?$/ }
+    function is_phys(d) { return d ~ /^(sd[a-z]|nvme[0-9]+n[0-9]+|vd[a-z]|hd[a-z])$/ }
+    function join(list, item) { return (list == "") ? item : list ", " item }
+    BEGIN {
+      pc = (phys == "") ? 0 : split(phys, p, " ")
+      for (i = 1; i <= pc; i++) pm[p[i]] = 1
+    }
+    FNR == 1 { cat = substr(FILENAME, length(FILENAME)) }
+    /^\001F / {
+      # 文件分隔行：逐日统计按文件重置表头列位置（全周期统计沿用上一次表头，与逐文件拼接时一致）
+      if (cat == "u") { fu++; fday[fu] = $2 }
+      else if (cat == "r") { fr++; mem_if = 0 }
+      else if (cat == "n") { fn++; if_f = 0 }
+      else if (cat == "d") { fd++; dev_if = 0 }
+      next
+    }
+    cat == "u" {
+      if ($1 ~ /^[0-9][0-9]:/) {
+        all_i = 0
+        for (i = 2; i <= NF; i++) if ($i == "all") { all_i = i; break }
+        if (all_i && (all_i + 6) <= NF && is_num($(all_i + 6))) {
+          v = 100 - ($(all_i + 6) + 0); if (v < 0) v = 0
+          cs[fu] += v; cn[fu]++; if (v > cm[fu]) cm[fu] = v
+          gcs += v; if (v > gcm) gcm = v; gcn++
         }
       }
-      END { if (n > 0) printf "%.1f %.1f", sum / n, max; else print "N/A N/A" }' || true)
-    [[ -n "$cpu_stats" ]] && IFS=' ' read -r OPS_CPU_AVG OPS_CPU_MAX <<< "$cpu_stats"
-
-    mem_stats=$(printf '%s\n' "${OPS_SAR_MEM_LINES}" | awk '
-      function is_num(x) { return x ~ /^[0-9]+([.][0-9]+)?$/ }
-      {
-        if ($0 ~ /%memused/) for (i = 2; i <= NF; i++) if ($i == "%memused") mem_i = i
-        if ($1 ~ /^[0-9][0-9]:/ && mem_i && is_num($mem_i)) {
-          v = $mem_i + 0; sum += v; if (v > max) max = v; n++
-        }
+      next
+    }
+    cat == "r" {
+      if ($0 ~ /%memused/) for (i = 2; i <= NF; i++) if ($i == "%memused") { mem_if = i; mem_ig = i }
+      if ($1 ~ /^[0-9][0-9]:/) {
+        if (mem_if && is_num($mem_if)) { v = $mem_if + 0; ms[fr] += v; mn[fr]++; if (v > mm[fr]) mm[fr] = v }
+        if (mem_ig && is_num($mem_ig)) { v = $mem_ig + 0; gms += v; if (v > gmm) gmm = v; gmn++ }
       }
-      END { if (n > 0) printf "%.1f %.1f", sum / n, max; else print "N/A N/A" }' || true)
-    [[ -n "$mem_stats" ]] && IFS=' ' read -r OPS_MEM_AVG OPS_MEM_MAX <<< "$mem_stats"
-
-    net_stats=$(printf '%s\n' "${OPS_SAR_NET_LINES}" | awk -v phys="$OPS_PHYS_NET_IFACES" '
-      BEGIN {
-        pc = (phys == "") ? 0 : split(phys, p, " ")
-        for (i = 1; i <= pc; i++) pm[p[i]] = 1
-      }
-      {
-        if ($0 ~ /IFACE/) for (i = 2; i <= NF; i++) if ($i == "IFACE") iface = i
-        if ($1 ~ /^[0-9][0-9]:/ && iface && $iface != "lo" && (pc == 0 || pm[$iface] == 1)) {
-          rx += $(iface + 3) + 0; tx += $(iface + 4) + 0; n++
-        }
-      }
-      END {
-        if (n > 0) printf "%.4f %.4f", rx / n, tx / n; else print "N/A N/A"
-      }' || true)
-    if [[ -n "$net_stats" ]]; then
-      IFS=' ' read -r OPS_NET_AVG_RX OPS_NET_AVG_TX <<< "$net_stats"
-      if [[ "$OPS_NET_AVG_RX" =~ ^[0-9.]+$ ]] && [[ "$OPS_NET_AVG_TX" =~ ^[0-9.]+$ ]]; then
-        local net_sample_days
-        net_sample_days=$(ops_value_count "$OPS_NET_DAILY_RX_LIST")
-        [[ "$net_sample_days" -gt 0 ]] || net_sample_days="${OPS_REPORT_DAYS:-7}"
-        OPS_NET_TOTAL_RX_BYTES=$(awk -v r="$OPS_NET_AVG_RX" -v d="$net_sample_days" \
-          'BEGIN { printf "%.0f", r * 1024 * 86400 * d }')
-        OPS_NET_TOTAL_TX_BYTES=$(awk -v t="$OPS_NET_AVG_TX" -v d="$net_sample_days" \
-          'BEGIN { printf "%.0f", t * 1024 * 86400 * d }')
-        OPS_NET_TOTAL_LABEL="报告周期"
-      fi
-    fi
-
-    OPS_NET_IFACE_SUMMARY=$(printf '%s\n' "${OPS_SAR_NET_LINES}" | awk -v phys="$OPS_PHYS_NET_IFACES" '
-      BEGIN {
-        pc = (phys == "") ? 0 : split(phys, p, " ")
-        for (i = 1; i <= pc; i++) pm[p[i]] = 1
-      }
-      {
-        if ($0 ~ /IFACE/) for (i = 2; i <= NF; i++) if ($i == "IFACE") iface = i
-        if ($1 ~ /^[0-9][0-9]:/ && iface && $iface != "lo" && (pc == 0 || pm[$iface] == 1)) {
-          d = $iface
-          rd[d] += $(iface + 3) + 0
-          wr[d] += $(iface + 4) + 0
-          cnt[d]++
-          if (!order[d]) { order[d] = ++total; names[total] = d }
-        }
-      }
-      END {
-        for (i = 1; i <= total; i++) {
-          d = names[i]
-          printf "%s|%.4f|%.4f|%d\n", d, rd[d] / cnt[d], wr[d] / cnt[d], cnt[d]
-        }
-      }' || true)
-
-    OPS_NET_IFACE_PEAK_SUMMARY=$(printf '%s\n' "${OPS_SAR_NET_LINES}" | awk -v phys="$OPS_PHYS_NET_IFACES" '
-      BEGIN {
-        pc = (phys == "") ? 0 : split(phys, p, " ")
-        for (i = 1; i <= pc; i++) pm[p[i]] = 1
-      }
-      {
-        if ($0 ~ /IFACE/) for (i = 2; i <= NF; i++) if ($i == "IFACE") iface = i
-        if ($1 ~ /^[0-9][0-9]:/ && iface && $iface != "lo" && (pc == 0 || pm[$iface] == 1)) {
-          d = $iface
-          rx = $(iface + 3) + 0
-          tx = $(iface + 4) + 0
+      next
+    }
+    cat == "S" {
+      if ($1 ~ /^[0-9][0-9]:/ && $3 ~ /^[0-9]+$/) { v = $3 + 0; if (v > swap_max) swap_max = v }
+      next
+    }
+    cat == "n" {
+      if ($0 ~ /IFACE/) for (i = 2; i <= NF; i++) if ($i == "IFACE") { if_f = i; if_g = i }
+      if ($1 ~ /^[0-9][0-9]:/) {
+        if (if_f && $if_f != "lo" && (pc == 0 || pm[$if_f] == 1)) { nrx[fn] += $(if_f + 3) + 0; ntx[fn] += $(if_f + 4) + 0; nn[fn]++ }
+        if (if_g && $if_g != "lo" && (pc == 0 || pm[$if_g] == 1)) {
+          rx = $(if_g + 3) + 0; tx = $(if_g + 4) + 0
+          grx += rx; gtx += tx; gnn++
+          d = $if_g
+          ird[d] += rx; iwr[d] += tx; icnt[d]++
+          if (!iorder[d]) { iorder[d] = ++itotal; inames[itotal] = d }
           if (rx * 8 > peak[d]) peak[d] = rx * 8
           if (tx * 8 > peak[d]) peak[d] = tx * 8
         }
       }
-      END {
-        for (d in peak) printf "%s|%.1f\n", d, peak[d] / 1000
-      }' || true)
-    if [[ -n "$OPS_NET_IFACE_PEAK_SUMMARY" ]]; then
-      OPS_NET_PEAK_RATE_MBPS=$(printf '%s\n' "$OPS_NET_IFACE_PEAK_SUMMARY" \
-        | awk -F'|' '{ if ($2 + 0 > m) m = $2 + 0 } END { if (m > 0) printf "%.1f", m; else print "" }')
-      [[ -n "$OPS_NET_PEAK_RATE_MBPS" ]] || OPS_NET_PEAK_RATE_MBPS="待周期数据"
-    fi
-
-    OPS_DISK_IO_SUMMARY=$(printf '%s\n' "${OPS_SAR_DISK_LINES}" | awk '
-      function is_phys(d) { return d ~ /^(sd[a-z]|nvme[0-9]+n[0-9]+|vd[a-z]|hd[a-z])$/ }
-      {
-        if ($0 ~ /DEV/) for (i = 2; i <= NF; i++) if ($i == "DEV") dev_i = i
-        if ($1 ~ /^[0-9][0-9]:/ && dev_i && is_phys($dev_i)) {
-          d = $dev_i
-          rd[d] += $(dev_i + 2) + 0
-          wr[d] += $(dev_i + 3) + 0
-          cnt[d]++
-          u = $(dev_i + 8) + 0
-          if (u > util[d]) { util[d] = u; tm[d] = $1 }
-          if (!order[d]) { order[d] = ++total; names[total] = d }
-        }
-      }
-      END {
-        for (i = 1; i <= total; i++) {
-          d = names[i]
-          printf "%s|%.1f|%.1f|%.1f|%s|%d\n", d, rd[d] / cnt[d], wr[d] / cnt[d], util[d], tm[d], cnt[d]
-        }
-      }' || true)
-  fi
-
-  local cpu_sample mem_sample net_sample
-  cpu_sample=$(ops_value_count "$OPS_CPU_DAILY_LIST")
-  mem_sample=$(ops_value_count "$OPS_MEM_DAILY_LIST")
-  net_sample=$(ops_value_count "$OPS_NET_DAILY_RX_LIST")
-  OPS_SWAP_PEAK_KB=$(printf '%s\n' "${OPS_SAR_SWAP_LINES}" | awk '
-    {
-      if ($1 ~ /^[0-9][0-9]:/ && $3 ~ /^[0-9]+$/) {
-        v = $3 + 0
-        if (v > max) max = v
-      }
+      next
     }
-    END { print max + 0 }' || true)
-  OPS_SYSSTAT_SAMPLE_DAYS=$((cpu_sample > mem_sample ? cpu_sample : mem_sample))
-  if [[ "$net_sample" -gt "$OPS_SYSSTAT_SAMPLE_DAYS" ]]; then
-    OPS_SYSSTAT_SAMPLE_DAYS="$net_sample"
-  fi
+    cat == "d" {
+      if ($0 ~ /DEV/) for (i = 2; i <= NF; i++) if ($i == "DEV") { dev_if = i; dev_ig = i }
+      if ($1 ~ /^[0-9][0-9]:/) {
+        if (dev_if && is_phys($dev_if)) { u = $(dev_if + 8) + 0; if (u > dm[fd]) dm[fd] = u }
+        if (dev_ig && is_phys($dev_ig)) {
+          d = $dev_ig
+          drd[d] += $(dev_ig + 2) + 0; dwr[d] += $(dev_ig + 3) + 0; dcnt[d]++
+          u = $(dev_ig + 8) + 0
+          if (u > dutil[d]) { dutil[d] = u; dtm[d] = $1 }
+          if (!dorder[d]) { dorder[d] = ++dtotal; dnames[dtotal] = d }
+        }
+      }
+      next
+    }
+    END {
+      cpu_list = cpu_labels = mem_list = mem_labels = ""
+      rx_list = tx_list = net_labels = ""
+      cpu_peak = mem_peak = disk_peak = ""
+      cpu_n = mem_n = net_n = 0
+      for (k = 1; k <= fu; k++) {
+        day = fday[k]; label = substr(day, 6)
+        if (cn[k] > 0) {
+          avg = sprintf("%.0f", cs[k] / cn[k]); mx = sprintf("%.1f", cm[k])
+          if (is_num(avg)) { cpu_list = join(cpu_list, avg); cpu_labels = join(cpu_labels, label); cpu_n++ }
+          if (is_num(mx) && mx + 0 > (cpu_peak == "" ? 0 : cpu_peak + 0)) { cpu_peak = mx; cpu_date = day }
+        }
+        if (mn[k] > 0) {
+          avg = sprintf("%.0f", ms[k] / mn[k]); mx = sprintf("%.1f", mm[k])
+          if (is_num(avg)) { mem_list = join(mem_list, avg); mem_labels = join(mem_labels, label); mem_n++ }
+          if (is_num(mx) && mx + 0 > (mem_peak == "" ? 0 : mem_peak + 0)) { mem_peak = mx; mem_date = day }
+        }
+        if (dm[k] != "") {
+          mx = sprintf("%.1f", dm[k])
+          if (is_num(mx) && mx + 0 > (disk_peak == "" ? 0 : disk_peak + 0)) { disk_peak = mx; disk_date = day }
+        }
+        if (nn[k] > 0) {
+          r = sprintf("%.4f", nrx[k] / nn[k]); t = sprintf("%.4f", ntx[k] / nn[k])
+          if (is_num(r) && is_num(t)) {
+            r = sprintf("%.2f", r * 86400 / 1048576); t = sprintf("%.2f", t * 86400 / 1048576)
+            rx_list = join(rx_list, r); tx_list = join(tx_list, t); net_labels = join(net_labels, label)
+            net_n++
+          }
+        }
+      }
+      printf "CPU_LIST\t%s\nCPU_LABELS\t%s\nMEM_LIST\t%s\nMEM_LABELS\t%s\n", cpu_list, cpu_labels, mem_list, mem_labels
+      printf "NET_RX_LIST\t%s\nNET_TX_LIST\t%s\nNET_LABELS\t%s\n", rx_list, tx_list, net_labels
+      if (cpu_peak != "") printf "CPU_PEAK\t%s %s\n", cpu_peak, cpu_date
+      if (mem_peak != "") printf "MEM_PEAK\t%s %s\n", mem_peak, mem_date
+      if (disk_peak != "") printf "DISK_PEAK\t%s %s\n", disk_peak, disk_date
+      if (gcn > 0) printf "CPU_AVG\t%.1f\nCPU_MAX\t%.1f\n", gcs / gcn, gcm; else printf "CPU_AVG\tN/A\nCPU_MAX\tN/A\n"
+      if (gmn > 0) printf "MEM_AVG\t%.1f\nMEM_MAX\t%.1f\n", gms / gmn, gmm; else printf "MEM_AVG\tN/A\nMEM_MAX\tN/A\n"
+      if (gnn > 0) {
+        r = sprintf("%.4f", grx / gnn); t = sprintf("%.4f", gtx / gnn)
+        if (r ~ /^[0-9.]+$/ && t ~ /^[0-9.]+$/) {
+          dd = (net_n > 0) ? net_n : report_days
+          printf "NET_TOTAL_RX\t%.0f\nNET_TOTAL_TX\t%.0f\n", r * 1024 * 86400 * dd, t * 1024 * 86400 * dd
+        }
+      }
+      for (k = 1; k <= itotal; k++) { d = inames[k]; printf "NET_IFACE\t%s|%.4f|%.4f|%d\n", d, ird[d] / icnt[d], iwr[d] / icnt[d], icnt[d] }
+      pmax = 0; has_peak = 0
+      for (d in peak) {
+        has_peak = 1
+        ps = sprintf("%.1f", peak[d] / 1000)
+        printf "NET_PEAK\t%s|%s\n", d, ps
+        if (ps + 0 > pmax) pmax = ps + 0
+      }
+      if (has_peak) printf "NET_PEAK_RATE\t%s\n", (pmax > 0) ? sprintf("%.1f", pmax) : "待周期数据"
+      for (k = 1; k <= dtotal; k++) {
+        d = dnames[k]
+        printf "DISK_IO\t%s|%.1f|%.1f|%.1f|%s|%d\n", d, drd[d] / dcnt[d], dwr[d] / dcnt[d], dutil[d], dtm[d], dcnt[d]
+      }
+      printf "SWAP_PEAK\t%d\n", swap_max + 0
+      sd = (cpu_n > mem_n) ? cpu_n : mem_n
+      if (net_n > sd) sd = net_n
+      printf "SAMPLE_DAYS\t%d\n", sd
+    }' "${sar_dir}/u" "${sar_dir}/r" "${sar_dir}/S" "${sar_dir}/n" "${sar_dir}/d" 2>/dev/null)
+  rm -rf -- "$sar_dir"
 }
 
 ops_collect_availability() {
@@ -517,8 +458,6 @@ ops_collect_availability() {
   [[ "$since_epoch" =~ ^[0-9]+$ ]] || since_epoch=0
   [[ "$until_epoch" =~ ^[0-9]+$ ]] || until_epoch=$(date '+%s')
   total_seconds=$((until_epoch - since_epoch))
-  OPS_AVAILABILITY_PERIOD_SECONDS="$total_seconds"
-  OPS_AVAILABILITY_ONLINE_SECONDS=0
   OPS_REBOOT_COUNT=0
   OPS_PLANNED_DOWNTIME_COUNT=0
   OPS_UNPLANNED_DOWNTIME_COUNT=0
@@ -530,11 +469,12 @@ ops_collect_availability() {
   fi
 
   local -a boot_fields=()
-  local boot_id sd st stz ed et etz start_epoch end_epoch
+  local boot_id sd st ed et start_epoch end_epoch
   local overlap_start overlap_end reboot_count=0 planned_count=0 unplanned_count=0
   local boot_output boot_line boot_token
   local -a boot_raw=()
   boot_output=$(journalctl --list-boots --no-pager 2>/dev/null || true)
+  ops_update_epochs
   while IFS= read -r boot_line; do
     # systemd 252（Debian 12）格式为 "... CST—Mon ..."（em dash 无空格），
     # 253+ 为表格格式；统一把 em dash 换成空格并去掉星期字段后按 8 字段解析
@@ -549,11 +489,11 @@ ops_collect_availability() {
     boot_id="${boot_fields[1]}"
     [[ "$boot_id" =~ ^[0-9a-f]{8,}$ ]] || continue
     if [[ ${#boot_fields[@]} -eq 8 ]]; then
-      sd="${boot_fields[2]}"; st="${boot_fields[3]}"; stz="${boot_fields[4]}"
-      ed="${boot_fields[5]}"; et="${boot_fields[6]}"; etz="${boot_fields[7]}"
+      sd="${boot_fields[2]}"; st="${boot_fields[3]}"
+      ed="${boot_fields[5]}"; et="${boot_fields[6]}"
     elif [[ ${#boot_fields[@]} -eq 10 ]]; then
-      sd="${boot_fields[3]}"; st="${boot_fields[4]}"; stz="${boot_fields[5]}"
-      ed="${boot_fields[7]}"; et="${boot_fields[8]}"; etz="${boot_fields[9]}"
+      sd="${boot_fields[3]}"; st="${boot_fields[4]}"
+      ed="${boot_fields[7]}"; et="${boot_fields[8]}"
     else
       continue
     fi
@@ -570,16 +510,14 @@ ops_collect_availability() {
     fi
     if [[ "$start_epoch" -ge "$since_epoch" && "$start_epoch" -le "$until_epoch" ]]; then
       reboot_count=$((reboot_count + 1))
-      local planned_marker=0 update_date update_time update_epoch
-      while IFS=' ' read -r update_date update_time _; do
-        [[ -n "$update_date" ]] || continue
-        update_epoch=$(date -d "$update_date $update_time" '+%s' 2>/dev/null || true)
+      local planned_marker=0 update_epoch
+      for update_epoch in "${OPS_UPDATE_EPOCHS[@]}"; do
         [[ "$update_epoch" =~ ^[0-9]+$ ]] || continue
         if [[ "$update_epoch" -ge $((start_epoch - 900)) && "$update_epoch" -le $((start_epoch + 300)) ]]; then
           planned_marker=1
           break
         fi
-      done <<< "${OPS_UPDATE_LIST:-}"
+      done
       if [[ "$planned_marker" -eq 1 ]]; then
         planned_count=$((planned_count + 1))
       else
@@ -591,7 +529,6 @@ ops_collect_availability() {
   OPS_REBOOT_COUNT="$reboot_count"
   OPS_PLANNED_DOWNTIME_COUNT="$planned_count"
   OPS_UNPLANNED_DOWNTIME_COUNT="$unplanned_count"
-  OPS_AVAILABILITY_ONLINE_SECONDS="$online_seconds"
   if [[ "$total_seconds" -gt 0 ]]; then
     OPS_AVAILABILITY_PCT=$(awk -v o="$online_seconds" -v t="$total_seconds" \
       'BEGIN { if (t > 0) printf "%.2f%%", (o * 100) / t; else print "待周期数据" }')
@@ -626,8 +563,8 @@ ops_physical_disk_usage() {
       [[ -n "$mp" ]] || continue
       df_line=$(df -P "$mp" 2>/dev/null | tail -1 || true)
       if [[ -n "$df_line" ]]; then
-        local sz us av pct
-        IFS=' ' read -r _ sz us av pct _ <<< "$df_line"
+        local sz us
+        IFS=' ' read -r _ sz us _ <<< "$df_line"
         if [[ "$sz" =~ ^[0-9]+$ ]]; then total_size=$((total_size + sz)); fi
         if [[ "$us" =~ ^[0-9]+$ ]]; then total_used=$((total_used + us)); fi
         mounts="${mounts:+${mounts}, }${mp}"
@@ -646,12 +583,11 @@ ops_physical_disk_usage() {
 
 ops_collect_disk_trend() {
   OPS_DISK_FORECAST=""
-  OPS_DISK_GROWTH=""
   [[ -n "${OPS_SNAPSHOT_DIR:-}" ]] || return 0
   mkdir -p "$OPS_SNAPSHOT_DIR" 2>/dev/null || true
 
   local snapshot="${OPS_SNAPSHOT_DIR}/disk-usage.snapshot"
-  local now epoch now_ts
+  local now_ts
   now_ts=$(date '+%s')
   local -A old_pct=()
   local line name pct ts
@@ -662,7 +598,7 @@ ops_collect_disk_trend() {
     done < "$snapshot"
   fi
 
-  local forecast_rows="" growth_rows=""
+  local forecast_rows=""
   while IFS='|' read -r name _ _ pct _; do
     [[ "$name" =~ ^[a-zA-Z0-9_]+$ ]] || continue
     [[ "$pct" =~ ^[0-9]+$ ]] || continue
@@ -684,6 +620,7 @@ ops_collect_disk_trend() {
       fi
     fi
   done <<< "${OPS_DISK_USAGE_LINES}"
+  # shellcheck disable=SC2034  # 容量预测已计算但报告暂未渲染（保留快照基线，见设计文档 7.3）
   OPS_DISK_FORECAST="$forecast_rows"
 
   local tmp="${snapshot}.tmp"
@@ -699,11 +636,9 @@ ops_collect_updates() {
   OPS_UPDATE_COUNT=0
   OPS_UPDATE_SESSIONS=0
   OPS_UPDATE_LIST=""
-  OPS_UPDATE_PACKAGES=""
   OPS_PENDING_UPDATE_COUNT=0
   OPS_PENDING_SECURITY_COUNT=0
   OPS_PENDING_REGULAR_COUNT=0
-  OPS_KERNEL_HISTORY=""
   OPS_SYSTEM_VERSION_LINES=""
   OPS_SECURITY_INSTALLED_COUNT=0
   OPS_REGULAR_INSTALLED_COUNT=0
@@ -720,10 +655,6 @@ ops_collect_updates() {
     ' /var/log/dpkg.log 2>/dev/null | tail -100 || true)
     OPS_UPDATE_COUNT=$(printf '%s\n' "${OPS_UPDATE_LIST}" | grep -v '^$' | wc -l || true)
     OPS_UPDATE_SESSIONS=$(printf '%s\n' "${OPS_UPDATE_LIST}" | grep -v '^$' | awk '{print $1}' | sort -u | wc -l || true)
-    OPS_UPDATE_PACKAGES=$(printf '%s\n' "${OPS_UPDATE_LIST}" | awk '{print $3, $4, $5, $6}' \
-      | sort -u | tail -50 || true)
-    OPS_KERNEL_HISTORY=$(grep 'linux-image' /var/log/dpkg.log 2>/dev/null \
-      | tail -10 || true)
     local security_pkgs
     security_pkgs=$(grep -h '^Package:' /var/lib/apt/lists/*security*Packages* 2>/dev/null \
       | awk '{print $2}' | sort -u)
@@ -756,7 +687,7 @@ ops_collect_updates() {
   if command -v dpkg-query >/dev/null 2>&1; then
     os_version=$(dpkg-query -W -f='${Version}' base-files 2>/dev/null || echo "未知")
     kernel_version=$(dpkg-query -W -f='${Version}' linux-image-amd64 2>/dev/null \
-      || dpkg-query -W -f='${Version}' linux-image-$(uname -r 2>/dev/null | sed 's/-amd64$//') 2>/dev/null \
+      || dpkg-query -W -f='${Version}' "linux-image-$(uname -r 2>/dev/null | sed 's/-amd64$//')" 2>/dev/null \
       || echo "${OPS_KERNEL:-未知}")
     ssl_version=$(dpkg-query -W -f='${Version}' openssl 2>/dev/null || echo "未安装")
     docker_version=$(dpkg-query -W -f='${Version}' docker.io 2>/dev/null || true)
@@ -790,7 +721,7 @@ ops_collect_updates() {
       enddate=$(openssl x509 -enddate -noout -in "$cert_file" 2>/dev/null \
         | cut -d= -f2- | tr -d '\n' || true)
       if [[ -n "$enddate" ]]; then
-        OPS_SSL_SUMMARY="$(basename "$cert_file") 将于 $(ops_normalize_date "$enddate") 到期"
+        OPS_SSL_SUMMARY="${cert_file##*/} 将于 $(ops_normalize_date "$enddate") 到期"
       fi
     fi
   fi
@@ -802,6 +733,18 @@ ops_collect_updates() {
   if [[ -f /var/run/reboot-required ]]; then
     OPS_REBOOT_REQUIRED="是，存在 /var/run/reboot-required"
   fi
+}
+
+# 设备 I/O 峰值繁忙度（OPS_DISK_IO_SUMMARY 第 4 列最大值）
+ops_disk_io_peak() {
+  printf '%s\n' "${OPS_DISK_IO_SUMMARY}" \
+    | awk -F'|' 'BEGIN { m = 0 } { if ($4 + 0 > m) m = $4 + 0 } END { print m }'
+}
+
+# 平均速率（kB/s）× 采样天数换算为周期累计字节数
+# 参数：$1 - 平均速率（kB/s）
+ops_rate_bytes() {
+  awk -v v="${1:-0}" -v d="${OPS_SYSSTAT_SAMPLE_DAYS:-1}" 'BEGIN { printf "%.0f", v * 1024 * 86400 * d }'
 }
 
 ops_add_action() {
@@ -819,7 +762,6 @@ ops_determine_status() {
   OPS_STATUS_TEXT="正常"
   OPS_ACTION_ITEMS=()
   OPS_ACTION_COUNT=0
-  OPS_LOGIN_COVERAGE_DAYS="无数据"
   OPS_EVENTS=""
   OPS_NEW_LISTEN_PORT_COUNT=0
   OPS_RISK_HIGH=0
@@ -896,8 +838,7 @@ ops_determine_status() {
 
   if [[ -n "$OPS_DISK_IO_SUMMARY" ]]; then
     local disk_max
-    disk_max=$(printf '%s\n' "${OPS_DISK_IO_SUMMARY}" \
-      | awk -F'|' 'BEGIN { m = 0 } { if ($4 + 0 > m) m = $4 + 0 } END { print m }')
+    disk_max=$(ops_disk_io_peak)
     if awk -v v="$disk_max" 'BEGIN { exit !(v >= 80) }'; then
       [[ "$OPS_STATUS" == "green" ]] && OPS_STATUS="yellow"
       ops_add_action "中" "磁盘峰值繁忙度 ${disk_max}%"
@@ -929,10 +870,12 @@ ops_determine_status() {
   fi
   if [[ "${OPS_UPDATE_COUNT:-0}" -gt 0 && -n "${OPS_UPDATE_LIST:-}" ]]; then
     local update_session_key="" update_session_count=0 update_prev_epoch="" update_epoch
-    local update_date update_time update_action
-    while IFS=' ' read -r update_date update_time update_action _; do
+    local update_date update_time update_idx=-1
+    ops_update_epochs
+    while IFS=' ' read -r update_date update_time _; do
+      update_idx=$((update_idx + 1))
       [[ -n "$update_date" ]] || continue
-      update_epoch=$(date -d "$update_date $update_time" '+%s' 2>/dev/null || true)
+      update_epoch="${OPS_UPDATE_EPOCHS[update_idx]:-}"
       if [[ -z "$update_session_key" ]] \
         || [[ -n "$update_prev_epoch" && -n "$update_epoch" && $((update_epoch - update_prev_epoch)) -gt 120 ]]; then
         if [[ -n "$update_session_key" ]]; then
@@ -1334,11 +1277,19 @@ ops_render_update_table() {
   local -A session_sec=()
   local -A session_reg=()
   local -A session_rows=()
-  local date time action pkg old new rest pkg_base type key
-  local prev_epoch="" session_key="" current_epoch
-  while IFS=' ' read -r date time action pkg old new rest; do
+  local date time pkg old new pkg_base type key sec_pkg_name
+  local prev_epoch="" session_key="" current_epoch line_idx=-1
+  # 安全包名单可能上万行：建一次关联数组查表（原来每行 printf | grep -Fxq，
+  # 名单超过管道缓冲时 grep -q 提前退出令 printf 收到 SIGPIPE，pipefail 下会被误判为常规更新）
+  local -A security_pkgs=()
+  while IFS= read -r sec_pkg_name; do
+    [[ -n "$sec_pkg_name" ]] && security_pkgs["$sec_pkg_name"]=1
+  done <<< "${OPS_SECURITY_PACKAGES:-}"
+  ops_update_epochs
+  while IFS=' ' read -r date time _ pkg old new _; do
+    line_idx=$((line_idx + 1))
     [[ -n "$date" ]] || continue
-    current_epoch=$(date -d "$date $time" '+%s' 2>/dev/null || true)
+    current_epoch="${OPS_UPDATE_EPOCHS[line_idx]:-}"
     if [[ -z "$session_key" ]] \
       || [[ -n "$prev_epoch" && -n "$current_epoch" && $((current_epoch - prev_epoch)) -gt 120 ]]; then
       session_key="${date} ${time}"
@@ -1346,7 +1297,7 @@ ops_render_update_table() {
     key="$session_key"
     pkg_base="${pkg%:*}"
     type="常规"
-    if [[ -n "$OPS_SECURITY_PACKAGES" ]] && printf '%s\n' "$OPS_SECURITY_PACKAGES" | grep -Fxq "$pkg_base"; then
+    if [[ -n "$pkg_base" && -n "${security_pkgs["$pkg_base"]:-}" ]]; then
       type="安全"
     fi
     session_rows["$key"]="${session_rows["$key"]:+${session_rows["$key"]}
@@ -1557,7 +1508,7 @@ ops_render_abnormal_login_row() {
     IFS=' ' read -r user source ts <<< "$event"
     [[ -n "$user" ]] || continue
     ts=$(ops_normalize_date "$ts")
-    source=$(ops_normalize_ip "$source")
+    source="${source#::ffff:}"
     source_label="$source"
     case "$source" in
       local|localhost) source_label="${source}（本地）" ;;
@@ -1682,26 +1633,29 @@ ops_render_event_pulse() {
     *)   bucket_mode="day";  bucket_count=7;  label_step=1 ;;
   esac
 
-  local i ago key dow label until_date
+  local i ago key dow label until_noon t
   local line etime event impact status prefix event_key date_idx
   local y cls cat short_label base_x node_x count
   local desc desc_part svg_title path x0 y0 x1 y1 dx node x label r
   local -a bucket_keys=() bucket_labels=() bucket_x=()
-  until_date=$(date -d "${OPS_REPORT_UNTIL:-today}" '+%Y-%m-%d' 2>/dev/null || echo "today")
+  # 桶日期由截止日正午按天回推（printf %()T 取日期，不再每桶起 3~4 次 date 与 1 次 awk）
+  until_noon=$(ops_until_noon_epoch)
   for ((i = 0; i < bucket_count; i++)); do
     ago=$((bucket_count - 1 - i))
     if [[ "$bucket_mode" == "week" ]]; then
       # 周桶以周一为键，锚定「最近 52 周」；每日桶用完整 YYYY-MM-DD
-      key=$(date -d "${until_date} - $((ago * 7)) days" '+%Y-%m-%d' 2>/dev/null || true)
-      dow=$(date -d "$key" '+%u' 2>/dev/null || echo 1)
-      key=$(date -d "$key - $((dow - 1)) days" '+%Y-%m-%d' 2>/dev/null || true)
+      t=$((until_noon - ago * 7 * 86400))
+      printf -v dow '%(%u)T' "$t"
+      t=$((t - (dow - 1) * 86400))
     else
-      key=$(date -d "${until_date} - ${ago} days" '+%Y-%m-%d' 2>/dev/null || true)
+      t=$((until_noon - ago * 86400))
     fi
-    label=$(date -d "$key" '+%m-%d' 2>/dev/null || echo "-")
+    printf -v key '%(%Y-%m-%d)T' "$t"
+    printf -v label '%(%m-%d)T' "$t"
     bucket_keys+=("$key")
     bucket_labels+=("$label")
-    bucket_x+=("$(awk -v i="$i" -v n="$bucket_count" 'BEGIN { printf "%.0f", 80 + i * 816 / (n - 1) }')")
+    # 80 + i*816/(n-1) 四舍五入取整（整数运算；n=7/30/52 时不会出现 .5）
+    bucket_x+=("$((80 + (2 * i * 816 + bucket_count - 1) / (2 * (bucket_count - 1))))")
   done
 
   local -a bucket_y=() bucket_high=() bucket_mid=() bucket_low=()
@@ -1858,10 +1812,10 @@ ops_render_week_focus() {
 }
 
 ops_render_disk_capacity_chart() {
-  local name size used pct mounts model disk_type
+  local name size pct
   local -i row=0 y=39
   local out=""
-  while IFS='|' read -r name size used pct mounts model disk_type; do
+  while IFS='|' read -r name size _ pct _; do
     [[ "$pct" =~ ^[0-9]+$ ]] || continue
     row+=1
     [[ "$row" -le 5 ]] || continue
@@ -1894,17 +1848,17 @@ ops_render_disk_capacity_chart() {
 }
 
 ops_render_disk_io_chart() {
-  local line name avg_rd avg_wr max_util tm cnt
+  local name avg_rd avg_wr max_util
   local -i row=0 y=32
   local out=""
   local max_bytes=0
   local -A io_rb=()
   local -A io_wb=()
-  while IFS='|' read -r name avg_rd avg_wr max_util tm cnt; do
+  while IFS='|' read -r name avg_rd avg_wr max_util _; do
     [[ -n "$name" ]] || continue
     local rb wb
-    rb=$(awk -v v="$avg_rd" -v d="${OPS_SYSSTAT_SAMPLE_DAYS:-1}" 'BEGIN { printf "%.0f", v * 1024 * 86400 * d }')
-    wb=$(awk -v v="$avg_wr" -v d="${OPS_SYSSTAT_SAMPLE_DAYS:-1}" 'BEGIN { printf "%.0f", v * 1024 * 86400 * d }')
+    rb=$(ops_rate_bytes "$avg_rd")
+    wb=$(ops_rate_bytes "$avg_wr")
     io_rb["$name"]="$rb"
     io_wb["$name"]="$wb"
     [[ "$rb" -gt "$max_bytes" ]] && max_bytes="$rb"
@@ -1933,13 +1887,13 @@ ops_render_disk_io_chart() {
   local axis_grid="" axis_labels=""
   local i x val
   for ((i = 0; i <= 5; i++)); do
-    x=$(awk -v i="$i" 'BEGIN { printf "%.1f", 112 + i * 66 }')
+    printf -v x '%d.0' "$((112 + i * 66))"
     val=$(awk -v t="$nice_tb" -v i="$i" 'BEGIN { printf "%.1f", t * i / 5 }')
     axis_grid="${axis_grid}
 <line x1=\"${x}\" y1=\"20\" x2=\"${x}\" y2=\"151\" stroke=\"$([ "$i" -eq 0 ] && echo '#D2D2D7' || echo '#E8E8ED')\" stroke-dasharray=\"$([ "$i" -eq 0 ] && echo none || echo '3 3')\"/>"
     axis_labels="${axis_labels}<text x=\"${x}\" y=\"174\">${val}</text>"
   done
-  while IFS='|' read -r name avg_rd avg_wr max_util tm cnt; do
+  while IFS='|' read -r name avg_rd avg_wr max_util _; do
     [[ -n "$name" ]] || continue
     row+=1
     [[ "$row" -le 5 ]] || continue
@@ -1968,12 +1922,11 @@ ops_render_disk_io_chart() {
 
 ops_render_service_list_table() {
   local out="" line name errors restarts start state cls type note
-  local has_cron=0 has_ssh=0
+  local has_cron=0
   while IFS='|' read -r name errors restarts start state; do
     [[ -n "$name" ]] || continue
     start=$(ops_normalize_date "$start")
     [[ "$name" == "cron" ]] && has_cron=1
-    [[ "$name" == "ssh" ]] && has_ssh=1
     cls=""
     case "$state" in
       正常) cls=' class="good"' ;;
@@ -2015,29 +1968,28 @@ ops_render_source_ip_table() {
   local last_ip last_time
   while IFS=' ' read -r last_ip last_time; do
     [[ -n "$last_ip" ]] || continue
-    last_ip=$(ops_normalize_ip "$last_ip")
+    last_ip="${last_ip#::ffff:}"
     last_map["$last_ip"]="$last_time"
   done <<< "${OPS_LOGIN_IP_LAST}"
   while IFS=' ' read -r ip count; do
     [[ -n "$ip" ]] || continue
-    ip=$(ops_normalize_ip "$ip")
+    ip="${ip#::ffff:}"
     success["$ip"]="$count"
   done <<< "${OPS_LOGIN_IP_STATS}"
   while IFS=' ' read -r ip count; do
     [[ -n "$ip" ]] || continue
-    ip=$(ops_normalize_ip "$ip")
+    ip="${ip#::ffff:}"
     failed["$ip"]="$count"
   done <<< "${OPS_FAIL_IP_STATS}"
   local -a ips=()
-  local seen=0
   while IFS=' ' read -r ip count; do
     [[ -n "$ip" ]] || continue
-    ip=$(ops_normalize_ip "$ip")
+    ip="${ip#::ffff:}"
     ips+=("$ip")
   done <<< "${OPS_LOGIN_IP_STATS}"
   while IFS=' ' read -r ip count; do
     [[ -n "$ip" ]] || continue
-    ip=$(ops_normalize_ip "$ip")
+    ip="${ip#::ffff:}"
     local dup=0
     for item in "${ips[@]:-}"; do
       [[ "$item" == "$ip" ]] && dup=1
@@ -2048,7 +2000,7 @@ ops_render_source_ip_table() {
   local -i total_success=0 total_failed=0
   for ip in "${ips[@]:-}"; do
     [[ -n "$ip" ]] || continue
-    ip=$(ops_normalize_ip "$ip")
+    ip="${ip#::ffff:}"
     s="${success["$ip"]:-0}"
     f="${failed["$ip"]:-0}"
     total_success=$((total_success + s))
@@ -2176,8 +2128,7 @@ ops_render_anomaly_table() {
   fi
   if [[ -n "$OPS_DISK_IO_SUMMARY" ]]; then
     local disk_max
-    disk_max=$(printf '%s\n' "${OPS_DISK_IO_SUMMARY}" \
-      | awk -F'|' 'BEGIN { m = 0 } { if ($4 + 0 > m) m = $4 + 0 } END { print m }')
+    disk_max=$(ops_disk_io_peak)
     if awk -v v="$disk_max" 'BEGIN { exit !(v >= 80) }'; then
       disk_state="关注"; disk_note="磁盘峰值繁忙度 ${disk_max}%"
     else
@@ -2220,32 +2171,28 @@ ops_render_anomaly_table() {
   if [[ "${OPS_PENDING_SECURITY_COUNT:-0}" -gt 0 ]]; then
     security_state="待装"; security_note="${OPS_PENDING_SECURITY_COUNT} 个安全更新待装"
   fi
-  local cpu_badge='<span class="badge badge-clear">正常</span>'
-  local mem_badge='<span class="badge badge-clear">正常</span>'
-  local disk_badge='<span class="badge badge-clear">正常</span>'
-  local service_badge='<span class="badge badge-clear">正常</span>'
-  local port_badge='<span class="badge badge-clear">正常</span>'
-  local port_cls="muted"
-  local proc_badge='<span class="badge badge-clear">正常</span>'
-  local proc_cls="muted"
-  [[ "$cpu_state" == "关注" ]] && cpu_badge='<span class="badge badge-medium">中风险</span>'
-  [[ "$mem_state" == "关注" ]] && mem_badge='<span class="badge badge-medium">中风险</span>'
-  [[ "$disk_state" == "关注" ]] && disk_badge='<span class="badge badge-medium">中风险</span>'
-  [[ "$service_state" != "未发现" ]] && service_badge='<span class="badge badge-medium">中风险</span>'
+  local badge_clear='<span class="badge badge-clear">正常</span>'
+  local badge_medium='<span class="badge badge-medium">中风险</span>'
+  local cpu_badge="$badge_clear" mem_badge="$badge_clear" disk_badge="$badge_clear"
+  local service_badge="$badge_clear" port_badge="$badge_clear" proc_badge="$badge_clear"
+  local port_cls="muted" proc_cls="muted"
+  [[ "$cpu_state" == "关注" ]] && cpu_badge="$badge_medium"
+  [[ "$mem_state" == "关注" ]] && mem_badge="$badge_medium"
+  [[ "$disk_state" == "关注" ]] && disk_badge="$badge_medium"
+  [[ "$service_state" != "未发现" ]] && service_badge="$badge_medium"
   if [[ "${OPS_SUSPICIOUS_PROGRAM_COUNT:-0}" -gt 0 ]]; then
-    proc_badge='<span class="badge badge-medium">中风险</span>'
+    proc_badge="$badge_medium"
     proc_cls="warn"
   fi
   if [[ "${OPS_NEW_LISTEN_PORT_COUNT:-0}" -gt 0 ]]; then
-    port_badge='<span class="badge badge-medium">中风险</span>'
+    port_badge="$badge_medium"
     port_cls="warn"
   elif [[ "$port_state" != "待基线" ]]; then
     port_cls="good"
   fi
-  local login_badge='<span class="badge badge-clear">正常</span>'
-  local login_cls="good"
+  local login_badge="$badge_clear" login_cls="good"
   case "$login_state" in
-    "发现"*) login_badge='<span class="badge badge-medium">中风险</span>'; login_cls="warn" ;;
+    "发现"*) login_badge="$badge_medium"; login_cls="warn" ;;
     "无数据") login_cls="muted" ;;
   esac
   [[ "$disk_state" == "关注" ]] && disk_cls="warn"
@@ -2280,7 +2227,7 @@ EOF
 }
 
 ops_render_network_iface_table() {
-  local iface avg_rx avg_tx cnt
+  local iface avg_rx avg_tx
   local -i total_rx=0 total_tx=0 count=0
   local out=""
   local -A peak_map=()
@@ -2289,13 +2236,11 @@ ops_render_network_iface_table() {
     [[ -n "$peak_iface" ]] || continue
     peak_map["$peak_iface"]="$peak_mbps"
   done <<< "${OPS_NET_IFACE_PEAK_SUMMARY:-}"
-  while IFS='|' read -r iface avg_rx avg_tx cnt; do
+  while IFS='|' read -r iface avg_rx avg_tx _; do
     [[ -n "$iface" ]] || continue
     local rx_bytes tx_bytes
-    rx_bytes=$(awk -v r="$avg_rx" -v d="${OPS_SYSSTAT_SAMPLE_DAYS:-1}" \
-      'BEGIN { printf "%.0f", r * 1024 * 86400 * d }')
-    tx_bytes=$(awk -v t="$avg_tx" -v d="${OPS_SYSSTAT_SAMPLE_DAYS:-1}" \
-      'BEGIN { printf "%.0f", t * 1024 * 86400 * d }')
+    rx_bytes=$(ops_rate_bytes "$avg_rx")
+    tx_bytes=$(ops_rate_bytes "$avg_tx")
     total_rx=$((total_rx + rx_bytes))
     total_tx=$((total_tx + tx_bytes))
     count=$((count + 1))

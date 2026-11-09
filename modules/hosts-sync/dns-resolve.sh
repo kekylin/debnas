@@ -2,16 +2,6 @@
 # hosts-sync: 多 DNS 并行解析模块
 set -euo pipefail
 IFS=$'\n\t'
-get_domain_hash() {
-  local domain="$1"
-  if command -v md5sum >/dev/null 2>&1; then
-    printf '%s\n' "${domain}" | md5sum | awk '{print $1}'
-  elif command -v md5 >/dev/null 2>&1; then
-    printf '%s\n' "${domain}" | md5 | awk '{print $1}'
-  else
-    printf '%s\n' "${domain}" | sha256sum 2>/dev/null | awk '{print substr($1,1,16)}' || echo "fallback"
-  fi
-}
 
 # 识别 IP 地址类型
 # 参数：$1 - IP 地址
@@ -93,15 +83,12 @@ resolve_domain_ips() {
   local domain="$1"
   local -n dns_servers_ref="$2"
   local -a all_ips=()
-  local pids=()
-  local tmp_files=()
-  local safe_domain_hash
-  safe_domain_hash=$(get_domain_hash "$domain")
-  local found_ipv4=0
-  
+  local -a pids=() tmp_files=()
+  local dns tmp_file pid line
+
+  # 临时文件名由 mktemp 保证唯一，无需再按域名哈希区分
   for dns in "${dns_servers_ref[@]}"; do
-    local tmp_file
-    tmp_file=$(create_temp_file "dns-${dns}-${safe_domain_hash}") || continue
+    tmp_file=$(create_temp_file "dns-${dns}") || continue
     tmp_files+=("$tmp_file")
     
     (
@@ -116,38 +103,10 @@ resolve_domain_ips() {
     pids+=($!)
   done
   
-  if [[ "$IP_MODE" == "IPv4" ]]; then
-    local early_found=0
-    for pid in "${pids[@]}"; do
-      if wait "$pid" 2>/dev/null; then
-        for tmp_file in "${tmp_files[@]}"; do
-          if [[ -f "$tmp_file" ]]; then
-            while IFS= read -r line; do
-              if [[ -n "$line" ]]; then
-                local ip
-                IFS='|' read -r ip _ <<< "$line"
-                if [[ "$ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
-                  found_ipv4=1
-                  early_found=1
-                  break 2
-                fi
-              fi
-            done < "$tmp_file"
-          fi
-        done
-      fi
-      [[ $early_found -eq 1 ]] && break
-    done
-    
-    for pid in "${pids[@]}"; do
-      wait "$pid" 2>/dev/null || true
-    done
-  else
-    for pid in "${pids[@]}"; do
-      wait "$pid" 2>/dev/null || true
-    done
-  fi
-  
+  for pid in "${pids[@]}"; do
+    wait "$pid" 2>/dev/null || true
+  done
+
   for tmp_file in "${tmp_files[@]}"; do
     if [[ -f "$tmp_file" ]]; then
       while IFS= read -r line; do
@@ -159,26 +118,21 @@ resolve_domain_ips() {
     fi
   done
   
-  if [[ ${#all_ips[@]} -gt 0 ]]; then
-    declare -A seen_ips
-    local -a unique_ips=()
-    for ip_dns in "${all_ips[@]}"; do
-      local ip
-      IFS='|' read -r ip _ <<< "$ip_dns"
-      if [[ -z "${seen_ips[$ip]:-}" ]]; then
-        seen_ips["$ip"]=1
-        unique_ips+=("$ip_dns")
-      fi
-    done
-    all_ips=("${unique_ips[@]}")
-  fi
-  
-  printf '%s\n' "${all_ips[@]}"
+  # 按 IP 去重（保留首个 DNS 来源）；无结果时不输出任何行（空行会被调用方 mapfile 当成 1 个候选）
+  local -A seen_ips=()
+  local ip_dns ip
+  for ip_dns in "${all_ips[@]}"; do
+    ip="${ip_dns%%|*}"
+    [[ -n "${seen_ips[$ip]:-}" ]] && continue
+    seen_ips["$ip"]=1
+    printf '%s\n' "$ip_dns"
+  done
 }
 
-# HTTPS 连通性检测见 connectivity.sh（--resolve 钉 IP + 证书校验）
-# 参数：$1 - IP 地址，$2 - 域名
-
+# 解析单个域名、检测连通性并把选中的 IP 追加到输出文件
+# 参数：$1 - "域名|组名"，$2 - 输出文件
+# 结果写全局 RESOLVE_RESULT（success / unresolved / unreachable），由 process_all_domains 统计
+# shellcheck disable=SC2034  # RESOLVE_RESULT 由 hosts-manager.sh 读取
 resolve_domain() {
   # local - 使 set +e 仅在本函数内生效，返回时恢复调用方的 errexit
   local -
@@ -211,7 +165,7 @@ resolve_domain() {
   fi
   
   local -a test_results
-  mapfile -t test_results < <(test_ips_concurrently all_ips "$domain")
+  mapfile -t test_results < <(test_ips_concurrently all_ips "$domain" "$group")
   
   if [[ ${#test_results[@]} -eq 0 ]]; then
     if [[ $CRON_MODE -eq 0 ]]; then
@@ -222,19 +176,9 @@ resolve_domain() {
     return
   fi
   
+  # select_best_ips 无结果时不输出任何行
   local -a selected_ips
   mapfile -t selected_ips < <(select_best_ips test_results "$domain")
-  
-  if [[ ${#selected_ips[@]} -gt 0 ]]; then
-    local -a filtered_selected=()
-    local ip_item
-    for ip_item in "${selected_ips[@]}"; do
-      if [[ -n "$ip_item" && "$ip_item" != "" ]]; then
-        filtered_selected+=("$ip_item")
-      fi
-    done
-    selected_ips=("${filtered_selected[@]}")
-  fi
   
   if [[ $CRON_MODE -eq 0 ]]; then
     echo "  连通性检测完成，共测试 ${#all_ips[@]} 个 IP，${#test_results[@]} 个可用，选中 ${#selected_ips[@]} 个: $domain" >&2
@@ -244,8 +188,8 @@ resolve_domain() {
   
   if [[ ${#selected_ips[@]} -eq 0 ]]; then
     local first_result="${test_results[0]}"
-    local ip dns https_result tcp_result ping_result ping_delay
-    IFS='|' read -r ip dns https_result tcp_result ping_result ping_delay <<< "$first_result"
+    local ip dns https_result tcp_result ping_result
+    IFS='|' read -r ip dns https_result tcp_result ping_result _ <<< "$first_result"
     if [[ -n "$ip" && "$ip" != "" ]]; then
       local method
       method=$(get_detection_method "$https_result" "$tcp_result" "$ping_result")

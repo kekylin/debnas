@@ -2,7 +2,7 @@
 # @module: wallpaper
 # @name: 登录页壁纸
 # @category: 管理面板
-# @depends: wget
+# @depends: curl
 # @depend_modules: cockpit
 # @version: 1.0.0
 # @order: 35
@@ -38,11 +38,13 @@ get_wallpaper_api_url() {
 }
 
 # ==================== 工具函数 ====================
-is_first_run() { [[ ! -f "$STATE_FILE" ]]; }
 mark_initialized() { touch "$STATE_FILE"; }
 
 # ==================== Cockpit 版本检查 ====================
+# 一次运行内多处调用（启用流程会连调 3 次），通过后缓存结果，避免重复执行 cockpit-bridge --version
+_WP_COCKPIT_OK=0
 check_cockpit_version() {
+  [[ "$_WP_COCKPIT_OK" -eq 1 ]] && return 0
   local cockpit_version=0
 
   if command -v cockpit-bridge &>/dev/null; then
@@ -63,6 +65,7 @@ check_cockpit_version() {
     return 1
   fi
 
+  _WP_COCKPIT_OK=1
   return 0
 }
 
@@ -75,25 +78,14 @@ prepare_env() {
 update_wallpaper() {
   check_cockpit_version || return 1
   prepare_env
-  local bing_json bing_url bing_title bing_copyright full_url first_run=false
-
-  is_first_run && first_run=true
-
-  local wallpaper_api_url
+  local bing_json bing_url bing_title bing_copyright full_url wallpaper_api_url
   wallpaper_api_url=$(get_wallpaper_api_url)
-  if ! bing_json=$(curl --fail --silent --location --max-time 30 --connect-timeout 10 "$wallpaper_api_url" 2>/dev/null); then
-    [[ "$first_run" == "true" ]] && return 1
-    return 1
-  fi
+  bing_json=$(curl --fail --silent --location --max-time 30 --connect-timeout 10 "$wallpaper_api_url" 2>/dev/null) || return 1
 
-  bing_url=$(echo "$bing_json" | grep -oP '(?<="url":")[^"]+' | head -n1 || true)
-  bing_title=$(echo "$bing_json" | grep -oP '(?<="title":")[^"]+' | head -n1 || true)
-  bing_copyright=$(echo "$bing_json" | grep -oP '(?<="copyright":")[^"]+' | head -n1 || true)
-
-  if [[ -z "$bing_url" ]]; then
-    [[ "$first_run" == "true" ]] && return 1
-    return 1
-  fi
+  bing_url=$(grep -oP '(?<="url":")[^"]+' <<<"$bing_json" | head -n1 || true)
+  bing_title=$(grep -oP '(?<="title":")[^"]+' <<<"$bing_json" | head -n1 || true)
+  bing_copyright=$(grep -oP '(?<="copyright":")[^"]+' <<<"$bing_json" | head -n1 || true)
+  [[ -n "$bing_url" ]] || return 1
 
   full_url="https://www.bing.com${bing_url}"
 
@@ -102,11 +94,9 @@ update_wallpaper() {
     write_file_if_changed "$ISSUE_FILE" "$(printf '%s\n%s\n' "$bing_title" "$bing_copyright")" || true
     mark_initialized
     return 0
-  else
-    rm -f "${WALLPAPER_FILE}.tmp"
-    [[ "$first_run" == "true" ]] && return 1
-    return 1
   fi
+  rm -f "${WALLPAPER_FILE}.tmp"
+  return 1
 }
 
 # ==================== CSS 生成 ====================
@@ -249,10 +239,27 @@ enable_bing_wallpaper() {
   fi
 }
 
+# 删除 branding 目录：先把其中文件（含手工放入的品牌文件）逐个备份到集中备份目录，
+# 有文件备份失败时保留目录不删（备份功能关闭时 debnas_backup_file 返回 2，照常删除）
+_wp_remove_branding_dir() {
+  local f rc failed=0
+  [[ -n "$BRANDING_DIR" && -d "$BRANDING_DIR" ]] || return 0
+  while IFS= read -r -d '' f; do
+    rc=0
+    debnas_backup_file "$f" || rc=$?
+    [[ "$rc" -eq 1 ]] && failed=1
+  done < <(find "$BRANDING_DIR" -type f -print0 2>/dev/null)
+  if [[ "$failed" -eq 1 ]]; then
+    log_warning "备份 ${BRANDING_DIR} 失败，已保留该目录，请手动处理"
+    return 1
+  fi
+  rm -rf -- "$BRANDING_DIR"
+}
+
 disable_bing_wallpaper() {
   feature_disable "wallpaper"
   cron_unregister "wallpaper" || true
-  rm -rf "$BRANDING_DIR"
+  _wp_remove_branding_dir || true
   write_file_if_changed "$ISSUE_FILE" "基于Debian搭建 DebNAS" || true
   restart_cockpit
   log_success "壁纸已禁用"
@@ -286,7 +293,7 @@ main_menu() {
         *)   return 0 ;;
       esac
     }
-    choice=$(cat "$menu_result")
+    choice=$(<"$menu_result")
     rm -f "$menu_result"
 
     case "$choice" in
@@ -300,17 +307,9 @@ main_menu() {
 
 # ==================== 只读探测契约（docs/ARCHITECTURE.md §4.5） ====================
 
-# root crontab 中模块条目状态：on / off / unknown（非 root 无法读取 root crontab）
-_wp_cron_state() {
-  [[ "${EUID:-1}" -eq 0 ]] || { echo "unknown"; return 0; }
-  command -v crontab >/dev/null 2>&1 || { echo "off"; return 0; }
-  if cron_is_registered "wallpaper" 2>/dev/null; then echo "on"; else echo "off"; fi
-}
-
 # Cockpit 是否已安装（只查命令/包，不调用 --version）
 _wp_cockpit_installed() {
-  command -v cockpit-bridge >/dev/null 2>&1 && return 0
-  [[ "$(dpkg-query -W -f='${db:Status-Status}' cockpit-ws 2>/dev/null)" == "installed" ]]
+  command -v cockpit-bridge >/dev/null 2>&1 || pkg_is_installed cockpit-ws
 }
 
 # 当前状态：一行 "状态码|说明"（只读、< 300ms、不联网）
@@ -323,7 +322,7 @@ module_status() {
   feature_enabled "wallpaper" 2>/dev/null && enabled=1
   [[ -f "$WALLPAPER_FILE" ]] && has_bg=1
   [[ -f "$BRANDING_CSS" ]] && has_css=1
-  cron=$(_wp_cron_state)
+  cron=$(cron_state "wallpaper")
   [[ "$has_bg" -eq 1 ]] && updated=$(date -r "$WALLPAPER_FILE" '+%Y-%m-%d' 2>/dev/null || true)
   case "$cron" in
     on)  cron_desc="每日更新已开启" ;;
@@ -353,12 +352,11 @@ module_status() {
 # 预演：每行 "类型|目标|备注"（无副作用；交互式模块，列出菜单动作的影响范围）
 module_plan() {
   local cron
-  cron=$(_wp_cron_state)
+  cron=$(cron_state "wallpaper")
   echo "info|动作范围|交互菜单：启用/禁用壁纸、定时设置；非交互调用直接启用；cron 模式更新壁纸"
   _wp_cockpit_installed \
     || echo "risk|Cockpit|未安装：启用会失败（需先运行 cockpit 模块，且版本 ≥ 347）"
-  command -v wget >/dev/null 2>&1 || echo "pkg|wget|前置检查自动安装（@depends 声明）"
-  command -v curl >/dev/null 2>&1 || echo "risk|curl|未安装 curl：壁纸下载实际使用 curl，启用会失败"
+  command -v curl >/dev/null 2>&1 || echo "pkg|curl|前置检查自动安装（@depends 声明）"
   echo "info|网络|启用/定时更新会访问壁纸 API（默认 bing.com，可由 debnas.conf 的 WALLPAPER_API_URL 覆盖）并下载图片"
 
   # 启用
@@ -374,7 +372,7 @@ module_plan() {
   esac
 
   # 禁用
-  echo "write|${BRANDING_DIR}|禁用：rm -rf 删除整个目录（含手工放入的品牌文件），不另做备份"
+  echo "write|${BRANDING_DIR}|禁用：目录内文件逐个备份到 /var/backups/debnas/ 后 rm -rf 删除整个目录（含手工放入的品牌文件）；备份失败则保留"
   echo "write|${ISSUE_FILE}|禁用：恢复为默认横幅文字；原件备份到 /var/backups/debnas/"
   echo "cron|wallpaper|禁用：移除 wallpaper 定时条目"
   echo "risk|Cockpit 会话|启用/禁用会重启 Cockpit，已登录的 Web 会话会断开"

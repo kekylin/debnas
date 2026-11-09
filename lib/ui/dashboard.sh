@@ -105,12 +105,6 @@ _dash_module_desc_get() {
   return 0
 }
 
-# 读取模块说明（stdout 版本）
-_dash_module_desc() {
-  _dash_module_desc_get "$1"
-  printf '%s' "$_DASH_DESC"
-}
-
 # 读取方案文件中的模块列表（每行一个，忽略注释/空行）
 _dash_solution_modules() {
   local file="$1" line
@@ -234,12 +228,24 @@ _dash_item_status() {
 }
 
 # 状态码 → 显示文本与颜色：设置 _DASH_SV_TEXT / _DASH_SV_COLOR
+# 参数：$1 状态码；$2 状态说明、$3 模块名（可选，仅用于区分 absent 显示"未安装"还是"未配置"）
+# absent 文案：模块声明 @kind: install|config 时按声明；未声明时说明以"未安装"开头（或为空）→ 未安装，否则 → 未配置
 _dash_status_view() {
+  if [[ "$1" == "absent" ]]; then
+    local kind=""
+    [[ -n "${3:-}" ]] && { get_module_field_var kind "$3" "kind" || kind=""; }
+    case "$kind" in
+      install) _DASH_SV_TEXT="○ 未安装" ;;
+      config)  _DASH_SV_TEXT="○ 未配置" ;;
+      *) if [[ -z "${2:-}" || "$2" == 未安装* ]]; then _DASH_SV_TEXT="○ 未安装"; else _DASH_SV_TEXT="○ 未配置"; fi ;;
+    esac
+    _DASH_SV_COLOR="$_DC_DIM"
+    return 0
+  fi
   case "$1" in
     applied) _DASH_SV_TEXT="● 已应用";   _DASH_SV_COLOR="$_DC_OK" ;;
     running) _DASH_SV_TEXT="● 运行中";   _DASH_SV_COLOR="$_DC_OK" ;;
     partial) _DASH_SV_TEXT="◐ 部分完成"; _DASH_SV_COLOR="$_DC_WARN" ;;
-    absent)  _DASH_SV_TEXT="○ 未安装";   _DASH_SV_COLOR="$_DC_DIM" ;;
     warn)    _DASH_SV_TEXT="⚠ 需注意";   _DASH_SV_COLOR="$_DC_WARN" ;;
     error)   _DASH_SV_TEXT="✖ 异常";     _DASH_SV_COLOR="$_DC_BAD" ;;
     pending) _DASH_SV_TEXT="… 检测中";   _DASH_SV_COLOR="$_DC_DIM" ;;
@@ -262,11 +268,6 @@ _dash_cat_count() {
   done
   _DASH_CNT_TEXT="${done_n}/${total}"
   if (( total > 0 && done_n == total )); then _DASH_CNT_COLOR="$_DC_OK"; else _DASH_CNT_COLOR="$_DC_DIM"; fi
-}
-
-# 已选条目数（stdout 版本；渲染热路径直接用 ${#_DASH_SEL[@]}，_DASH_SEL 只存已选键）
-_dash_sel_count() {
-  printf '%s' "${#_DASH_SEL[@]}"
 }
 
 # 已选条目（按显示顺序）
@@ -332,6 +333,9 @@ _dash_box_bottom() {
 _dash_box_row() {
   local content="$2" sel="${3:-0}"
   if [[ "$sel" == "1" ]]; then
+    # 焦点行去掉灰色前景：灰字在蓝底上对比度低，且部分终端/渲染器对"亮黑前景+背景"单独着色，
+    # 使高亮在列间断开；每个 reset 后重新打开背景，保证整行背景连续
+    [[ -n "$_DC_DIM" ]] && content="${content//"$_DC_DIM"/}"
     content="${_DC_SEL}${content//"$_DC_RESET"/"${_DC_RESET}${_DC_SEL}"}${_DC_RESET}"
     _DASH_L="${_DC_BORDER}│${_DC_RESET}${_DC_SEL} ${content}${_DC_SEL} ${_DC_RESET}${_DC_BORDER}│${_DC_RESET}"
   else
@@ -488,7 +492,9 @@ _dash_item_line() {
   ui_str_fit "${_DASH_ITEM_NAME[$key]}" "$_DASH_CW_NAME"
   local name="$_UI_FIT"
   _dash_item_status "$key"
-  _dash_status_view "$_DASH_ST_CODE"
+  local mod=""
+  [[ "$key" == m:* ]] && mod="${key#m:}"
+  _dash_status_view "$_DASH_ST_CODE" "$_DASH_ST_DESC" "$mod"
   ui_str_fit "$_DASH_SV_TEXT" "$_DASH_CW_ST"
   local st="${_DASH_SV_COLOR}${_UI_FIT}${_DC_RESET}"
   local desc="$_DASH_ST_DESC" dcolor="$_DC_DIM"
@@ -701,9 +707,9 @@ _dash_compose_footer() {
   _DASH_L="${out}${_UI_FIT}"
 }
 
-# 覆盖层（帮助/日志）：占据 top..bottom-1 行
+# 覆盖层（帮助/日志）：追加 height 行（框线含在内）
 _dash_compose_overlay() {
-  local top="$1" height="$2" w=$_DASH_W inner=$(( _DASH_W - 4 )) title right
+  local height="$1" w=$_DASH_W inner=$(( _DASH_W - 4 )) title right
   case "$_DASH_OVERLAY" in
     help) title="帮助"; right="任意键返回" ;;
     log)  title="日志 · ${_DASH_OVERLAY_TITLE:-}"; right="↑↓ 滚动 · 其他键返回" ;;
@@ -747,7 +753,7 @@ _dash_compose_wide() {
   fi
 
   if [[ -n "$_DASH_OVERLAY" ]]; then
-    _dash_compose_overlay 3 $(( rows - 3 - 1 ))
+    _dash_compose_overlay $(( rows - 3 - 1 ))
     _dash_compose_footer; _DASH_FRAME+=("$_DASH_L")
     return 0
   fi
@@ -844,7 +850,7 @@ _dash_compose_narrow() {
   local boxh=$(( rows - 1 - 1 - (P > 0 ? P + 2 : 0) ))
 
   if [[ -n "$_DASH_OVERLAY" ]]; then
-    _dash_compose_overlay 1 $(( rows - 2 ))
+    _dash_compose_overlay $(( rows - 2 ))
     _dash_compose_footer; _DASH_FRAME+=("$_DASH_L")
     return 0
   fi
@@ -966,11 +972,14 @@ _dash_tui_leave() {
 _dash_install_traps() {
   local current existing=""
   current=$(trap -p EXIT 2>/dev/null || true)
-  if [[ -n "$current" ]]; then
-    existing=$(printf '%s' "$current" | sed -n "s/^trap -- '\\(.*\\)' EXIT$/\\1/p")
+  # trap -p 输出形如 trap -- '命令' EXIT（命令内的单引号转义为 '\''）；多行命令同样适用
+  if [[ "$current" == "trap -- '"*"' EXIT" ]]; then
+    existing="${current#"trap -- '"}"
+    existing="${existing%"' EXIT"}"
+    existing="${existing//"'\\''"/"'"}"
   fi
   if [[ -n "$existing" && "$existing" != *_dash_tui_leave* ]]; then
-    # shellcheck disable=SC2064
+    # shellcheck disable=SC2064,SC2154  # 有意在注册时展开 existing；_dash_exit_rc 在 trap 内赋值
     trap "_dash_exit_rc=\$?; _dash_tui_leave; (exit \$_dash_exit_rc); ${existing}" EXIT
   elif [[ -z "$existing" ]]; then
     trap '_dash_tui_leave' EXIT
@@ -1075,37 +1084,67 @@ _dash_expand_modules() {
   return 0
 }
 
+# 预演行是否在提示"依赖模块缺失"：risk/info 行中以"<模块名> 模块"或"「<显示名>」"提到依赖模块
+# 参数：$1 预演行（type|target|note），$2 依赖模块名
+# 返回：0 是，1 否
+_dash_plan_mentions_dep() {
+  local line="$1" dep="$2" dname="" re
+  [[ "$line" == risk\|* || "$line" == info\|* ]] || return 1
+  re="(^|[^a-z0-9_-])${dep}[[:space:]]*模块"
+  [[ "$line" =~ $re ]] && return 0
+  get_module_field_var dname "$dep" "name" || return 1
+  [[ "$line" == *"「${dname}」"* ]]
+}
+
 # 生成预演：对选中条目展开的模块逐个调用 module_plan，合并为 _DASH_PLAN
 # 参数：条目 key 列表（为空时取已选）
+# 说明：
+#   - 探测时导出 DEBNAS_PLAN_WITH=<本次执行的模块列表，空格分隔，依赖在前>，模块可据此自行判断依赖是否会先执行
+#   - 依赖模块也在本次列表中（排在前面）时，模块 plan 里提示该依赖缺失的 risk/info 行
+#     （见 _dash_plan_mentions_dep）合并为一条 info"将先执行「依赖」"
+#   - 依赖模块未完成且未一起勾选时追加一条 risk
 _dash_build_plan() {
   local -a keys=("$@")
   [[ ${#keys[@]} -gt 0 ]] || mapfile -t keys < <(_dash_selected_keys)
   _DASH_PLAN=() _DASH_PLAN_RISKS=0
-  local -a mods pkgs=() others=() risks=()
+  local -a mods pkgs=() others=() risks=() deps=() parr=() ahead=()
   mapfile -t mods < <(_dash_expand_modules "${keys[@]}")
-  local -A pkg_seen=() mod_set=()
-  local m line type rest target note p dep
-  for m in "${mods[@]}"; do [[ -n "$m" ]] && mod_set["$m"]=1; done
+  local -A pkg_seen=() mod_set=() done_before=() folded=()
+  local m mname line type rest target note p dep plan_with=""
   for m in "${mods[@]}"; do
     [[ -n "$m" ]] || continue
-    # 依赖模块未完成且未一起勾选 → 风险提示
+    mod_set["$m"]=1
+    plan_with+="${plan_with:+ }${m}"
+  done
+  for m in "${mods[@]}"; do
+    [[ -n "$m" ]] || continue
+    mname="${_DASH_ITEM_NAME[m:$m]:-$m}"
+    ahead=() folded=()
     get_module_field_var dep "$m" "depend_modules" || dep=""
     if [[ -n "$dep" ]]; then
-      local -a deps=()
       IFS=' ,' read -ra deps <<< "$dep"
       for p in "${deps[@]}"; do
         [[ -n "$p" ]] || continue
-        if [[ -z "${mod_set[$p]:-}" ]] && ! state_is_installed "$p" 2>/dev/null; then
-          risks+=("risk|${_DASH_ITEM_NAME[m:$m]:-$m}|依赖模块 ${p} 尚未完成且未勾选，执行时会被 preflight 拦截")
+        if [[ -n "${done_before[$p]:-}" ]]; then
+          ahead+=("$p")
+        elif [[ -z "${mod_set[$p]:-}" ]] && ! state_is_installed "$p" 2>/dev/null; then
+          risks+=("risk|${mname}|依赖模块 ${p} 尚未完成且未勾选，执行时会被 preflight 拦截")
         fi
       done
     fi
     while IFS= read -r line; do
       [[ -n "$line" ]] || continue
+      for p in "${ahead[@]+"${ahead[@]}"}"; do
+        _dash_plan_mentions_dep "$line" "$p" || continue
+        if [[ -z "${folded[$p]:-}" ]]; then
+          folded["$p"]=1
+          others+=("info|${mname}|将先执行依赖「${_DASH_ITEM_NAME[m:$p]:-$p}」（${p}）")
+        fi
+        continue 2
+      done
       type="${line%%|*}"; rest="${line#*|}"; target="${rest%%|*}"; note="${rest#*|}"
       case "$type" in
         pkg)
-          local -a parr=()
           IFS=' ,' read -ra parr <<< "$target"
           for p in "${parr[@]}"; do
             [[ -n "$p" && -z "${pkg_seen[$p]:-}" ]] && { pkg_seen["$p"]=1; pkgs+=("$p"); }
@@ -1114,16 +1153,17 @@ _dash_build_plan() {
         risk) risks+=("$line") ;;
         info)
           # 回退说明（未提供预演）带上模块名，便于识别
-          if [[ "$target" == "$m" ]]; then others+=("info|${_DASH_ITEM_NAME[m:$m]:-$m}|${note}"); else others+=("$line"); fi
+          if [[ "$target" == "$m" ]]; then others+=("info|${mname}|${note}"); else others+=("$line"); fi
           ;;
         *) others+=("$line") ;;
       esac
-    done < <(module_probe "$m" plan 2>/dev/null)
+    done < <(DEBNAS_PLAN_WITH="$plan_with" module_probe "$m" plan 2>/dev/null)
+    done_before["$m"]=1
   done
   if [[ ${#pkgs[@]} -gt 0 ]]; then
-    local IFS=' '
-    _DASH_PLAN+=("pkg|${pkgs[*]}|apt · ${#pkgs[@]} 个包")
-    IFS=$'\n\t'
+    local pkg_list
+    printf -v pkg_list '%s ' "${pkgs[@]}"
+    _DASH_PLAN+=("pkg|${pkg_list% }|apt · ${#pkgs[@]} 个包")
   fi
   _DASH_PLAN+=("${others[@]+"${others[@]}"}" "${risks[@]+"${risks[@]}"}")
   _DASH_PLAN_RISKS=${#risks[@]}
@@ -1146,7 +1186,7 @@ _dash_open_help() {
     "  ?            本帮助                           q  退出"
     ""
     "状态"
-    "  ● 已应用/运行中   ◐ 部分完成   ○ 未安装   ⚠ 需注意   ✖ 异常   ? 未知（未提供检测）"
+    "  ● 已应用/运行中   ◐ 部分完成   ○ 未安装/未配置   ⚠ 需注意   ✖ 异常   ? 未知（未提供检测）"
     ""
     "预演"
     "  + 安装 包   ~ 修改 文件   * 服务   # 端口   @ 定时任务   & 用户   ! 风险   · 说明"
