@@ -76,8 +76,9 @@ read_key() {
   elif [[ "$key" =~ ^[1-9]$ ]]; then
     _READ_KEY_RESULT="NUM:$key"; return 0
   fi
-  # 无效按键：静默忽略（设计规范 §5.4 — 无效按键静默原则）
-  _READ_KEY_RESULT=""
+  # 其他按键：输出 OTHER:c，由调用方决定是否处理（ui_confirm 依赖 OTHER:y / OTHER:n；
+  # 旧实现返回空串，导致确认框的 Y/N 快捷键永远不生效）。ui_menu 对 OTHER 静默忽略（§5.4）
+  _READ_KEY_RESULT="OTHER:$key"
   return 0
 }
 
@@ -171,6 +172,7 @@ ui_menu() {
       _ui_visible_slots=$(( _ui_max_visible - _ui_top_ind - _ui_bot_ind ))
     fi
     [[ $_ui_visible_slots -lt 1 ]] && _ui_visible_slots=1
+    return 0  # 避免以 && 结尾时返回 1（set -e 下会终止调用方）
   }
 
   # 确保焦点在可见窗口内（必要时调整 scroll_offset）
@@ -193,6 +195,7 @@ ui_menu() {
     _ui_top_ind=0; _ui_bot_ind=0
     [[ $_ui_scroll_offset -gt 0 ]] && _ui_top_ind=1
     [[ $(( _ui_scroll_offset + _ui_visible_slots )) -lt $item_count ]] && _ui_bot_ind=1
+    return 0  # 避免以 && 结尾时返回 1（set -e 下会终止调用方）
   }
 
   # 判断项索引是否在可见窗口内
@@ -375,7 +378,8 @@ ui_menu() {
   # ═══════════════ 主循环 ═══════════════
   while true; do
     local key
-    read_key
+    # EOF 时 read_key 返回 1，结果仍通过 _READ_KEY_RESULT="EOF" 传递
+    read_key || true
     key="$_READ_KEY_RESULT"
 
     case "$key" in
@@ -387,13 +391,11 @@ ui_menu() {
       REDRAW)
         _UI_NEEDS_REDRAW=0
         # 重新计算布局参数（紧凑模式可能随 ui_screen_init 更新，但不在 SIGWINCH 中变化）
+        # 与首次渲染保持一致：面包屑后无空行，两种模式均为 1 行
+        # （旧实现此处为 2，窗口缩放后行号计算偏移一行，局部刷新错位）
         breadcrumb_lines=0
         if [[ -n "$breadcrumb" ]]; then
-          if [[ "${_UI_COMPACT_MODE:-0}" -eq 1 ]]; then
-            breadcrumb_lines=1
-          else
-            breadcrumb_lines=2
-          fi
+          breadcrumb_lines=1
         fi
         _ui_menu_full_redraw
         _ui_a11y_announce "屏幕已刷新，焦点: ${items[$focus_idx]} ($((focus_idx + 1))/${item_count})"
@@ -533,11 +535,13 @@ get_user_choice() {
     return 1
   fi
 
-  # 验证输入
-  if [[ ! "$choice" =~ ^[0-9]+$ ]]; then
+  # 验证输入（限制位数防止算术溢出）
+  if [[ ! "$choice" =~ ^[0-9]{1,6}$ ]]; then
     log_error "请输入数字编号"
     return 1
   fi
+  # 按十进制规范化："08"/"09" 否则会被当作非法八进制报错，"00" 规范为 0
+  choice=$((10#$choice))
 
   if [[ "$choice" -lt 0 ]] || [[ "$choice" -gt "$max_options" ]]; then
     log_error "无效选择，请输入 0-$max_options"

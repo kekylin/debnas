@@ -59,7 +59,8 @@ state_get() {
   fi
 
   local value
-  value=$(grep "^${key}=" "$state_file" 2>/dev/null | head -1 | cut -d= -f2-)
+  # 末尾 || true：键不存在时 grep 返回 1，pipefail + set -e 下会让直接调用方退出
+  value=$(grep "^${key}=" "$state_file" 2>/dev/null | head -1 | cut -d= -f2-) || true
   if [[ -n "$value" ]]; then
     echo "$value"
     return 0
@@ -92,10 +93,19 @@ state_set() {
     chmod 644 "$state_file"
   fi
 
+  # 值中的换行会注入额外的键值行（如 last_error 来自多行错误信息），统一替换为空格
+  value="${value//$'\r'/ }"
+  value="${value//$'\n'/ }"
+
   # 更新或追加键值对
   if grep -q "^${key}=" "$state_file" 2>/dev/null; then
-    # 替换已有行（使用 awk 避免 sed 分隔符冲突）
-    awk -F= -v k="$key" -v v="$value" 'BEGIN{OFS="="} $1==k{$2=v} {print}' "$state_file" > "${state_file}.tmp"
+    # 替换已有行：整行重写为 key=value。
+    # 旧实现 awk -F= '$2=v' 在值含 "=" 时会残留后续字段，且 -v 会解释反斜杠转义。
+    _DEBNAS_STATE_KEY="$key" _DEBNAS_STATE_VAL="$value" awk '
+      BEGIN { k = ENVIRON["_DEBNAS_STATE_KEY"]; v = ENVIRON["_DEBNAS_STATE_VAL"] }
+      index($0, k"=") == 1 { print k"="v; next }
+      { print }
+    ' "$state_file" > "${state_file}.tmp"
     mv "${state_file}.tmp" "$state_file"
   else
     # 追加新行
@@ -212,7 +222,7 @@ state_list_installed() {
   for state_file in "${DEBNAS_STATE_DIR}"/*.state; do
     [[ -f "$state_file" ]] || continue
     module_name=$(basename "$state_file" .state)
-    last_result=$(grep "^last_result=" "$state_file" 2>/dev/null | cut -d= -f2-)
+    last_result=$(grep "^last_result=" "$state_file" 2>/dev/null | cut -d= -f2-) || true
     if [[ "$last_result" == "$STATE_SUCCESS" ]]; then
       echo "$module_name"
     fi

@@ -113,7 +113,8 @@ apt_install_packages() {
   fi
 
   log_info "安装 ${to_install[*]}..."
-  apt_update_safe
+  # apt update 失败不阻断（使用已有索引继续）；否则在 set -e 下会直接退出调用方
+  apt_update_safe || log_warning "APT 索引更新失败，使用现有缓存继续安装"
   apt_install_safe "${to_install[@]}"
 }
 

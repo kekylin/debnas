@@ -155,7 +155,9 @@ _ui_register_cursor_trap() {
     local existing_cmd
     existing_cmd=$(echo "$current" | sed -n "s/^trap -- '\\(.*\\)' EXIT$/\\1/p")
     if [[ -n "$existing_cmd" ]]; then
-      trap 'cursor_show 2>/dev/null || printf "\033[?25h"; stty echo 2>/dev/null || true; '"$existing_cmd" EXIT
+      # 原有 trap（如 _debnas_cleanup_on_exit）放在最前：它通过 $? 判断退出码，
+      # 若先执行 cursor_show/stty，$? 会被覆盖为 0，异常退出将不再被识别
+      trap "${existing_cmd}"'; cursor_show 2>/dev/null || printf "\033[?25h"; stty echo 2>/dev/null || true' EXIT
     fi
   fi
   _UI_CURSOR_TRAP_SET=1

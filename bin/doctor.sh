@@ -47,7 +47,8 @@ check_system_compatibility() {
 # [2] 磁盘空间检查
 check_disk_space() {
   echo "── 磁盘"
-  df -h / /opt /var /tmp 2>/dev/null | awk 'NR==1 || /^\/dev/' | sed 's/^/  /'
+  # 任一挂载点不存在时 df 返回非 0，pipefail + set -e 会让诊断中途退出
+  df -h / /opt /var /tmp 2>/dev/null | awk 'NR==1 || /^\/dev/' | sed 's/^/  /' || true
   echo ""
 }
 
@@ -57,7 +58,8 @@ check_apt_sources() {
 
   if [[ -f "/etc/apt/sources.list.d/debian.sources" ]]; then
     local mirror
-    mirror=$(grep "^URIs:" /etc/apt/sources.list.d/debian.sources 2>/dev/null | head -1 | awk '{print $2}')
+    # 无匹配行时 grep 返回 1，pipefail + set -e 下会让 doctor 直接退出
+    mirror=$(grep "^URIs:" /etc/apt/sources.list.d/debian.sources 2>/dev/null | head -1 | awk '{print $2}') || true
     printf "  %-20s %s\n" "主源格式:" "DEB822（新格式）"
     printf "  %-20s %s\n" "镜像地址:" "${mirror:-未配置}"
 
@@ -70,7 +72,7 @@ check_apt_sources() {
   elif [[ -f "/etc/apt/sources.list" ]]; then
     printf "  %-20s %s\n" "主源格式:" "传统格式（旧格式）"
     local mirror
-    mirror=$(grep "^deb " /etc/apt/sources.list 2>/dev/null | head -1 | awk '{print $2}')
+    mirror=$(grep "^deb " /etc/apt/sources.list 2>/dev/null | head -1 | awk '{print $2}') || true
     printf "  %-20s %s\n" "镜像地址:" "${mirror:-未配置}"
   else
     printf "  %-20s %s\n" "软件源:" "❌ 未配置"
@@ -148,7 +150,9 @@ check_debnas_status() {
   local current_crontab
   current_crontab=$(crontab -l 2>/dev/null || true)
   if [[ -n "$current_crontab" ]]; then
-    cron_count=$(echo "$current_crontab" | grep -c "DEBNAS-CRON" 2>/dev/null || echo "0")
+    # grep -c 无匹配时已输出 0 但返回 1，旧写法 || echo "0" 会得到 "0\n0"
+    cron_count=$(echo "$current_crontab" | grep -c "DEBNAS-CRON" 2>/dev/null) || true
+    [[ -n "$cron_count" ]] || cron_count=0
   fi
   printf "  %-20s %s 个\n" "定时任务:" "$cron_count"
 

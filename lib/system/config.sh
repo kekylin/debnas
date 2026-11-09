@@ -27,6 +27,23 @@ _config_file() {
   echo "${DEBNAS_CONF_DIR}/${module_name}.conf"
 }
 
+# 校验模块名与键名（防止路径穿越与正则/sed 注入）
+# 键名会被拼入 grep/awk/sed 正则（sed 的 e 命令可执行任意命令），模块名会被拼入文件路径。
+# 参数：$1 - 模块名，$2 - 键名
+# 返回：0 合法，1 非法（已输出错误）
+_config_validate_names() {
+  local module_name="$1" key="$2"
+  if [[ ! "$module_name" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]*$ || "$module_name" == *..* ]]; then
+    echo "debNAS: 非法的配置模块名：${module_name}" >&2
+    return 1
+  fi
+  if [[ ! "$key" =~ ^[A-Za-z_][A-Za-z0-9_.-]*$ ]]; then
+    echo "debNAS: 非法的配置键名：${key}（仅允许字母、数字、_ . -）" >&2
+    return 1
+  fi
+  return 0
+}
+
 # 确保配置目录存在
 # 参数：无
 # 返回：0 成功，1 失败
@@ -55,6 +72,8 @@ config_read() {
   local default_value="${3:-}"
   local conf_file
 
+  _config_validate_names "$module_name" "$key" || return 1
+
   if [[ "$module_name" == "global" ]]; then
     conf_file="$DEBNAS_GLOBAL_CONF"
   else
@@ -71,10 +90,11 @@ config_read() {
 
   # 读取值（忽略注释行和空行，取第一个匹配）
   local value
-  value=$(grep -E "^[[:space:]]*${key}[[:space:]]*=" "$conf_file" 2>/dev/null \
+  # 末尾 || true：键不存在时 grep 返回 1，在 pipefail + set -e 下会使调用方直接退出
+  value=$(grep -E "^[[:space:]]*${key//./\\.}[[:space:]]*=" "$conf_file" 2>/dev/null \
           | head -1 \
           | sed 's/^[^=]*=[[:space:]]*//' \
-          | sed 's/[[:space:]]*$//')
+          | sed 's/[[:space:]]*$//') || true
 
   if [[ -n "$value" ]]; then
     echo "$value"
@@ -99,8 +119,15 @@ config_write() {
   local module_name="${1:?config_write: 缺少模块名}"
   local key="${2:?config_write: 缺少键名}"
   local value="${3:?config_write: 缺少键值}"
-  local file_perm="${4:-644}"
+  local file_perm="${4:-}"
   local conf_file
+
+  _config_validate_names "$module_name" "$key" || return 1
+  # 值中含换行会注入额外的键值行
+  if [[ "$value" == *$'\n'* || "$value" == *$'\r'* ]]; then
+    echo "debNAS: 配置值不能包含换行：${key}" >&2
+    return 1
+  fi
 
   if [[ "$module_name" == "global" ]]; then
     conf_file="$DEBNAS_GLOBAL_CONF"
@@ -112,31 +139,53 @@ config_write() {
     fi
   fi
 
-  # 如果文件不存在则创建
+  # 未显式指定权限：已存在文件保留原权限（避免把 600 的敏感配置改回 644），新文件默认 644
+  if [[ -z "$file_perm" ]]; then
+    if [[ -f "$conf_file" ]]; then
+      file_perm=$(stat -c '%a' "$conf_file" 2>/dev/null) || file_perm="644"
+    else
+      file_perm="644"
+    fi
+  fi
+
+  # 如果文件不存在则创建（umask 077：先以 600 创建，chmod 前不暴露内容）
   if [[ ! -f "$conf_file" ]]; then
-    {
-      echo "# DebNAS 配置文件 - ${module_name}"
-      echo "# 创建时间: $(date '+%Y-%m-%d %H:%M:%S')"
-    } > "$conf_file"
+    (
+      umask 077
+      {
+        echo "# DebNAS 配置文件 - ${module_name}"
+        echo "# 创建时间: $(date '+%Y-%m-%d %H:%M:%S')"
+      } > "$conf_file"
+    ) || return 1
     chmod "$file_perm" "$conf_file"
   fi
 
   # 更新或追加键值对
-  if grep -qE "^[[:space:]]*${key}[[:space:]]*=" "$conf_file" 2>/dev/null; then
+  local key_re="${key//./\\.}"
+  if grep -qE "^[[:space:]]*${key_re}[[:space:]]*=" "$conf_file" 2>/dev/null; then
     # 替换已有行（使用 ENVIRON 传递变量，避免 awk -v 解释转义序列）
-    export _DEBNAS_CFG_KEY="$key" _DEBNAS_CFG_VAL="$value"
-    awk '{
-      line = $0
-      sub(/^[[:space:]]*/, "", line)
-      k = ENVIRON["_DEBNAS_CFG_KEY"]
-      if (line ~ "^"k"[[:space:]]*=") {
-        print k"="ENVIRON["_DEBNAS_CFG_VAL"]
-      } else {
-        print $0
-      }
-    }' "$conf_file" > "${conf_file}.tmp"
-    unset _DEBNAS_CFG_KEY _DEBNAS_CFG_VAL
-    mv "${conf_file}.tmp" "$conf_file"
+    # 临时文件以 umask 077 创建：含敏感值的 600 文件在替换期间不会以 644 暴露
+    if ! (
+      umask 077
+      export _DEBNAS_CFG_KEY="$key" _DEBNAS_CFG_RE="$key_re" _DEBNAS_CFG_VAL="$value"
+      awk '{
+        line = $0
+        sub(/^[[:space:]]*/, "", line)
+        if (line ~ "^"ENVIRON["_DEBNAS_CFG_RE"]"[[:space:]]*=") {
+          print ENVIRON["_DEBNAS_CFG_KEY"]"="ENVIRON["_DEBNAS_CFG_VAL"]
+        } else {
+          print $0
+        }
+      }' "$conf_file" > "${conf_file}.tmp"
+    ); then
+      rm -f "${conf_file}.tmp"
+      return 1
+    fi
+    chmod "$file_perm" "${conf_file}.tmp" 2>/dev/null || true
+    if ! mv "${conf_file}.tmp" "$conf_file"; then
+      rm -f "${conf_file}.tmp"
+      return 1
+    fi
   else
     # 追加新行
     echo "${key}=${value}" >> "$conf_file"
@@ -157,6 +206,8 @@ config_delete() {
   local key="${2:?config_delete: 缺少键名}"
   local conf_file
 
+  _config_validate_names "$module_name" "$key" || return 1
+
   if [[ "$module_name" == "global" ]]; then
     conf_file="$DEBNAS_GLOBAL_CONF"
   else
@@ -164,7 +215,7 @@ config_delete() {
   fi
 
   if [[ -f "$conf_file" ]]; then
-    sed -i "/^[[:space:]]*${key}[[:space:]]*=/d" "$conf_file" 2>/dev/null || true
+    sed -i "/^[[:space:]]*${key//./\\.}[[:space:]]*=/d" "$conf_file" 2>/dev/null || true
   fi
   return 0
 }

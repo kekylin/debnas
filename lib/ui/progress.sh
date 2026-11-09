@@ -18,6 +18,8 @@ IFS=$'\n\t'
 #       $4 — 状态（可选，"done"=绿色 [DONE] 标签，其余=蓝色 INFO 标签）
 ui_progress_step() {
   local current="$1" total="$2" description="$3" status="${4:-}"
+  # total 为 0 时避免除零错误（set -e 下会终止调用方）
+  [[ "$total" -gt 0 ]] || total=1
   local pct=$((current * 100 / total))
   local bar_width=20
   local filled=$((pct * bar_width / 100))

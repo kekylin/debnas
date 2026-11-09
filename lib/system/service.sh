@@ -187,7 +187,8 @@ sysctl_persist() {
   local conf_line="${param_name} = ${param_value}"
 
   # 幂等检查：配置文件中已存在相同配置
-  if [[ -f "$conf_path" ]] && grep -qF "$conf_line" "$conf_path" 2>/dev/null; then
+  # 整行精确匹配（-x）：子串匹配会把 "vm.swappiness = 10" 误判为已包含 "vm.swappiness = 1"
+  if [[ -f "$conf_path" ]] && grep -qxF -- "$conf_line" "$conf_path" 2>/dev/null; then
     log_info "sysctl 持久化配置已存在：${conf_path}"
     return 0
   fi

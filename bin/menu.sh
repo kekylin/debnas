@@ -150,7 +150,8 @@ handle_solution_sub_menu() {
     ui_clear_menu_area "$_old_area"
     declare -f _ui_print_menu_snapshot >/dev/null 2>&1 && _ui_print_menu_snapshot
 
-    execute_solution "${SOLUTION_NAMES[$choice]}"
+    # 方案失败时 execute_solution 返回 1（已输出错误），不能让 set -e 直接退出整个菜单
+    execute_solution "${SOLUTION_NAMES[$choice]}" || true
 
     # 在日志末尾重绘 Header + L2 菜单
     ui_screen_init

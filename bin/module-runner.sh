@@ -136,11 +136,10 @@ execute_module() {
   fi
 
   # 通过 bash 子进程执行模块（清除 bootstrap 标记，让模块重新加载库）
-  if (unset _DEBNAS_BOOTSTRAPPED; bash "$module_path" "$@"); then
-    return 0
-  else
-    return 1
-  fi
+  # 保留模块真实退出码（2=依赖缺失、4=权限不足等），不再一律折叠为 1
+  local rc=0
+  (unset _DEBNAS_BOOTSTRAPPED; bash "$module_path" "$@") || rc=$?
+  return "$rc"
 }
 
 # ==================== Preflight 阶段 ====================

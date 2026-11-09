@@ -147,7 +147,11 @@ cmd_update() {
 
 	rm -rf "$tmp_dir"
 
-	migration_run 2>/dev/null || log_warning "版本迁移存在问题，请运行 debnas doctor 检查"
+	# 迁移必须由"新代码"执行：当前进程加载的是旧版本的 DEBNAS_VERSION 与 _migrate_* 函数，
+	# 在此直接调用 migration_run 永远检测不到版本变化，新版本的迁移步骤也不会被执行
+	if ! (unset _DEBNAS_BOOTSTRAPPED _DEBNAS_CORE_LOADED; bash -c 'source "$1/lib/bootstrap.sh" && migration_run' _ "/opt/debnas") 2>/dev/null; then
+		log_warning "版本迁移存在问题，请运行 debnas doctor 检查"
+	fi
 
 	log_success "DebNAS 更新完成"
 	return 0
@@ -159,7 +163,9 @@ cmd_uninstall() {
 	log_warning "不会恢复已安装的软件包或已修改的系统配置。"
 
 	if [[ "${DEBNAS_FORCE_YES:-0}" -ne 1 ]]; then
-		read -rp "确认继续？[y/N]: " confirm
+		local confirm=""
+		# EOF 时 read 返回非 0，set -e 下会静默退出，按"取消"处理
+		read -rp "确认继续？[y/N]: " confirm || confirm=""
 		if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
 			log_info "已取消卸载"
 			return 0
@@ -272,7 +278,10 @@ cmd_cron() {
 # ==================== 主路由 ====================
 
 main() {
-	rm -f /tmp/.debnas_signal_handled 2>/dev/null || true
+	# 清理上次被中断残留的信号哨兵（仅在基目录属于当前用户时操作）
+	if [[ -f "${_DEBNAS_SIGNAL_SENTINEL:-}" ]] && _temp_dir_owned_by_me "$DEBNAS_TMP_BASE"; then
+		rm -f "$_DEBNAS_SIGNAL_SENTINEL" 2>/dev/null || true
+	fi
 
 	# 解析全局参数（--help / --version 在此退出）
 	parse_global_args "$@"

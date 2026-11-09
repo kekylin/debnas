@@ -41,6 +41,9 @@ declare -g -a _DISCOVERED_MODULES=()
 # 是否已执行过发现
 declare -g _MODULES_DISCOVERED=0
 
+# 最近一次 _parse_single_file 解析得到的模块名（供目录模块定位注册键）
+declare -g _LAST_PARSED_MODULE=""
+
 # ==================== 内部函数 ====================
 
 # 获取模块目录路径
@@ -61,13 +64,14 @@ _get_modules_dir() {
 
 # 解析单个模块文件的元数据
 # 参数：$1 - 模块文件路径
-# 输出：设置 _MODULE_REGISTRY 关联数组
+#       $2 - 默认模块名（可选，默认取文件名；目录模块传目录名，避免缺少 @module 时注册成 "module"）
+# 输出：设置 _MODULE_REGISTRY 关联数组，并把最终模块名写入 _LAST_PARSED_MODULE
 # 返回：0 成功，1 失败
 _parse_single_file() {
   local file_path="$1"
   local file_name
   file_name=$(basename "$file_path" .sh)
-  local module_name="$file_name"
+  local module_name="${2:-$file_name}"
 
   # 默认值
   _MODULE_REGISTRY["${module_name}.module"]="$module_name"
@@ -155,6 +159,7 @@ _parse_single_file() {
     log_warning "模块缺少元数据声明：${file_path}（使用默认值）"
   fi
 
+  _LAST_PARSED_MODULE="$module_name"
   return 0
 }
 
@@ -168,10 +173,11 @@ _parse_directory_module() {
   local entry_file="${dir_path}/module.sh"
 
   if [[ -f "$entry_file" ]]; then
-    _parse_single_file "$entry_file"
-    # 覆盖类型为 directory
+    _parse_single_file "$entry_file" "$dir_name"
+    # 覆盖类型为 directory（使用解析得到的真实模块名；@module 与目录名不一致时，
+    # 旧实现按目录名写入 type/path，会产生只有 type/path 的幽灵条目）
     local module_name
-    module_name="${_MODULE_REGISTRY["${dir_name}.module"]:-$dir_name}"
+    module_name="${_LAST_PARSED_MODULE:-$dir_name}"
     _MODULE_REGISTRY["${module_name}.type"]="directory"
     _MODULE_REGISTRY["${module_name}.path"]="$entry_file"
   else

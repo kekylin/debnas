@@ -124,12 +124,21 @@ log_to_file() {
 
   # 确保日志目录存在
   if [[ ! -d "$DEBNAS_LOG_DIR" ]]; then
-    mkdir -p "$DEBNAS_LOG_DIR" 2>/dev/null || {
-      # 无 root 权限时使用 /tmp 回退
-      DEBNAS_LOG_DIR="/tmp/debnas-logs"
-      mkdir -p "$DEBNAS_LOG_DIR" 2>/dev/null || return 1
-    }
-    chmod 755 "$DEBNAS_LOG_DIR" 2>/dev/null || true
+    if mkdir -p "$DEBNAS_LOG_DIR" 2>/dev/null; then
+      chmod 755 "$DEBNAS_LOG_DIR" 2>/dev/null || true
+    else
+      # 无 root 权限时回退到按 UID 隔离的私有目录。
+      # 固定的公共路径（如 /tmp/debnas-logs）可被其他用户预先创建或做成符号链接，
+      # 因此必须用 mkdir -m 700 创建，并校验属主为当前用户且不是符号链接。
+      DEBNAS_LOG_DIR="/tmp/debnas-logs-${EUID:-$(id -u)}"
+      if [[ ! -e "$DEBNAS_LOG_DIR" && ! -L "$DEBNAS_LOG_DIR" ]]; then
+        mkdir -m 700 "$DEBNAS_LOG_DIR" 2>/dev/null || return 1
+      fi
+      if [[ -L "$DEBNAS_LOG_DIR" || ! -d "$DEBNAS_LOG_DIR" || ! -O "$DEBNAS_LOG_DIR" ]]; then
+        return 1
+      fi
+      chmod 700 "$DEBNAS_LOG_DIR" 2>/dev/null || return 1
+    fi
   fi
 
   # 生成日志文件名

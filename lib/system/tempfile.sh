@@ -21,6 +21,9 @@ IFS=$'\n\t'
 # 临时文件基目录（所有进程共享）
 readonly DEBNAS_TMP_BASE="${DEBNAS_TMP_BASE:-/tmp/debnas}"
 
+# 跨进程信号去重哨兵（放在受属主校验保护的基目录内，避免 /tmp 下固定文件名被他人预建）
+readonly _DEBNAS_SIGNAL_SENTINEL="${DEBNAS_TMP_BASE}/.signal_handled"
+
 # 当前进程的 PID 临时子目录（进程隔离，退出时整体移除）
 readonly _DEBNAS_PID_DIR="${DEBNAS_TMP_BASE}/pid-$$"
 
@@ -41,16 +44,29 @@ readonly _DEBNAS_INTENTIONAL_EXIT_MAX=6
 
 # ==================== 核心函数 ====================
 
+# 校验目录可安全使用：是真实目录（非符号链接）且属主为当前有效用户
+# 参数：$1 - 目录路径
+# 返回：0 安全，1 不安全
+_temp_dir_owned_by_me() {
+  local dir="$1"
+  [[ -d "$dir" && ! -L "$dir" && -O "$dir" ]]
+}
+
 # 初始化临时文件目录
 # 创建基目录（755，允许 _apt 等系统用户遍历访问）和进程 PID 子目录（700）
+# 安全：基目录位于全局可写的 /tmp，普通用户可抢先创建同名目录/符号链接，
+#       之后即可替换 root 写入其中的文件。因此不再"存在即复用"，而是
+#       校验属主必须为当前有效用户且不是符号链接，否则拒绝使用（fail-closed）。
 # 返回：0 成功，1 失败
 init_temp_dir() {
   # 基目录
-  if [[ ! -d "$DEBNAS_TMP_BASE" ]]; then
-    mkdir -p "$DEBNAS_TMP_BASE" || {
-      echo "临时目录失败: ${DEBNAS_TMP_BASE}" >&2
-      return 1
-    }
+  if [[ ! -e "$DEBNAS_TMP_BASE" && ! -L "$DEBNAS_TMP_BASE" ]]; then
+    # 并发进程可能同时创建，失败后由下方属主校验兜底
+    mkdir -m 755 "$DEBNAS_TMP_BASE" 2>/dev/null || true
+  fi
+  if ! _temp_dir_owned_by_me "$DEBNAS_TMP_BASE"; then
+    echo "临时目录不安全（不存在/非当前用户所有/为符号链接）：${DEBNAS_TMP_BASE}，请确认后手动删除再重试" >&2
+    return 1
   fi
   chmod 755 "$DEBNAS_TMP_BASE" || {
     echo "临时目录权限设置失败：${DEBNAS_TMP_BASE}" >&2
@@ -58,13 +74,14 @@ init_temp_dir() {
   }
 
   # PID 子目录（进程隔离）
-  if [[ ! -d "$_DEBNAS_PID_DIR" ]]; then
-    mkdir -p "$_DEBNAS_PID_DIR" || {
-      echo "PID临时目录失败: ${_DEBNAS_PID_DIR}" >&2
-      return 1
-    }
-    chmod 700 "$_DEBNAS_PID_DIR"
+  if [[ ! -e "$_DEBNAS_PID_DIR" && ! -L "$_DEBNAS_PID_DIR" ]]; then
+    mkdir -m 700 "$_DEBNAS_PID_DIR" 2>/dev/null || true
   fi
+  if ! _temp_dir_owned_by_me "$_DEBNAS_PID_DIR"; then
+    echo "PID临时目录失败: ${_DEBNAS_PID_DIR}" >&2
+    return 1
+  fi
+  chmod 700 "$_DEBNAS_PID_DIR" || return 1
 }
 
 # 创建临时文件
@@ -114,7 +131,8 @@ create_temp_dir() {
 # 移除 PID 子目录及其下所有内容。基目录为空时自动移除。
 # 不影响其他并发脚本的 PID 子目录。
 cleanup_temp_files() {
-  if [[ -d "$_DEBNAS_PID_DIR" ]]; then
+  # 只清理属于当前用户的真实目录（防止被替换为他人目录/符号链接后误删）
+  if [[ -n "$_DEBNAS_PID_DIR" ]] && _temp_dir_owned_by_me "$_DEBNAS_PID_DIR"; then
     rm -rf "$_DEBNAS_PID_DIR" 2>/dev/null || true
   fi
 
@@ -133,9 +151,13 @@ _debnas_cleanup_on_exit() {
   # 在清理前捕获信号状态（哨兵文件将在 cleanup_temp_files 后被移除，
   # 避免残留的哨兵文件影响后续 debnas 运行的异常退出警告）
   local _was_signalled=0
-  [[ -f /tmp/.debnas_signal_handled ]] && _was_signalled=1
+  [[ -f "$_DEBNAS_SIGNAL_SENTINEL" ]] && _was_signalled=1
   cleanup_temp_files
-  rm -f /tmp/.debnas_signal_handled 2>/dev/null || true
+  if [[ -f "$_DEBNAS_SIGNAL_SENTINEL" ]] && _temp_dir_owned_by_me "$DEBNAS_TMP_BASE"; then
+    rm -f "$_DEBNAS_SIGNAL_SENTINEL" 2>/dev/null || true
+    # 哨兵移除后基目录可能已空，再尝试移除一次
+    rmdir "$DEBNAS_TMP_BASE" 2>/dev/null || true
+  fi
   # 如果中断信号已处理过，不再重复输出
   if [[ $_was_signalled -eq 1 ]]; then
     return 0
@@ -154,13 +176,21 @@ _debnas_cleanup_on_exit() {
 
 # INT/TERM 信号回调：执行清理并终止脚本（跨进程去重，只提示一次）
 _debnas_cleanup_on_signal() {
+  local _first_signal=0
+  # 先写哨兵再清理：否则 cleanup_temp_files 可能移除空的基目录，哨兵无处可写
+  if [[ ! -f "$_DEBNAS_SIGNAL_SENTINEL" ]]; then
+    _first_signal=1
+    if [[ ! -e "$DEBNAS_TMP_BASE" && ! -L "$DEBNAS_TMP_BASE" ]]; then
+      mkdir -m 755 "$DEBNAS_TMP_BASE" 2>/dev/null || true
+    fi
+    if _temp_dir_owned_by_me "$DEBNAS_TMP_BASE"; then
+      touch "$_DEBNAS_SIGNAL_SENTINEL" 2>/dev/null || true
+    fi
+  fi
   cleanup_temp_files
   # 跨进程去重：只有第一个接收到信号的进程输出提示
-  if [[ ! -f /tmp/.debnas_signal_handled ]]; then
-    touch /tmp/.debnas_signal_handled 2>/dev/null || true
-    if declare -f log_warning >/dev/null 2>&1; then
-      log_warning "已取消，临时文件已清理"
-    fi
+  if [[ $_first_signal -eq 1 ]] && declare -f log_warning >/dev/null 2>&1; then
+    log_warning "已取消，临时文件已清理"
   fi
   exit 1
 }

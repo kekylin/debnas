@@ -18,9 +18,9 @@ _get_os_id() {
     os_id=$(lsb_release -is)
   else
     if [[ -f /etc/os-release ]]; then
+      # 在子 shell 中 source，避免 ID/NAME/VERSION 等变量污染调用方全局作用域
       # shellcheck source=/dev/null
-      . /etc/os-release
-      os_id="${ID:-}"
+      os_id=$(. /etc/os-release && echo "${ID:-}")
     else
       return 1
     fi
@@ -38,8 +38,7 @@ _get_os_codename() {
   else
     if [[ -f /etc/os-release ]]; then
       # shellcheck source=/dev/null
-      . /etc/os-release
-      echo "${VERSION_CODENAME:-}"
+      (. /etc/os-release && echo "${VERSION_CODENAME:-}")
     else
       return 1
     fi
@@ -52,8 +51,7 @@ _get_os_codename() {
 _get_os_version_id() {
   if [[ -f /etc/os-release ]]; then
     # shellcheck source=/dev/null
-    . /etc/os-release
-    echo "${VERSION_ID:-}"
+    (. /etc/os-release && echo "${VERSION_ID:-}")
   else
     return 1
   fi
@@ -99,6 +97,7 @@ _verify_debian_min_codename() {
   local codename_order=("bullseye" "bookworm" "trixie" "forky")
   local min_index=-1
   local current_index=-1
+  local i
 
   current_codename=$(_get_os_codename)
 
@@ -248,8 +247,7 @@ get_system_name() {
   else
     if [[ -f /etc/os-release ]]; then
       # shellcheck source=/dev/null
-      . /etc/os-release
-      echo "${NAME:-}"
+      (. /etc/os-release && echo "${NAME:-}")
     else
       echo "未知"
     fi
@@ -314,32 +312,93 @@ get_first_regular_user() {
 # 智能写入文件（内容比较去重）
 # 参数：$1 - 目标文件路径
 #       $2 - 新内容
-#       $3 - 文件权限（可选，默认 644）
-# 返回：0 表示已写入（内容变更），1 表示未变更（跳过写入）
+#       $3 - 文件权限（可选；新文件默认 644，已存在文件未指定时保留原权限）
+#       $4 - 静默模式（可选，1=不输出"未变更"日志）
+# 返回：0 表示已写入（内容变更），1 表示未变更（跳过写入），2 表示写入失败（已记录 error 日志）
 # 说明：比较现有文件内容，相同则跳过（避免无意义的文件写入和服务重启）
+#       写入采用"同目录临时文件 + mv"原子替换，避免写到一半（磁盘满/中断）留下截断的 /etc 配置；
+#       已存在文件的属主/属组会被保留；目标为符号链接时写入其指向的真实文件（不破坏链接）。
 write_file_if_changed() {
   local file="${1:?write_file_if_changed: 缺少文件路径}"
   local new_content="${2:?write_file_if_changed: 缺少文件内容}"
-  local file_perm="${3:-644}"
+  local file_perm="${3:-}"
   local quiet="${4:-0}"
 
+  # 符号链接（如 /etc/resolv.conf）：解析到真实文件，保持旧版"写穿链接"的语义
+  if [[ -L "$file" ]]; then
+    local resolved=""
+    resolved=$(readlink -f -- "$file" 2>/dev/null) || resolved=""
+    if [[ -z "$resolved" ]]; then
+      log_error "无法解析符号链接：$file"
+      return 2
+    fi
+    file="$resolved"
+  fi
+
+  if [[ -e "$file" && ! -f "$file" ]]; then
+    log_error "目标不是普通文件，拒绝写入：$file"
+    return 2
+  fi
+
   # 确保父目录存在
-  mkdir -p "$(dirname "$file")" 2>/dev/null || true
+  local dir
+  dir=$(dirname -- "$file")
+  mkdir -p -- "$dir" 2>/dev/null || true
 
   # 内容比较：相同则跳过
   if [[ -f "$file" ]]; then
-    local current_content
-    current_content=$(cat "$file" 2>/dev/null) || current_content=""
-    if [[ "$current_content" == "$new_content" ]]; then
-      if [[ "$quiet" -ne 1 ]]; then
+    local current_content cmp_content="$new_content"
+    current_content=$(cat -- "$file" 2>/dev/null) || current_content=""
+    # $(...) 会去掉文件末尾换行，新内容也做同样处理，否则以换行结尾的内容每次都被判为"已变更"
+    while [[ "$cmp_content" == *$'\n' ]]; do
+      cmp_content="${cmp_content%$'\n'}"
+    done
+    if [[ "$current_content" == "$cmp_content" ]]; then
+      if [[ "$quiet" != "1" ]]; then
         log_info "配置文件未变更，跳过写入：$file"
       fi
       return 1
     fi
   fi
 
-  # 写入文件
-  printf '%s\n' "$new_content" > "$file"
-  chmod "$file_perm" "$file"
+  # 写入同目录临时文件（mktemp 创建为 0600，写入期间内容不会被其他用户读到）
+  local tmp_file=""
+  tmp_file=$(mktemp -- "${dir}/.$(basename -- "$file").debnas.XXXXXX" 2>/dev/null) || tmp_file=""
+  if [[ -z "$tmp_file" ]]; then
+    log_error "写入失败（无法创建临时文件）：$file"
+    return 2
+  fi
+  if ! printf '%s\n' "$new_content" > "$tmp_file"; then
+    rm -f -- "$tmp_file"
+    log_error "写入失败：$file"
+    return 2
+  fi
+
+  # 权限/属主：显式指定权限优先；否则已存在文件保留原权限，新文件默认 644
+  if [[ -f "$file" ]]; then
+    chown --reference="$file" -- "$tmp_file" 2>/dev/null || true
+    if [[ -z "$file_perm" ]]; then
+      chmod --reference="$file" -- "$tmp_file" 2>/dev/null || file_perm="644"
+    fi
+  elif [[ -z "$file_perm" ]]; then
+    file_perm="644"
+  fi
+  if [[ -n "$file_perm" ]] && ! chmod "$file_perm" "$tmp_file"; then
+    rm -f -- "$tmp_file"
+    log_error "写入失败（权限设置失败 ${file_perm}）：$file"
+    return 2
+  fi
+
+  # 原子替换；失败时（如 bind mount 的文件无法 rename）回退为原地覆写
+  if ! mv -fT -- "$tmp_file" "$file" 2>/dev/null; then
+    if cat -- "$tmp_file" > "$file"; then
+      [[ -z "$file_perm" ]] || chmod "$file_perm" "$file" 2>/dev/null || true
+      rm -f -- "$tmp_file"
+    else
+      rm -f -- "$tmp_file"
+      log_error "写入失败：$file"
+      return 2
+    fi
+  fi
   return 0
 }

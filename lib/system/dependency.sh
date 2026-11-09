@@ -449,6 +449,7 @@ install_missing_dependencies() {
     return 1
   fi
 
+  local install_failed=0
   for cmd in "${tool_cmds[@]}"; do
     local pkg_name=""
     if [[ -v "cmd_to_pkg[$cmd]" ]]; then
@@ -459,9 +460,12 @@ install_missing_dependencies() {
         log_success "${cmd} 就绪"
       else
         log_error "${cmd} 安装失败"
+        install_failed=1
       fi
     fi
   done
+  # 旧实现返回最后一条 log 的状态（恒为 0），安装失败也报"就绪"
+  return "$install_failed"
 }
 
 # 确保命令可用（检测 + 自动安装一体化，兼容旧接口）
@@ -496,7 +500,7 @@ ensure_command() {
     return 0
   fi
 
-  apt_update_safe
+  apt_update_safe || log_warning "APT 索引更新失败，使用现有缓存继续安装"
   DEBIAN_FRONTEND=noninteractive apt install -y -qq "$pkg" 2>/dev/null
 }
 

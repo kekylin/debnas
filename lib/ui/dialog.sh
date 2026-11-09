@@ -62,11 +62,13 @@ ui_confirm() {
 
     # 辅助说明（多行）
     if [[ -n "$description" ]]; then
-      local IFS=$'\n'
+      # 逐行读取而非 for line in $description：未加引号的展开会做路径名扩展，
+      # 说明文字里的 "*"（如 /var/lib/docker/*）会被替换成真实文件名
       local line
-      for line in $description; do
+      while IFS= read -r line; do
+        [[ -n "$line" ]] || continue
         printf '%b    %s%b\n' "$COLOR_DIM" "$line" "$COLOR_RESET" > /dev/tty
-      done
+      done <<< "$description"
       printf '\n' > /dev/tty
     fi
 
@@ -171,11 +173,11 @@ ui_alert() {
   printf '\n' > /dev/tty
 
   if [[ -n "$description" ]]; then
-    local IFS=$'\n'
     local line
-    for line in $description; do
+    while IFS= read -r line; do
+      [[ -n "$line" ]] || continue
       printf '%b    %s%b\n' "$COLOR_DIM" "$line" "$COLOR_RESET" > /dev/tty
-    done
+    done <<< "$description"
     printf '\n' > /dev/tty
   fi
 
@@ -202,11 +204,11 @@ ui_alert() {
         printf '    %s\n' "$title" > /dev/tty
         printf '\n' > /dev/tty
         if [[ -n "$description" ]]; then
-          local IFS=$'\n'
           local line
-          for line in $description; do
+          while IFS= read -r line; do
+            [[ -n "$line" ]] || continue
             printf '%b    %s%b\n' "$COLOR_DIM" "$line" "$COLOR_RESET" > /dev/tty
-          done
+          done <<< "$description"
           printf '\n' > /dev/tty
         fi
         printf '%b    Enter 关闭%b\n' "$COLOR_DIM" "$COLOR_RESET" > /dev/tty

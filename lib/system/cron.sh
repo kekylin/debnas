@@ -22,28 +22,30 @@ readonly DEBNAS_BIN="${DEBNAS_BIN:-/usr/local/bin/debnas}"
 # 参数：$1 - 字段值，$2 - 最小值，$3 - 最大值
 # 返回：0 合法，1 非法
 _cron_field_valid() {
-  local field="$1" min="$2" max="$3" part value
+  local field="$1" min="$2" max="$3" part
+  local -a parts=()
   [[ -n "$field" ]] || return 1
   IFS=',' read -ra parts <<< "$field"
+  [[ ${#parts[@]} -gt 0 ]] || return 1
   for part in "${parts[@]}"; do
     if [[ "$part" == "*" ]]; then
       continue
     fi
-    if [[ "$part" =~ ^\*/([0-9]+)$ ]]; then
-      [[ "${BASH_REMATCH[1]}" -ge 1 ]] || return 1
+    # 数值统一按十进制解析（10#），否则 "08"/"09" 会被当作非法八进制报错
+    if [[ "$part" =~ ^\*/([0-9]{1,4})$ ]]; then
+      (( 10#${BASH_REMATCH[1]} >= 1 )) || return 1
       continue
     fi
-    if [[ "$part" =~ ^([0-9]+)-([0-9]+)(/([0-9]+))?$ ]]; then
-      [[ "${BASH_REMATCH[1]}" -ge "$min" \
-        && "${BASH_REMATCH[2]}" -le "$max" \
-        && "${BASH_REMATCH[1]}" -le "${BASH_REMATCH[2]}" ]] || return 1
+    if [[ "$part" =~ ^([0-9]{1,4})-([0-9]{1,4})(/([0-9]{1,4}))?$ ]]; then
+      local lo=$((10#${BASH_REMATCH[1]})) hi=$((10#${BASH_REMATCH[2]}))
+      (( lo >= min && hi <= max && lo <= hi )) || return 1
       if [[ -n "${BASH_REMATCH[4]}" ]]; then
-        [[ "${BASH_REMATCH[4]}" -ge 1 ]] || return 1
+        (( 10#${BASH_REMATCH[4]} >= 1 )) || return 1
       fi
       continue
     fi
-    [[ "$part" =~ ^[0-9]+$ ]] || return 1
-    [[ "$part" -ge "$min" && "$part" -le "$max" ]] || return 1
+    [[ "$part" =~ ^[0-9]{1,4}$ ]] || return 1
+    (( 10#$part >= min && 10#$part <= max )) || return 1
   done
   return 0
 }
@@ -71,6 +73,39 @@ cron_validate_schedule() {
 _cron_entry_marker() {
   local module_name="$1"
   echo "${CRON_MARKER} ${module_name}"
+}
+
+# 校验模块名（模块名会原样拼入 crontab 命令行，必须禁止 shell 元字符）
+# 参数：$1 - 模块名
+# 返回：0 合法，1 非法
+_cron_valid_module_name() {
+  [[ "$1" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]*$ ]]
+}
+
+# 从 crontab 内容中剔除以指定标记结尾的行（精确匹配模块名）
+# 说明：旧实现用 grep -v "<marker>" 子串匹配，"# DEBNAS-CRON: cockpit" 会误删
+#       cockpit-ext / cockpit-net 的条目，这里改为行尾精确匹配。
+# 参数：$1 - 标记字符串；stdin - crontab 内容
+# 输出：剔除后的内容
+_cron_filter_out_marker() {
+  _DEBNAS_CRON_MARKER="$1" awk '
+    BEGIN { m = ENVIRON["_DEBNAS_CRON_MARKER"]; ml = length(m) }
+    { line = $0; sub(/[[:space:]]+$/, "", line) }
+    length(line) >= ml && substr(line, length(line) - ml + 1) == m { next }
+    { print }
+  '
+}
+
+# 判断 crontab 内容中是否存在以指定标记结尾的行
+# 参数：$1 - 标记字符串；stdin - crontab 内容
+# 返回：0 存在，1 不存在
+_cron_has_marker() {
+  _DEBNAS_CRON_MARKER="$1" awk '
+    BEGIN { m = ENVIRON["_DEBNAS_CRON_MARKER"]; ml = length(m); found = 0 }
+    { line = $0; sub(/[[:space:]]+$/, "", line) }
+    length(line) >= ml && substr(line, length(line) - ml + 1) == m { found = 1 }
+    END { exit(found ? 0 : 1) }
+  '
 }
 
 # 获取当前用户的 crontab 内容
@@ -104,6 +139,11 @@ cron_register() {
   local marker
   marker=$(_cron_entry_marker "$module_name")
 
+  if ! _cron_valid_module_name "$module_name"; then
+    log_error "非法的模块名：${module_name}"
+    return 1
+  fi
+
   # 验证 cron 表达式格式（5 个字段 + 字段值范围）
   if ! cron_validate_schedule "$schedule"; then
     return 1
@@ -118,7 +158,7 @@ cron_register() {
 
   # 移除旧条目并添加新条目
   local new_crontab
-  new_crontab=$(echo "$current_crontab" | grep -v "${marker}" || true)
+  new_crontab=$(printf '%s\n' "$current_crontab" | _cron_filter_out_marker "$marker" || true)
 
   # 追加新条目（确保末尾有换行）
   if [[ -n "$new_crontab" ]]; then
@@ -146,6 +186,16 @@ cron_register_variant() {
   local marker cron_cmd
   marker=$(_cron_entry_marker "$module_name")
 
+  if ! _cron_valid_module_name "$module_name"; then
+    log_error "非法的模块名：${module_name}"
+    return 1
+  fi
+  # 附加参数原样拼入 crontab 命令行，仅允许安全字符（禁止 ; | & $ ` 等 shell 元字符）
+  if [[ ! "$command_args" =~ ^[A-Za-z0-9_\ =.,/:-]*$ ]]; then
+    log_error "非法的定时任务参数：${command_args}"
+    return 1
+  fi
+
   if ! cron_validate_schedule "$schedule"; then
     return 1
   fi
@@ -160,8 +210,11 @@ cron_register_variant() {
 
   # 移除同一模块同调度但参数不同的旧条目，保留其他条目
   local new_crontab
-  new_crontab=$(printf '%s\n' "$current_crontab" | awk -v marker="$marker" -v schedule="$schedule" '
-    index($0, marker) && index($0, schedule) { next }
+  new_crontab=$(printf '%s\n' "$current_crontab" | \
+    _DEBNAS_CRON_MARKER="$marker" _DEBNAS_CRON_SCHED="$schedule" awk '
+    BEGIN { m = ENVIRON["_DEBNAS_CRON_MARKER"]; ml = length(m); s = ENVIRON["_DEBNAS_CRON_SCHED"] }
+    { line = $0; sub(/[[:space:]]+$/, "", line) }
+    length(line) >= ml && substr(line, length(line) - ml + 1) == m && index($0, s) == 1 { next }
     { print }
   ' | sed '/^$/d' || true)
 
@@ -190,14 +243,14 @@ cron_unregister() {
   local current_crontab
   current_crontab=$(_get_current_crontab)
 
-  # 检查是否存在该模块的条目
-  if ! echo "$current_crontab" | grep -q "${marker}" 2>/dev/null; then
+  # 检查是否存在该模块的条目（行尾精确匹配，避免误删同前缀模块）
+  if ! printf '%s\n' "$current_crontab" | _cron_has_marker "$marker"; then
     return 0
   fi
 
   # 移除该模块的条目
   local new_crontab
-  new_crontab=$(echo "$current_crontab" | grep -v "${marker}" || true)
+  new_crontab=$(printf '%s\n' "$current_crontab" | _cron_filter_out_marker "$marker" || true)
 
   # 写入 crontab（如果为空则移除整个 crontab）
   if [[ -z "$new_crontab" ]]; then
@@ -261,7 +314,7 @@ cron_is_registered() {
   local current_crontab
   current_crontab=$(_get_current_crontab)
 
-  echo "$current_crontab" | grep -q "${marker}" 2>/dev/null
+  printf '%s\n' "$current_crontab" | _cron_has_marker "$marker"
 }
 
 # 获取模块当前 cron 表达式
@@ -272,7 +325,8 @@ cron_get_schedule() {
   local module_name="${1:?cron_get_schedule: 缺少模块名}"
   local marker line
   marker=$(_cron_entry_marker "$module_name")
-  line=$(_get_current_crontab | grep "${marker}" | head -1)
+  # 只取主调度条目（"run <模块> <标记>"），跳过带附加参数的变体条目
+  line=$(_get_current_crontab | grep -F -- " run ${module_name} ${marker}" | head -1) || true
   [[ -n "$line" ]] || return 1
   echo "$line" | awk '{print $1, $2, $3, $4, $5}'
 }

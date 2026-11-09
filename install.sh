@@ -115,7 +115,9 @@ do_uninstall() {
   _warn "不会恢复已安装的软件包或已修改的系统配置。"
 
   if [[ "$FORCE_YES" -ne 1 ]]; then
-    read -rp "确认继续？[y/N]: " confirm
+    local confirm=""
+    # EOF（如管道/无终端）时 read 返回非 0，set -e 下会静默退出，按"取消"处理
+    read -rp "确认继续？[y/N]: " confirm || confirm=""
     if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
       _info "已取消卸载"
       exit 0
@@ -202,9 +204,10 @@ download_repo() {
   local tarball="${tmpdir}/debnas.tar.gz"
 
   _action "下载代码"
-  if ! wget -q -O "$tarball" "$primary_url" 2>/dev/null; then
+  # --timeout/--tries：网络不可达时避免无限挂起（项目红线）
+  if ! wget -q --timeout=30 --tries=3 -O "$tarball" "$primary_url" 2>/dev/null; then
     _warn "切换备用源"
-    if ! wget -q -O "$tarball" "$fallback_url" 2>/dev/null; then
+    if ! wget -q --timeout=30 --tries=3 -O "$tarball" "$fallback_url" 2>/dev/null; then
       _fail "所有下载源均失败"
       rm -rf "$tmpdir"
       exit 1
@@ -237,7 +240,8 @@ extract_repo() {
 
   mkdir -p "$extract_dir"
   _action "解压"
-  if ! tar -xzf "$tarball" -C "$extract_dir" --strip-components=1 2>/dev/null; then
+  # --no-same-owner：root 解压时不沿用归档内的 uid/gid，避免文件归属任意普通用户
+  if ! tar -xzf "$tarball" -C "$extract_dir" --strip-components=1 --no-same-owner 2>/dev/null; then
     _fail "解压失败"
     rm -rf "$tmpdir"
     exit 1
@@ -252,6 +256,8 @@ extract_repo() {
   cp -rf "$extract_dir"/lib "$DEBNAS_INSTALL_DIR/" 2>/dev/null || true
   cp -rf "$extract_dir"/modules "$DEBNAS_INSTALL_DIR/" 2>/dev/null || true
   cp -rf "$extract_dir"/config "$DEBNAS_INSTALL_DIR/" 2>/dev/null || true
+  # compose/ 是 docker-apps、service-query 模块的数据目录，缺失会导致模块报错退出
+  cp -rf "$extract_dir"/compose "$DEBNAS_INSTALL_DIR/" 2>/dev/null || true
   cp -f "$extract_dir"/install.sh "$DEBNAS_INSTALL_DIR/" 2>/dev/null || true
   cp -f "$extract_dir"/README.md "$DEBNAS_INSTALL_DIR/" 2>/dev/null || true
   cp -f "$extract_dir"/LICENSE "$DEBNAS_INSTALL_DIR/" 2>/dev/null || true
@@ -318,7 +324,8 @@ check_existing_install() {
     echo "  [1] 覆盖更新（保留配置和状态）"
     echo "  [2] 退出"
     echo ""
-    read -rp "请选择 [1/2]: " choice
+    local choice=""
+    read -rp "请选择 [1/2]: " choice || choice=""
     case "$choice" in
       1) _info "执行覆盖更新..." ;;
       *) _info "已取消"; exit 0 ;;
@@ -352,7 +359,8 @@ main() {
   check_existing_install
 
   # 创建安全临时目录
-  local _install_tmpdir
+  # 注意：不能声明为 local —— set -e 在函数内触发退出时局部变量已失效，
+  # EXIT trap 读到空值，临时目录会残留
   _install_tmpdir=$(mktemp -d /tmp/debnas-install.XXXXXX)
   chmod 700 "$_install_tmpdir"
   trap 'rm -rf "${_install_tmpdir:-}"' EXIT
