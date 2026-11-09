@@ -217,7 +217,12 @@ write_docker_apt_source() {
   local old_docker_list="${DOCKER_SOURCES_DIR}/docker.list"
   if [[ -f "$old_docker_list" ]]; then
     log_info "旧源文件已备份"
-    mv "$old_docker_list" "${old_docker_list}.bak"
+    # 集中备份到 /var/backups/debnas 后移除；备份失败则改名为 APT 会忽略的 .bak
+    if debnas_backup_file "$old_docker_list"; then
+      rm -f -- "$old_docker_list"
+    else
+      mv -- "$old_docker_list" "${old_docker_list}.$(date +%Y%m%d%H%M%S).bak"
+    fi
   fi
 
   # 使用 DEB822 格式写入软件源配置（幂等：内容未变则跳过）
@@ -263,6 +268,68 @@ add_user_to_docker_group() {
   fi
 }
 
+# ==================== 只读探测契约（docs/ARCHITECTURE.md §4.5） ====================
+
+# 包是否已安装（只读查询 dpkg 数据库）
+_docker_pkg_installed() {
+  [[ "$(dpkg-query -W -f='${db:Status-Status}' "$1" 2>/dev/null)" == "installed" ]]
+}
+
+# 当前状态：一行 "状态码|说明"（只读、不联网）
+module_status() {
+  if _docker_pkg_installed docker-ce; then
+    local ver
+    ver=$(dpkg-query -W -f='${Version}' docker-ce 2>/dev/null) || ver=""
+    ver="${ver#*:}"
+    ver="${ver%%[-~]*}"
+    if systemctl is-active --quiet docker 2>/dev/null; then
+      echo "running|Docker ${ver:-CE} 运行中"
+    else
+      echo "warn|Docker ${ver:-CE} 已安装，docker 服务未运行"
+    fi
+  elif command -v docker &>/dev/null; then
+    echo "partial|检测到非 docker-ce 版 docker（如 docker.io），执行时会安装 docker-ce"
+  else
+    echo "absent|未安装"
+  fi
+}
+
+# 预演：每行 "类型|目标|备注"（只读：不探测镜像站、不 apt update）
+module_plan() {
+  local IFS=$' \n\t'
+  local -a want=(ca-certificates curl) missing=()
+  local pkg
+  command -v gpg &>/dev/null || want+=(gnupg)
+  if command -v docker &>/dev/null; then
+    echo "info|docker-ce docker-ce-cli containerd.io|已安装 docker，执行时 apt update 后尝试升级"
+  else
+    want+=(docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin)
+  fi
+  for pkg in "${want[@]}"; do
+    _docker_pkg_installed "$pkg" || missing+=("$pkg")
+  done
+  [[ ${#missing[@]} -gt 0 ]] && echo "pkg|${missing[*]}|apt 安装"
+
+  echo "info|镜像源|执行时按系统源探测镜像站，失败回退备用镜像/官方源（需联网）"
+  echo "write|${DOCKER_KEYRINGS_DIR}/docker.asc|下载 GPG 公钥，指纹校验通过后覆盖写入"
+  if [[ -f "${DOCKER_SOURCES_DIR}/docker.list" ]]; then
+    echo "write|${DOCKER_SOURCES_DIR}/docker.list|旧格式源集中备份到 /var/backups/debnas 后移除"
+  fi
+  echo "write|${DOCKER_SOURCES_DIR}/docker.sources|DEB822 源（内容未变则跳过），随后 apt update"
+  echo "service|docker|启动并设为开机自启"
+
+  local first_user add_flag
+  first_user=$(get_first_regular_user 2>/dev/null) || first_user=""
+  add_flag=$(config_read "global" "add_user_to_docker" "1" 2>/dev/null) || add_flag="1"
+  if [[ "$add_flag" != "0" && -n "$first_user" ]]; then
+    echo "user|${first_user}|加入 docker 组"
+    echo "risk|docker 组|docker 组成员等同 root 权限（可在 debnas.conf 设 add_user_to_docker=0 关闭）"
+  fi
+  if systemctl is-active --quiet firewalld 2>/dev/null; then
+    echo "risk|防火墙|容器发布的端口由 Docker 自行放行，不受 firewalld public 区限制"
+  fi
+}
+
 # ==================== 主入口 ====================
 
 main() {
@@ -301,4 +368,5 @@ main() {
   log_info "Docker $(docker --version 2>/dev/null | grep -oP '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
 }
 
-main "$@"
+# 契约守卫：DEBNAS_MODULE_ACTION=status|plan 时只加载函数供只读探测，不执行 main（docs/ARCHITECTURE.md §4.5）
+if [[ "${DEBNAS_MODULE_ACTION:-run}" == "run" ]]; then main "$@"; fi

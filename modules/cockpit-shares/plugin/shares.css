@@ -1,0 +1,511 @@
+/*
+ * DebNAS 共享管理 — 页面布局与补充样式
+ * 组件样式来自 Cockpit 自带的 PatternFly 6（../users/users.css）；颜色/间距优先用 PatternFly 设计令牌，
+ * 令牌不存在时回落到括号中的近似值。html.ds-nopf（未检测到 PatternFly 6）时启用文末兜底样式。
+ */
+
+:root {
+    --ds-bg: var(--pf-t--global--background--color--secondary--default, #f2f2f2);
+    --ds-surface: var(--pf-t--global--background--color--primary--default, #fff);
+    --ds-text: var(--pf-t--global--text--color--regular, #151515);
+    --ds-subtle: var(--pf-t--global--text--color--subtle, #4d4d4d);
+    --ds-border: var(--pf-t--global--border--color--default, #c7c7c7);
+    --ds-brand: var(--pf-t--global--color--brand--default, #0066cc);
+    --ds-gap: var(--pf-t--global--spacer--md, 16px);
+    --ds-gap-sm: var(--pf-t--global--spacer--sm, 8px);
+    --ds-gap-lg: var(--pf-t--global--spacer--lg, 24px);
+    --ds-radius: var(--pf-t--global--border--radius--medium, 8px);
+    --ds-font: var(--pf-t--global--font--family--body, "RedHatText", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif);
+    --ds-mono: var(--pf-t--global--font--family--mono, "RedHatMono", ui-monospace, monospace);
+}
+
+html, body {
+    margin: 0;
+    height: 100%;
+}
+
+body {
+    background: var(--ds-bg);
+    color: var(--ds-text);
+    font-family: var(--ds-font);
+}
+
+/* Cockpit 页面 body 不滚动（overflow hidden），由本容器负责滚动 */
+.ds-page {
+    height: 100%;
+    overflow: auto;
+    box-sizing: border-box;
+    padding: var(--ds-gap-lg);
+}
+
+.ds-header {
+    margin-block-end: var(--ds-gap);
+}
+
+.ds-title {
+    margin: 0;
+    --ct-heading-font-size: 1.5rem;
+    font-size: 1.5rem;
+    font-family: var(--pf-t--global--font--family--heading, var(--ds-font));
+    font-weight: var(--pf-t--global--font--weight--heading--default, 500);
+}
+
+.ds-subtitle {
+    margin: var(--ds-gap-sm) 0 0;
+    color: var(--ds-subtle);
+}
+
+/* ---- 标签页（users.css 未打包 pf-v6-c-tabs，这里自绘，外观对齐 PatternFly 6 Tabs）---- */
+.ds-tabs {
+    border-block-end: 1px solid var(--ds-border);
+    margin-block-end: var(--ds-gap);
+}
+
+.ds-tabs__list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.ds-tabs__link {
+    position: relative;
+    padding: var(--ds-gap-sm) var(--ds-gap);
+    border: 0;
+    background: none;
+    color: var(--ds-subtle);
+    font: inherit;
+    cursor: pointer;
+    border-radius: var(--ds-radius) var(--ds-radius) 0 0;
+}
+
+.ds-tabs__link:hover {
+    color: var(--ds-text);
+    background: var(--pf-t--global--background--color--primary--hover, rgba(0, 0, 0, 0.04));
+}
+
+.ds-tabs__link:focus-visible {
+    outline: 2px solid var(--ds-brand);
+    outline-offset: -2px;
+}
+
+.ds-tabs__item.ds-m-current .ds-tabs__link {
+    color: var(--ds-text);
+    font-weight: var(--pf-t--global--font--weight--body--bold, 600);
+}
+
+.ds-tabs__item.ds-m-current .ds-tabs__link::after {
+    content: "";
+    position: absolute;
+    inset-inline: var(--ds-gap-sm);
+    inset-block-end: -1px;
+    height: 3px;
+    border-radius: 3px 3px 0 0;
+    background: var(--ds-brand);
+}
+
+/* ---- 布局 ---- */
+.ds-main,
+.ds-content,
+.ds-stack {
+    display: flex;
+    flex-direction: column;
+    gap: var(--ds-gap);
+}
+
+.ds-stack-sm {
+    gap: var(--ds-gap-sm);
+}
+
+.ds-admin:empty,
+.ds-notices:empty,
+.ds-stack:empty,
+.ds-modal-error:empty {
+    display: none;
+}
+
+.ds-notices {
+    display: flex;
+    flex-direction: column;
+    gap: var(--ds-gap-sm);
+}
+
+.ds-modal-error {
+    margin-block-end: var(--ds-gap);
+}
+
+.ds-card .pf-v6-c-card__body {
+    overflow-x: auto;
+}
+
+.ds-loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--ds-gap);
+    padding: var(--ds-gap-lg);
+    color: var(--ds-subtle);
+}
+
+.ds-muted {
+    color: var(--ds-subtle);
+}
+
+.ds-code {
+    font-family: var(--ds-mono);
+    font-size: 0.875em;
+    word-break: break-all;
+}
+
+.ds-pre {
+    margin: 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-family: var(--ds-mono);
+    font-size: 0.8125rem;
+    max-height: 12rem;
+    overflow: auto;
+}
+
+.ds-labels,
+.ds-name,
+.ds-chips,
+.ds-row-actions,
+.ds-kv-line {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--ds-gap-sm);
+}
+
+.ds-row-actions {
+    justify-content: flex-end;
+    flex-wrap: nowrap;
+    gap: var(--ds-gap);
+    white-space: nowrap;
+}
+
+.ds-actions-cell {
+    text-align: end;
+    white-space: nowrap;
+    width: 1%;
+}
+
+.ds-kv-line {
+    margin-block-end: var(--ds-gap);
+}
+
+.ds-file-hint {
+    margin: 0 0 var(--ds-gap);
+}
+
+.ds-alert-glyph {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.125rem;
+    height: 1.125rem;
+    border-radius: 50%;
+    font-size: 0.75rem;
+    font-weight: 700;
+    line-height: 1;
+    color: #fff;
+    background: var(--pf-t--global--icon--color--status--info--default, #5e40be);
+}
+
+.ds-alert-glyph-success { background: var(--pf-t--global--icon--color--status--success--default, #3d7317); }
+.ds-alert-glyph-warning { background: var(--pf-t--global--icon--color--status--warning--default, #dca614); color: #151515; }
+.ds-alert-glyph-danger { background: var(--pf-t--global--icon--color--status--danger--default, #b1380b); }
+
+.ds-caret::before {
+    content: "▾";
+    font-size: 0.875rem;
+}
+
+.ds-btn-spinner {
+    margin-inline-end: var(--ds-gap-sm);
+    vertical-align: middle;
+}
+
+.ds-probe {
+    position: absolute !important;
+    visibility: hidden;
+}
+
+/* ---- 服务状态行 ---- */
+.ds-service-row {
+    display: grid;
+    grid-template-columns: minmax(14rem, 1.4fr) minmax(10rem, 1fr) auto;
+    align-items: center;
+    gap: var(--ds-gap);
+    padding-block: var(--ds-gap-sm);
+}
+
+.ds-service-row + .ds-service-row {
+    border-block-start: 1px solid var(--ds-border);
+}
+
+.ds-service-name {
+    display: flex;
+    flex-direction: column;
+}
+
+.ds-service-name .ds-muted {
+    font-size: 0.8125rem;
+    font-family: var(--ds-mono);
+}
+
+.ds-service-status,
+.ds-service-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--ds-gap-sm);
+    align-items: center;
+}
+
+.ds-service-actions {
+    justify-content: flex-end;
+}
+
+/* ---- 表单 ---- */
+.ds-form-narrow {
+    max-width: 48rem;
+}
+
+.ds-input-group {
+    display: flex;
+    gap: var(--ds-gap-sm);
+}
+
+.ds-input-group .pf-m-fill {
+    flex: 1 1 auto;
+}
+
+.ds-picker-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr auto;
+    gap: var(--ds-gap-sm);
+    align-items: center;
+}
+
+.ds-chip-x {
+    font-size: 0.75rem;
+    padding-inline: 0.25rem;
+}
+
+.ds-kv {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--ds-gap-sm);
+}
+
+.ds-kv-rows {
+    display: flex;
+    flex-direction: column;
+    gap: var(--ds-gap-sm);
+    width: 100%;
+}
+
+.ds-kv-rows:empty {
+    display: none;
+}
+
+.ds-kv-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr auto;
+    gap: var(--ds-gap-sm);
+    align-items: center;
+}
+
+.ds-check-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--ds-gap-sm);
+    padding: var(--ds-gap-sm) var(--ds-gap);
+    border: 1px solid var(--ds-border);
+    border-radius: var(--ds-radius);
+}
+
+/* NFS 客户端 */
+.ds-clients {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.ds-client {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--ds-gap-sm);
+}
+
+.ds-client-edit {
+    display: flex;
+    flex-direction: column;
+    gap: var(--ds-gap-sm);
+    padding: var(--ds-gap);
+    border: 1px solid var(--ds-border);
+    border-radius: var(--ds-radius);
+}
+
+.ds-client-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--ds-gap-sm) var(--ds-gap);
+}
+
+.ds-client-flags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--ds-gap-sm) var(--ds-gap-lg);
+}
+
+.ds-client-remove {
+    display: flex;
+    justify-content: flex-end;
+}
+
+/* 目录浏览 */
+.ds-browse-path {
+    display: block;
+    padding: var(--ds-gap-sm);
+    border-radius: var(--ds-radius);
+    background: var(--ds-bg);
+}
+
+.ds-browse-list {
+    display: flex;
+    flex-direction: column;
+    max-height: 22rem;
+    overflow: auto;
+    border: 1px solid var(--ds-border);
+    border-radius: var(--ds-radius);
+}
+
+.ds-browse-item {
+    display: flex;
+    align-items: center;
+    gap: var(--ds-gap-sm);
+    padding: 6px var(--ds-gap);
+    border: 0;
+    border-block-end: 1px solid var(--ds-border);
+    background: none;
+    color: inherit;
+    font: inherit;
+    text-align: start;
+    cursor: pointer;
+}
+
+.ds-browse-item:last-child {
+    border-block-end: 0;
+}
+
+.ds-browse-item:hover {
+    background: var(--pf-t--global--background--color--primary--hover, rgba(0, 0, 0, 0.04));
+}
+
+.ds-browse-item.ds-m-blocked {
+    color: var(--ds-subtle);
+}
+
+.ds-browse-up {
+    color: var(--ds-brand);
+}
+
+.ds-browse-empty {
+    padding: var(--ds-gap);
+}
+
+.ds-folder {
+    display: inline-block;
+    width: 1rem;
+    height: 0.75rem;
+    border-radius: 2px;
+    background: var(--pf-t--global--icon--color--status--warning--default, #dca614);
+    opacity: 0.8;
+}
+
+.ds-backdrop .pf-v6-c-modal-box {
+    max-height: calc(100vh - 2 * var(--ds-gap-lg));
+}
+
+@media (max-width: 48rem) {
+    .ds-page { padding: var(--ds-gap); }
+    .ds-service-row { grid-template-columns: 1fr; }
+    .ds-service-actions { justify-content: flex-start; }
+    .ds-picker-row,
+    .ds-kv-row,
+    .ds-client-grid { grid-template-columns: 1fr; }
+}
+
+/* ======================================================================
+ * 兜底样式：未检测到 PatternFly 6（如 Cockpit 287 = PatternFly 5，或 users.css 路径变化）
+ * 只覆盖本页用到的类，保证可用与基本美观
+ * ====================================================================== */
+.ds-nopf body { font-family: "Noto Sans CJK SC", "Microsoft YaHei", sans-serif; font-size: 14px; }
+.ds-nopf .pf-v6-c-card { background: var(--ds-surface); border-radius: var(--ds-radius); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12); }
+.ds-nopf .pf-v6-c-card__header { display: flex; align-items: center; justify-content: space-between; gap: var(--ds-gap); padding: var(--ds-gap) var(--ds-gap-lg) 0; }
+.ds-nopf .pf-v6-c-card__title-text { margin: 0; font-size: 1.125rem; font-weight: 500; }
+.ds-nopf .pf-v6-c-card__actions { display: flex; gap: var(--ds-gap-sm); }
+.ds-nopf .pf-v6-c-card__body { padding: var(--ds-gap) var(--ds-gap-lg) var(--ds-gap-lg); }
+.ds-nopf .pf-v6-c-button { display: inline-flex; align-items: center; padding: 6px 16px; border: 1px solid transparent; border-radius: 999px; font: inherit; cursor: pointer; background: none; color: var(--ds-brand); }
+.ds-nopf .pf-v6-c-button.pf-m-primary { background: var(--ds-brand); color: #fff; }
+.ds-nopf .pf-v6-c-button.pf-m-secondary { border-color: var(--ds-brand); }
+.ds-nopf .pf-v6-c-button.pf-m-danger { background: #c9190b; color: #fff; }
+.ds-nopf .pf-v6-c-button.pf-m-link.pf-m-danger { background: none; color: #c9190b; }
+.ds-nopf .pf-v6-c-button.pf-m-inline, .ds-nopf .pf-v6-c-button.pf-m-plain { padding: 0 4px; }
+.ds-nopf .pf-v6-c-button.pf-m-small { padding: 2px 10px; font-size: 0.875em; }
+.ds-nopf .pf-v6-c-button:disabled { opacity: 0.5; cursor: default; }
+.ds-nopf .pf-v6-c-table { width: 100%; border-collapse: collapse; }
+.ds-nopf .pf-v6-c-table__th, .ds-nopf .pf-v6-c-table__td { padding: 8px; text-align: start; border-block-end: 1px solid var(--ds-border); vertical-align: middle; }
+.ds-nopf .pf-v6-c-table__th { font-weight: 600; font-size: 0.875em; }
+.ds-nopf .pf-v6-c-label { display: inline-flex; padding: 0 8px; border-radius: 999px; font-size: 0.8125em; background: #f0f0f0; border: 1px solid #d2d2d2; }
+.ds-nopf .pf-v6-c-label.pf-m-green { background: #f3faf2; border-color: #bde5b8; color: #1e4f18; }
+.ds-nopf .pf-v6-c-label.pf-m-blue { background: #e7f1fa; border-color: #bee1f4; color: #002952; }
+.ds-nopf .pf-v6-c-label.pf-m-orange { background: #fff6ec; border-color: #f4b678; color: #3b1f00; }
+.ds-nopf .pf-v6-c-label.pf-m-red { background: #faeae8; border-color: #c9190b; color: #7d1007; }
+.ds-nopf .pf-v6-c-label.pf-m-purple { background: #f2f0fc; border-color: #cbc1ff; color: #1f0066; }
+.ds-nopf .pf-v6-c-label__actions .pf-v6-c-button { padding: 0 0 0 4px; color: inherit; }
+.ds-nopf .pf-v6-c-alert { display: grid; grid-template-columns: auto 1fr auto; gap: 4px 8px; padding: 12px 16px; border-radius: var(--ds-radius); border: 1px solid var(--ds-border); border-block-start: 3px solid #5e40be; background: var(--ds-surface); }
+.ds-nopf .pf-v6-c-alert.pf-m-warning { border-block-start-color: #dca614; }
+.ds-nopf .pf-v6-c-alert.pf-m-danger { border-block-start-color: #c9190b; }
+.ds-nopf .pf-v6-c-alert.pf-m-success { border-block-start-color: #3e8635; }
+.ds-nopf .pf-v6-c-alert__title { margin: 0; font-weight: 600; }
+.ds-nopf .pf-v6-c-alert__description, .ds-nopf .pf-v6-c-alert__action-group { grid-column: 2 / 4; }
+.ds-nopf .pf-v6-c-alert__description p { margin: 0; }
+.ds-nopf .pf-v6-c-empty-state { padding: 32px 16px; text-align: center; }
+.ds-nopf .pf-v6-c-empty-state__title-text { margin: 0 0 8px; font-size: 1.25rem; font-weight: 500; }
+.ds-nopf .pf-v6-c-empty-state__body { color: var(--ds-subtle); }
+.ds-nopf .pf-v6-c-empty-state__footer { margin-block-start: 16px; }
+.ds-nopf .pf-v6-c-backdrop { position: fixed; inset: 0; z-index: 400; background: rgba(3, 3, 3, 0.62); }
+.ds-nopf .pf-v6-l-bullseye { display: flex; align-items: center; justify-content: center; height: 100%; padding: 16px; box-sizing: border-box; }
+.ds-nopf .pf-v6-c-modal-box { position: relative; display: flex; flex-direction: column; width: 100%; max-width: 52rem; background: var(--ds-surface); border-radius: 16px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3); }
+.ds-nopf .pf-v6-c-modal-box.pf-m-sm { max-width: 35rem; }
+.ds-nopf .pf-v6-c-modal-box.pf-m-lg { max-width: 70rem; }
+.ds-nopf .pf-v6-c-modal-box__close { position: absolute; inset-block-start: 16px; inset-inline-end: 16px; }
+.ds-nopf .pf-v6-c-modal-box__header { padding: 24px 24px 0; }
+.ds-nopf .pf-v6-c-modal-box__title { margin: 0; font-size: 1.5rem; font-weight: 500; }
+.ds-nopf .pf-v6-c-modal-box__body { padding: 16px 24px; overflow: auto; }
+.ds-nopf .pf-v6-c-modal-box__footer { display: flex; gap: 16px; padding: 0 24px 24px; }
+.ds-nopf .pf-v6-c-form { display: flex; flex-direction: column; gap: 16px; }
+.ds-nopf .pf-v6-c-form.pf-m-horizontal .pf-v6-c-form__group { display: grid; grid-template-columns: 9rem 1fr; gap: 16px; }
+.ds-nopf .pf-v6-c-form__label-text { font-weight: 600; font-size: 0.875em; }
+.ds-nopf .pf-v6-c-form__label-required { color: #c9190b; }
+.ds-nopf .pf-v6-c-form-control { position: relative; display: block; }
+.ds-nopf .pf-v6-c-form-control input, .ds-nopf .pf-v6-c-form-control select { width: 100%; box-sizing: border-box; padding: 6px 8px; border: 1px solid var(--ds-border); border-radius: 6px; font: inherit; background: var(--ds-surface); color: inherit; }
+.ds-nopf .pf-v6-c-form-control__utilities { display: none; }
+.ds-nopf .pf-v6-c-form-control input:disabled, .ds-nopf .pf-v6-c-form-control select:disabled { background: #f0f0f0; color: #6a6e73; }
+.ds-nopf .pf-v6-c-check { display: grid; grid-template-columns: auto 1fr; gap: 0 8px; align-items: baseline; }
+.ds-nopf .pf-v6-c-check__description { grid-column: 2; font-size: 0.875em; color: var(--ds-subtle); }
+.ds-nopf .pf-v6-c-helper-text__item-text { font-size: 0.875em; color: var(--ds-subtle); }
+.ds-nopf .pf-v6-c-form__helper-text { margin-block-start: 4px; }
+.ds-nopf .pf-v6-c-spinner { width: 2rem; height: 2rem; animation: ds-spin 1s linear infinite; }
+.ds-nopf .pf-v6-c-spinner.pf-m-md { width: 1rem; height: 1rem; }
+.ds-nopf .pf-v6-c-spinner__path { stroke: var(--ds-brand); stroke-width: 10; stroke-dasharray: 200; stroke-dashoffset: 120; }
+
+@keyframes ds-spin {
+    to { transform: rotate(360deg); }
+}

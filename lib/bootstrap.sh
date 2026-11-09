@@ -55,6 +55,7 @@ fi
 
 # ==================== Module Registry ====================
 source "${_DEBNAS_ROOT}/lib/system/module-registry.sh"
+source "${_DEBNAS_ROOT}/lib/system/module-probe.sh"
 
 # ==================== 完成标记 ====================
 _DEBNAS_BOOTSTRAPPED=1

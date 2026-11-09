@@ -26,7 +26,8 @@ source "${MODULE_DIR}/notify.sh"
 
 # ==================== 常量定义 ====================
 REQUIRED_CMDS=(apt grep awk mail systemctl)
-EMAIL_CONFIG_FILE="/etc/exim4/notify_email"
+# 通知收件邮箱：见 lib/system/layout.sh 的 DEBNAS_NOTIFY_EMAIL_FILE / notify_email_get
+EMAIL_CONFIG_FILE="${DEBNAS_NOTIFY_EMAIL_FILE}"
 
 # ==================== 菜单函数（交互模式） ====================
 
@@ -83,6 +84,91 @@ module_disable_feature() {
   return 0
 }
 
+# ==================== 只读探测契约（docs/ARCHITECTURE.md §4.5） ====================
+
+# root crontab 中模块条目状态：on / off / unknown（非 root 无法读取 root crontab）
+_sp_cron_state() {
+  [[ "${EUID:-1}" -eq 0 ]] || { echo "unknown"; return 0; }
+  command -v crontab >/dev/null 2>&1 || { echo "off"; return 0; }
+  if cron_is_registered "sys-patches" 2>/dev/null; then echo "on"; else echo "off"; fi
+}
+
+# 上次执行结果（module-runner 写入的 state：last_result / last_run）
+# 输出："成功 2026-11-08 00:00" / "失败 …" / 空
+_sp_last_run_desc() {
+  local result run label
+  result=$(state_get "sys-patches" "last_result" 2>/dev/null) || result=""
+  run=$(state_get "sys-patches" "last_run" 2>/dev/null) || run=""
+  [[ -n "$result" ]] || return 0
+  case "$result" in
+    success) label="成功" ;;
+    fail)    label="失败" ;;
+    *)       label="$result" ;;
+  esac
+  run="${run/T/ }"
+  printf '上次执行%s %s' "$label" "${run:0:16}"
+}
+
+# 当前状态：一行 "状态码|说明"（只读、< 300ms、不联网）
+module_status() {
+  local cron enabled=0 last schedule="" sched_desc=""
+  cron=$(_sp_cron_state)
+  feature_enabled "sys-patches" 2>/dev/null && enabled=1
+  last=$(_sp_last_run_desc)
+  if [[ "$cron" == "on" ]]; then
+    schedule=$(cron_get_schedule "sys-patches" 2>/dev/null) || schedule=""
+    [[ -n "$schedule" ]] && sched_desc="（$(cron_describe "$schedule")）"
+  fi
+
+  if [[ "$cron" == "on" ]]; then
+    if [[ "$last" == 上次执行失败* ]]; then
+      echo "warn|定时检查已启用${sched_desc} · ${last}"
+    else
+      echo "running|定时检查已启用${sched_desc}${last:+ · ${last}}"
+    fi
+  elif [[ "$cron" == "off" ]]; then
+    if [[ "$enabled" -eq 1 ]]; then
+      echo "partial|已启用，未设定时任务${last:+ · ${last}}"
+    else
+      echo "absent|未启用${last:+ · ${last}}"
+    fi
+  else
+    if [[ "$enabled" -eq 1 ]]; then
+      echo "applied|已启用（定时任务需 root 查看）${last:+ · ${last}}"
+    else
+      echo "absent|未启用（定时任务需 root 查看）${last:+ · ${last}}"
+    fi
+  fi
+}
+
+# 预演：每行 "类型|目标|备注"（无副作用；交互式模块，列出菜单动作的影响范围）
+module_plan() {
+  local IFS=$' \n\t'
+  local -a missing=()
+  local cmd cron
+  cron=$(_sp_cron_state)
+
+  echo "info|动作范围|交互菜单：启用/禁用更新检查、定时设置；--yes 直接检测一次；cron 模式检测后有更新才发邮件"
+  for cmd in "${REQUIRED_CMDS[@]}"; do
+    command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
+  done
+  [[ ${#missing[@]} -gt 0 ]] \
+    && echo "risk|${missing[*]}|缺少依赖命令：启用/检测会直接报错退出（mail 由 mailutils 提供，模块不自动安装）"
+  echo "info|apt update|检测时刷新软件包索引（联网，跨进程去重）并模拟 apt-get upgrade -s，不安装任何更新"
+  echo "info|邮件|发现更新时经 exim4 发送到通知邮箱（未配置则跳过）"
+  echo "write|${DEBNAS_FEATURE_DIR:-/var/lib/debnas/state}/sys-patches.enabled|启用/禁用：记录功能开关（DebNAS 自有目录）"
+  case "$cron" in
+    on)
+      local schedule=""
+      schedule=$(cron_get_schedule "sys-patches" 2>/dev/null) || schedule=""
+      echo "info|定时任务|已启用：${schedule}（$(cron_describe "$schedule")）"
+      ;;
+    *) echo "cron|sys-patches|定时设置：默认每天 00:00（可自定义 cron 表达式），未启用功能时自动启用" ;;
+  esac
+  echo "cron|sys-patches|禁用：移除 sys-patches 定时条目"
+  return 0
+}
+
 # ==================== 主入口 ====================
 
 main() {
@@ -124,4 +210,5 @@ main() {
   fi
 }
 
-main "$@"
+# 契约守卫：DEBNAS_MODULE_ACTION=status|plan 时只加载函数供只读探测，不执行 main（docs/ARCHITECTURE.md §4.5）
+if [[ "${DEBNAS_MODULE_ACTION:-run}" == "run" ]]; then main "$@"; fi

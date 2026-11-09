@@ -30,15 +30,13 @@ install_fail2ban() {
 
 # 配置通知邮箱地址，便于接收告警
 configure_email() {
-  local notify_file="/etc/exim4/notify_email"
   local email_file="/etc/email-addresses"
   local default_recipient="root@local-system"
   local default_sender="root@system-hostname"
 
-  if [[ -r "$notify_file" ]]; then
-    dest_email=$(sed 's/^[[:space:]]*//; s/[[:space:]]*$//' < "$notify_file")
-  else
-    log_warning "未找到 $notify_file，使用默认接收邮箱 $default_recipient。"
+  # 通知收件邮箱：/etc/debnas/notify_email（旧位置 /etc/exim4/notify_email 回退），见 lib/system/layout.sh
+  if ! dest_email=$(notify_email_get); then
+    log_warning "未找到 $(notify_email_file)，使用默认接收邮箱 $default_recipient。"
     dest_email="$default_recipient"
   fi
 
@@ -216,6 +214,92 @@ start_fail2ban() {
   log_success "Fail2ban 就绪"
 }
 
+# ==================== 只读探测契约（docs/ARCHITECTURE.md §4.5） ====================
+
+_f2b_pkg_installed() {
+  [[ "$(dpkg-query -W -f='${db:Status-Status}' "$1" 2>/dev/null)" == "installed" ]]
+}
+
+# 列出运行中的 jail（逗号分隔）；需要 root（fail2ban 控制套接字仅 root 可写）
+# 返回：0 成功（stdout 为 jail 列表，可能为空），1 无权限/查询失败
+_f2b_running_jails() {
+  local sock="/var/run/fail2ban/fail2ban.sock" out=""
+  [[ -S "$sock" && -w "$sock" ]] || return 1
+  command -v fail2ban-client &>/dev/null || return 1
+  out=$(timeout 2 fail2ban-client status 2>/dev/null) || return 1
+  out=$(sed -n 's/^.*Jail list:[[:space:]]*//p' <<< "$out" | tr -d '[:space:]') || out=""
+  printf '%s' "$out"
+}
+
+# 当前状态：一行 "状态码|说明"
+module_status() {
+  if ! _f2b_pkg_installed fail2ban; then
+    echo "absent|未安装 fail2ban"
+    return 0
+  fi
+  if ! systemctl is-active --quiet fail2ban 2>/dev/null; then
+    echo "warn|已安装但 fail2ban 未运行"
+    return 0
+  fi
+  local jails=""
+  if jails=$(_f2b_running_jails); then
+    if [[ ",${jails}," != *",sshd,"* ]]; then
+      echo "warn|运行中，但 sshd jail 未启用（jail：${jails:-无}）"
+    elif [[ ",${jails}," != *",pam-generic,"* ]]; then
+      echo "partial|运行中 · jail：${jails}（未启用 pam-generic/Cockpit 防护）"
+    else
+      echo "running|运行中 · jail：${jails}"
+    fi
+    return 0
+  fi
+  # 非 root：读不到控制套接字，退回配置文件判断
+  if [[ -r /etc/fail2ban/jail.local ]] && head -n 1 /etc/fail2ban/jail.local 2>/dev/null | grep -qF "$JAIL_LOCAL_MARKER"; then
+    echo "running|运行中 · DebNAS jail.local 已写入（jail 运行详情需 root 查看）"
+  else
+    echo "running|运行中（jail 详情需 root 查看）"
+  fi
+}
+
+# 预演：每行 "类型|目标|备注"（无副作用；与 main 的判断保持一致）
+module_plan() {
+  local IFS=$' \n\t'
+  local jail_local="/etc/fail2ban/jail.local"
+  local defaults="/etc/fail2ban/jail.d/defaults-debian.conf"
+
+  if _f2b_pkg_installed fail2ban; then
+    echo "info|fail2ban|已安装，跳过安装"
+  else
+    echo "pkg|fail2ban|apt 安装"
+  fi
+
+  if jail_local_is_managed "$jail_local"; then
+    echo "write|${jail_local}|DebNAS 默认规则（sshd 端口 $(get_sshd_ports_csv)，封禁 1h/5 次/1d，firewallcmd-ipset）；内容未变则跳过，旧文件备份到 /var/backups/debnas/"
+  else
+    echo "info|${jail_local}|检测到用户自定义文件，保留不覆盖"
+  fi
+  echo "write|/etc/fail2ban/action.d/mail-whois.local|告警邮件模板；内容未变则跳过，旧文件备份到 /var/backups/debnas/"
+
+  if [[ -r "$defaults" ]] && grep -q '\[pam-generic\]' "$defaults" 2>/dev/null; then
+    echo "info|${defaults}|已启用 pam-generic（已满足）"
+  else
+    echo "write|${defaults}|追加 [pam-generic] enabled = true（Cockpit 登录防护；直接追加，不另做备份）"
+  fi
+
+  if ! systemctl is-active --quiet firewalld 2>/dev/null; then
+    if _f2b_pkg_installed firewalld; then
+      echo "service|firewalld|启动（firewallcmd-ipset 封禁后端需要）"
+    else
+      echo "risk|firewalld|未安装 firewalld，封禁后端不可用，启动步骤会失败；请先执行 firewall 模块"
+    fi
+  fi
+  echo "service|fail2ban|设为开机自启；配置有变更时重启"
+  local lan=""
+  lan=$(get_local_private_subnets)
+  echo "risk|封禁|同一 IP 1 天内失败 5 次封禁 1 小时；白名单仅本机${lan:+及 ${lan}}，外网登录的管理员可能被误封"
+  echo "info|告警邮件|每次封禁发送邮件（需已配置邮件发送，见 mail-account 模块）"
+  return 0
+}
+
 # 主执行流程，串联各功能模块
 main() {
   local step=0 total=6
@@ -241,4 +325,5 @@ main() {
   ui_progress_step "$step" "$total" "Fail2ban 安装配置完成" "done"
 }
 
-main "$@"
+# 契约守卫：DEBNAS_MODULE_ACTION=status|plan 时只加载函数供只读探测，不执行 main（docs/ARCHITECTURE.md §4.5）
+if [[ "${DEBNAS_MODULE_ACTION:-run}" == "run" ]]; then main "$@"; fi

@@ -318,6 +318,8 @@ get_first_regular_user() {
 # 说明：比较现有文件内容，相同则跳过（避免无意义的文件写入和服务重启）
 #       写入采用"同目录临时文件 + mv"原子替换，避免写到一半（磁盘满/中断）留下截断的 /etc 配置；
 #       已存在文件的属主/属组会被保留；目标为符号链接时写入其指向的真实文件（不破坏链接）。
+#       内容变化且原文件存在时，先经 debnas_backup_file 备份到 /var/backups/debnas（失败只告警）；
+#       写入成功后经 manifest_add 登记到文件清单（/var/lib/debnas/manifest）。
 write_file_if_changed() {
   local file="${1:?write_file_if_changed: 缺少文件路径}"
   local new_content="${2:?write_file_if_changed: 缺少文件内容}"
@@ -359,6 +361,16 @@ write_file_if_changed() {
       fi
       return 1
     fi
+    # 内容确实变化：修改前把原件备份到 /var/backups/debnas（见 backup.sh）。
+    # 备份失败只告警、继续写入：备份是辅助恢复手段，许多调用方以 `|| true` 忽略返回值，
+    # 若因备份盘满/只读而拒绝写入，安全加固等必要变更会被静默跳过，风险更大。
+    if declare -F debnas_backup_file >/dev/null 2>&1; then
+      local backup_rc=0
+      debnas_backup_file "$file" || backup_rc=$?
+      if [[ "$backup_rc" -eq 1 ]]; then
+        log_warning "备份原文件失败（继续写入）：$file"
+      fi
+    fi
   fi
 
   # 写入同目录临时文件（mktemp 创建为 0600，写入期间内容不会被其他用户读到）
@@ -399,6 +411,10 @@ write_file_if_changed() {
       log_error "写入失败：$file"
       return 2
     fi
+  fi
+  # 登记到文件清单（DebNAS 自有目录内的文件由 manifest_add 自动忽略）
+  if declare -F manifest_add >/dev/null 2>&1; then
+    manifest_add "$file" || true
   fi
   return 0
 }

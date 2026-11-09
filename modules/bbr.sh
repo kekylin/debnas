@@ -162,6 +162,81 @@ handle_choice() {
   module_mark_action
 }
 
+# ==================== 只读探测契约（docs/ARCHITECTURE.md §4.5） ====================
+# 直接读 /proc/sys（普通用户可读），不调 sysctl/modinfo
+
+_bbr_read_proc() {
+  local f="/proc/sys/${1//.//}" v=""
+  [[ -r "$f" ]] && v=$(< "$f") 2>/dev/null
+  printf '%s' "$v"
+}
+
+# 内核是否能用 BBR（已在可用列表，或存在 tcp_bbr 内核模块文件）
+_bbr_available() {
+  local avail
+  avail=$(_bbr_read_proc net.ipv4.tcp_available_congestion_control)
+  [[ " ${avail} " == *" ${BBR_ALGO} "* ]] && return 0
+  compgen -G "/lib/modules/$(uname -r 2>/dev/null)/kernel/net/ipv4/${BBR_MODULE}.ko*" >/dev/null 2>&1
+}
+
+# 持久化配置中是否已写入 bbr
+_bbr_persisted() {
+  [[ -r "$SYSCONF_FILE" ]] && grep -qE "^[[:space:]]*${SYSCONF_KEY//./\\.}[[:space:]]*=[[:space:]]*${BBR_ALGO}[[:space:]]*$" "$SYSCONF_FILE" 2>/dev/null
+}
+
+# 当前状态：一行 "状态码|说明"
+module_status() {
+  local algo qdisc
+  algo=$(_bbr_read_proc "$SYSCONF_KEY")
+  qdisc=$(_bbr_read_proc "$SYSCONF_QDISC_KEY")
+  if [[ -z "$algo" ]]; then
+    echo "unknown|无法读取当前拥塞控制算法"
+    return 0
+  fi
+  if [[ "$algo" == "$BBR_ALGO" ]]; then
+    if _bbr_persisted; then
+      echo "applied|BBR 已启用（队列 ${qdisc:-未知}）· 已持久化"
+    else
+      echo "partial|BBR 临时启用（队列 ${qdisc:-未知}），重启后失效"
+    fi
+    return 0
+  fi
+  if _bbr_persisted; then
+    echo "warn|已写入 ${SYSCONF_FILE} 但当前算法为 ${algo}（配置未生效）"
+  elif ! _bbr_available; then
+    echo "absent|当前 ${algo}；内核未提供 BBR 模块"
+  else
+    echo "absent|当前 ${algo}（队列 ${qdisc:-未知}），未启用 BBR"
+  fi
+}
+
+# 预演：每行 "类型|目标|备注"（交互式模块：列出各菜单动作可能的影响）
+module_plan() {
+  local IFS=$' \n\t'
+  local algo key dup=""
+  algo=$(_bbr_read_proc "$SYSCONF_KEY")
+  echo "info|bbr|交互式菜单：临时启用 / 永久启用 / 临时停用 / 永久停用 / 查看状态（当前算法 ${algo:-未知}）；无参数且非终端时只查看状态"
+  if ! _bbr_available; then
+    echo "risk|${BBR_MODULE}|内核未提供 BBR 模块，启用会失败"
+  elif [[ " $(_bbr_read_proc net.ipv4.tcp_available_congestion_control) " != *" ${BBR_ALGO} "* ]]; then
+    echo "info|${BBR_MODULE}|启用时 modprobe 加载内核模块"
+  fi
+  echo "info|sysctl|临时启/停：sysctl -w ${SYSCONF_KEY}=${BBR_ALGO}/${DEFAULT_ALGO}、${SYSCONF_QDISC_KEY}=${QDISC_FQ}/${DEFAULT_QDISC}，重启后失效"
+  if _bbr_persisted; then
+    echo "info|${SYSCONF_FILE}|已持久化 BBR（永久启用时已满足）；永久停用时删除该文件（不另做备份）"
+  else
+    echo "write|${SYSCONF_FILE}|永久启用时写入 ${SYSCONF_KEY}/${SYSCONF_QDISC_KEY}（原地修改，不另做备份）；永久停用时删除"
+  fi
+  for key in "$SYSCONF_KEY" "$SYSCONF_QDISC_KEY"; do
+    if [[ -r /etc/sysctl.conf ]] && LC_ALL=C grep -qE "^[[:space:]]*${key//./\\.}[[:space:]]*=" /etc/sysctl.conf 2>/dev/null; then
+      dup+="${dup:+、}${key}"
+    fi
+  done
+  [[ -n "$dup" ]] && echo "write|/etc/sysctl.conf|永久启/停时注释掉重复项 ${dup}（sed -i 原地修改，不另做备份）"
+  echo "service|systemd-sysctl|永久启/停后重启以应用配置"
+  return 0
+}
+
 main() {
   if [[ "${DEBNAS_CRON_MODE:-0}" -eq 1 ]]; then
     log_info "cron 模式下不支持交互操作，已跳过"
@@ -197,4 +272,5 @@ main() {
   done
 }
 
-main "$@"
+# 契约守卫：DEBNAS_MODULE_ACTION=status|plan 时只加载函数供只读探测，不执行 main（docs/ARCHITECTURE.md §4.5）
+if [[ "${DEBNAS_MODULE_ACTION:-run}" == "run" ]]; then main "$@"; fi

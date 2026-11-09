@@ -213,6 +213,12 @@ init_cron() {
   # 文件日志由 lib/core/logging.sh 统一管理（main() 中调用 log_to_file）
   log_to_file "threat-ips" 2>/dev/null || true
 
+  # 未经 debnas update 升级（如重跑 install.sh）时旧数据目录可能还没迁移：就地补做一次（幂等）
+  if [[ ! -f "${CONFIG_FILE}" ]] && [[ -d "${DEBNAS_LEGACY_THREAT_IPS_DIR:-}" ]] \
+    && declare -F migration_layout_threat_ips >/dev/null 2>&1; then
+    DEBNAS_MANIFEST_SOURCE="migration" migration_layout_threat_ips || true
+  fi
+
   init_data_dir || return 1
 
   if [[ ! -f "${CONFIG_FILE}" ]]; then
@@ -303,6 +309,129 @@ _handle_threat_action() {
 }
 
 
+# ==================== 只读探测契约（docs/ARCHITECTURE.md §4.5） ====================
+# 只读 firewalld 永久配置 XML（不调 firewall-cmd：其为 Python 进程、每次 >300ms 且需 root/polkit）
+
+_THREAT_FW_DIR="${THREAT_FW_DIR:-/etc/firewalld}"
+
+# 统计永久 IPSet 条目数
+# 参数：$1 - IPSet 名；输出：条目数；返回：0 存在，1 不存在，2 无权读取
+_threat_ipset_count() {
+  local f="${_THREAT_FW_DIR}/ipsets/${1}.xml" n=""
+  if [[ ! -e "$f" ]]; then
+    [[ -d "${_THREAT_FW_DIR}/ipsets" && ! -r "${_THREAT_FW_DIR}/ipsets" ]] && return 2
+    [[ -d "${_THREAT_FW_DIR}" && ! -x "${_THREAT_FW_DIR}" ]] && return 2
+    return 1
+  fi
+  [[ -r "$f" ]] || return 2
+  n=$(grep -c '<entry>' "$f" 2>/dev/null) || n=0
+  printf '%s' "${n:-0}"
+}
+
+# IPSet 是否已绑定到 drop 区（永久配置）
+_threat_ipset_bound() {
+  local f="${_THREAT_FW_DIR}/zones/${ZONE}.xml"
+  [[ -r "$f" ]] && grep -qF "<source ipset=\"${1}\"/>" "$f" 2>/dev/null
+}
+
+# 读取已保存的威胁等级（未启用时为空）
+_threat_saved_level() {
+  [[ -r "${CONFIG_FILE}" ]] || return 0
+  sed -n 's/^THREAT_LEVEL=\([0-9]*\).*/\1/p' "${CONFIG_FILE}" 2>/dev/null | head -n 1 || true
+}
+
+# 当前状态：一行 "状态码|说明"
+module_status() {
+  if ! command -v firewall-cmd &>/dev/null; then
+    echo "absent|未安装 firewalld（需先执行 firewall 模块）"
+    return 0
+  fi
+  local c4="" c6="" rc4=0 rc6=0 level enabled=0
+  c4=$(_threat_ipset_count "${IPSET_NAME_IPV4}") || rc4=$?
+  c6=$(_threat_ipset_count "${IPSET_NAME_IPV6}") || rc6=$?
+  level=$(_threat_saved_level)
+  feature_enabled "threat-ips" 2>/dev/null && enabled=1
+
+  if [[ $rc4 -eq 2 || $rc6 -eq 2 ]]; then
+    if [[ $enabled -eq 1 ]]; then
+      echo "unknown|已启用${level:+（等级 ${level}）}；IPSet 条目需 root 查看"
+    else
+      echo "unknown|IPSet 状态需 root 查看"
+    fi
+    return 0
+  fi
+  if [[ $rc4 -ne 0 && $rc6 -ne 0 ]]; then
+    if [[ $enabled -eq 1 || -n "$level" ]]; then
+      echo "warn|已启用${level:+（等级 ${level}）}但未找到威胁 IPSet（首次更新可能失败）"
+    else
+      echo "absent|未启用威胁 IP 封禁"
+    fi
+    return 0
+  fi
+
+  local total=$(( ${c4:-0} + ${c6:-0} ))
+  local desc="IPv4 ${c4:-0} / IPv6 ${c6:-0} 条${level:+ · 等级 ${level}}"
+  if [[ $enabled -ne 1 && -z "$level" ]]; then
+    echo "warn|已禁用但 IPSet 仍残留（${desc}）"
+    return 0
+  fi
+  if ! systemctl is-active --quiet firewalld 2>/dev/null; then
+    echo "warn|firewalld 未运行，封禁未生效（${desc}）"
+    return 0
+  fi
+  if ! _threat_ipset_bound "${IPSET_NAME_IPV4}" && ! _threat_ipset_bound "${IPSET_NAME_IPV6}"; then
+    echo "partial|IPSet 未绑定到 ${ZONE} 区，封禁未生效（${desc}）"
+    return 0
+  fi
+  if [[ $total -eq 0 ]]; then
+    echo "partial|已启用但 IPSet 为空（${desc}）"
+    return 0
+  fi
+  if [[ ${EUID:-$(id -u)} -eq 0 ]]; then
+    if cron_is_registered "threat-ips" 2>/dev/null; then
+      echo "applied|封禁中 · ${desc} · 定时更新已开启"
+    else
+      echo "partial|封禁中 · ${desc} · 未设置定时更新"
+    fi
+  else
+    echo "applied|封禁中 · ${desc}（定时任务需 root 查看）"
+  fi
+}
+
+# 预演：每行 "类型|目标|备注"（交互式模块：列出各菜单动作可能的影响）
+module_plan() {
+  local IFS=$' \n\t'
+  local -a missing=()
+  local cmd pkg
+  # firewall-cmd 属服务依赖（不自动安装，由 firewall 模块负责），下方单列 risk
+  for cmd in ipset wget sipcalc; do
+    command -v "$cmd" &>/dev/null && continue
+    pkg="${cmd_to_pkg[$cmd]:-$cmd}"
+    missing+=("$pkg")
+  done
+
+  echo "info|threat-ips|交互式菜单：启用（输入威胁等级 0-100，默认 ${DEFAULT_THREAT_LEVEL}）/ 禁用 / 定时设置，按选择执行"
+  if [[ ${#missing[@]} -gt 0 ]]; then
+    echo "pkg|${missing[*]}|启用时按 @depends 检查/安装"
+  fi
+  if ! command -v firewall-cmd &>/dev/null; then
+    echo "risk|firewalld|未安装 firewalld，启用会失败；请先执行 firewall 模块"
+  elif ! systemctl is-active --quiet firewalld 2>/dev/null; then
+    echo "service|firewalld|启用时自动启动"
+  fi
+  echo "write|${CONFIG_FILE}|启用时写入威胁等级（直接覆盖，不另做备份）；禁用时删除"
+  echo "write|firewalld 永久配置|启用：建 IPSet ${IPSET_NAME_IPV4}/${IPSET_NAME_IPV6}（hash:net）并绑定到 ${ZONE} 区；禁用：解绑并删除（firewall-cmd --permanent，不另做备份）"
+  echo "info|威胁情报|启用时联网下载 lists.ipthreat.net 列表（最多 ${MAX_IP_LIMIT} 条/协议族），执行时探测"
+  echo "info|${WHITELIST_FILE}|白名单（若存在）、私有网段、本机地址及当前 SSH/登录来源不会被封禁"
+  if [[ ${EUID:-$(id -u)} -eq 0 ]] && cron_is_registered "threat-ips" 2>/dev/null; then
+    echo "info|cron|定时更新已开启（$(cron_get_schedule threat-ips 2>/dev/null || echo 已注册)）；禁用时移除"
+  else
+    echo "cron|threat-ips|仅当在「定时设置」中启用时写入 root crontab（默认 ${DEFAULT_UPDATE_CRON}）；禁用时移除"
+  fi
+  echo "risk|误封|威胁情报列表可能包含正常地址，被封来源完全无法访问本机（drop 区丢弃）；等级越低封禁越多"
+  return 0
+}
+
 # ==================== 主函数 ====================
 main() {
   register_temp_cleanup
@@ -355,4 +484,5 @@ main() {
   fi
 }
 
-main "$@"
+# 契约守卫：DEBNAS_MODULE_ACTION=status|plan 时只加载函数供只读探测，不执行 main（docs/ARCHITECTURE.md §4.5）
+if [[ "${DEBNAS_MODULE_ACTION:-run}" == "run" ]]; then main "$@"; fi

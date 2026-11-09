@@ -3,14 +3,9 @@
 set -euo pipefail
 IFS=$'\n\t'
 
+# 通知收件邮箱由 lib/system/layout.sh 统一读取（/etc/debnas/notify_email，旧位置回退）
 ops_get_notify_email() {
-  if [[ ! -f "$OPS_EMAIL_CONFIG" ]] || [[ ! -s "$OPS_EMAIL_CONFIG" ]]; then
-    return 1
-  fi
-  local email
-  email=$(head -1 "$OPS_EMAIL_CONFIG" 2>/dev/null | tr -d '[:space:]' || true)
-  [[ -n "$email" ]] || return 1
-  printf '%s' "$email"
+  notify_email_get
 }
 
 ops_build_markdown_report() {

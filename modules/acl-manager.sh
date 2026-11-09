@@ -15,9 +15,8 @@ IFS=$'\n\t'
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${SCRIPT_DIR}/lib/bootstrap.sh"
 
-# 临时文件管理
-register_temp_cleanup
-ACL_OUTPUT=$(create_temp_file "acl-output")
+# 临时文件管理：register_temp_cleanup 与 ACL_OUTPUT 的创建在 main 中执行（只读探测时顶层无副作用）
+ACL_OUTPUT=""
 _ACL_FAILED=0
 
 # 日志文件路径
@@ -335,12 +334,47 @@ batch_set_acl() {
   shopt -u nullglob
 }
 
+# ==================== 只读探测契约（docs/ARCHITECTURE.md §4.5） ====================
+
+# 当前状态：一行 "状态码|说明"（工具型模块：反映 ACL 工具是否可用）
+module_status() {
+  local ver=""
+  ver=$(dpkg-query -W -f='${db:Status-Status} ${Version}' acl 2>/dev/null) || ver=""
+  if [[ "$ver" != installed* ]] || ! command -v setfacl &>/dev/null; then
+    echo "absent|未安装 acl 软件包（首次操作时自动安装）"
+    return 0
+  fi
+  local n=""
+  if [[ -r "$LOG_FILE" ]]; then
+    n=$(grep -c . "$LOG_FILE" 2>/dev/null || true)
+    echo "applied|ACL 工具可用（acl ${ver#installed }）· 操作日志 ${n:-0} 条"
+  else
+    echo "applied|ACL 工具可用（acl ${ver#installed }）"
+  fi
+}
+
+# 预演：每行 "类型|目标|备注"（交互式模块：列出可能的动作范围）
+module_plan() {
+  local IFS=$' \n\t'   # 全局 IFS 不含空格，拼接数组前需局部设置
+  if [[ "$(dpkg-query -W -f='${db:Status-Status}' acl 2>/dev/null)" != "installed" ]]; then
+    echo "pkg|acl|首次选择操作时按 @depends 安装"
+  fi
+  echo "info|acl-manager|交互式菜单，需逐项输入路径/用户或组/权限并确认：查看 / 设置用户 ACL / 设置组 ACL / 设置默认 ACL / 取消默认 ACL / 删除 ACL / 批量设置"
+  echo "write|用户指定的文件或目录|setfacl 修改扩展权限（可选递归）；不另做备份，如需回滚请先 getfacl -R 导出"
+  echo "info|系统目录保护|拒绝对 / 及 ${ACL_PROTECTED_DIRS[*]} 下的路径设置 ACL"
+  echo "write|${LOG_FILE}|追加操作审计日志"
+  echo "risk|递归操作|递归设置/删除会作用于整棵目录树，无法自动撤销"
+  return 0
+}
+
 # 主循环
 main() {
   if [[ "${DEBNAS_CRON_MODE:-0}" -eq 1 ]]; then
     log_info "cron 模式下不支持交互操作，已跳过"
     return 0
   fi
+  register_temp_cleanup
+  ACL_OUTPUT=$(create_temp_file "acl-output")
   local -a items=(
     "查看 ACL 权限"
     "设置用户 ACL"
@@ -379,4 +413,5 @@ main() {
   done
 }
 
-main "$@"
+# 契约守卫：DEBNAS_MODULE_ACTION=status|plan 时只加载函数供只读探测，不执行 main（docs/ARCHITECTURE.md §4.5）
+if [[ "${DEBNAS_MODULE_ACTION:-run}" == "run" ]]; then main "$@"; fi

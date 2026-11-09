@@ -13,11 +13,9 @@ get_hostname() {
 
 # 验证并获取邮箱配置
 # 返回：0 + stdout 输出邮箱地址，1 表示未配置
+# 说明：由 lib/system/layout.sh 统一读取（/etc/debnas/notify_email，旧位置 /etc/exim4/notify_email 回退）
 get_email_config() {
-  if [[ ! -f "$EMAIL_CONFIG_FILE" ]] || [[ ! -s "$EMAIL_CONFIG_FILE" ]]; then
-    return 1
-  fi
-  cat "$EMAIL_CONFIG_FILE"
+  notify_email_get
 }
 
 # 发送邮件通知

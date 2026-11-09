@@ -8,9 +8,10 @@
 #   debnas run <模块名>                  # 执行指定模块
 #   debnas config <key> [value]          # 查询或设置全局配置
 #   debnas config list                   # 列出所有配置
-#   debnas update                        # 更新 DebNAS
+#   debnas update [--tag <版本>]         # 更新 DebNAS（校验发布签名）
 #   debnas uninstall                     # 卸载 DebNAS
 #   debnas doctor                        # 系统诊断
+#   debnas files                         # 列出文件布局与修改过的系统文件
 #   debnas cron add|remove|list          # 管理定时任务
 #   debnas --help                        # 显示帮助
 #   debnas --version                     # 显示版本
@@ -112,8 +113,73 @@ cmd_config() {
 	log_success "已设置: ${key}=${value}"
 }
 
+# update 的 --unsigned 确认：醒目警告 + 交互输入 yes；非交互（stdin 非终端）直接拒绝，--yes 不能跳过
+_update_confirm_unsigned() {
+	local branch="$1"
+	log_warning "================================================================"
+	log_warning "  !!! 不校验模式：将直接下载分支 '${branch}' 的源码归档 !!!"
+	log_warning "  不做 GPG 签名与 SHA256 校验，无法发现传输或托管平台上的篡改；"
+	log_warning "  该代码将以 root 身份执行。仅供开发调试，请勿用于生产环境。"
+	log_warning "================================================================"
+	if [[ ! -t 0 ]]; then
+		log_error "非交互环境下拒绝 --unsigned 更新"
+		return 1
+	fi
+	local answer=""
+	read -rp "确认安装未经校验的代码？请输入 yes 继续: " answer || answer=""
+	if [[ "$answer" != "yes" ]]; then
+		log_info "已取消"
+		return 1
+	fi
+	return 0
+}
+
 # 子命令：update
+# 用法：debnas update [--tag <版本>]          # 签名校验（默认更新到最新稳定版本）
+#       debnas update --unsigned [--branch <分支>]  # 不校验（开发调试，需交互确认）
 cmd_update() {
+	local install_dir="/opt/debnas"
+	local want_tag="" branch="" unsigned=0
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+			--tag)
+				if [[ $# -lt 2 ]] || ! installer_valid_tag "$2"; then
+					log_error "--tag 需要一个合法的发布版本号（如 v3.1.0）"
+					return 1
+				fi
+				want_tag="$2"
+				shift 2
+				;;
+			--branch)
+				if [[ $# -lt 2 ]] || ! installer_valid_branch "$2"; then
+					log_error "--branch 需要一个合法的分支名（如 dev）"
+					return 1
+				fi
+				branch="$2"
+				shift 2
+				;;
+			--unsigned)
+				unsigned=1
+				shift
+				;;
+			*)
+				log_error "update 不支持的参数: $1"
+				echo "用法: debnas update [--tag <版本>] | --unsigned [--branch <分支>]"
+				return 1
+				;;
+		esac
+	done
+	if [[ -n "$branch" && "$unsigned" -ne 1 ]]; then
+		log_error "按分支更新不做任何完整性校验，必须显式加 --unsigned"
+		return 1
+	fi
+	if [[ "$unsigned" -eq 1 && -n "$want_tag" ]]; then
+		log_error "--tag 与 --unsigned 不能同时使用（指定 tag 时总是校验签名）"
+		return 1
+	fi
+	[[ "$unsigned" -eq 1 && -z "$branch" ]] && branch="main"
+
 	log_info "检查更新..."
 
 	local region
@@ -124,28 +190,90 @@ cmd_update() {
 		log_warning "未找到 region 配置，使用默认值: ${region}"
 	fi
 
+	if [[ "$unsigned" -eq 1 ]]; then
+		_update_confirm_unsigned "$branch" || return 1
+	fi
+
 	local tmp_dir
 	tmp_dir=$(mktemp -d /tmp/debnas-update.XXXXXX)
 	chmod 700 "$tmp_dir"
 	local tarball="${tmp_dir}/debnas-update.tar.gz"
+	local tag=""
 
-	if ! installer_download "$region" "$tarball"; then
-		rm -rf "$tmp_dir"
-		return 1
+	if [[ "$unsigned" -eq 1 ]]; then
+		if ! installer_download_branch "$region" "$branch" "$tarball"; then
+			rm -rf -- "${tmp_dir:?}"
+			return 1
+		fi
+		log_warning "已跳过完整性校验（--unsigned）"
+	else
+		# 公钥只用已安装目录里的可信副本，不从网络获取
+		local keyring="${tmp_dir}/release-keyring.gpg" fpr
+		if ! fpr=$(installer_load_release_key "$install_dir" "$keyring"); then
+			log_error "已安装目录缺少有效的发布公钥（${install_dir}/keys/debnas-release.asc / .fpr）"
+			log_error "可能原因：维护者尚未配置发布公钥，或当前安装来自未签名的旧版本"
+			log_error "如确需更新未经校验的代码（风险自负）：debnas update --unsigned [--branch main]"
+			rm -rf -- "${tmp_dir:?}"
+			return 1
+		fi
+
+		local installed_tag
+		installed_tag=$(installer_marker_get "$install_dir" "tag")
+		if [[ -n "$want_tag" ]]; then
+			tag="$want_tag"
+		else
+			if ! tag=$(installer_latest_tag "$region" "$tmp_dir"); then
+				log_error "无法获取最新发布版本号（网络不可达或维护者尚未发布签名版本），可用 --tag 指定"
+				rm -rf -- "${tmp_dir:?}"
+				return 1
+			fi
+			# 自动发现的版本号来自未签名的 install.sh，只允许升级不允许降级（显式 --tag 可降级）
+			if [[ -n "$installed_tag" ]]; then
+				if [[ "$tag" == "$installed_tag" ]]; then
+					log_success "已是最新版本：${tag}"
+					rm -rf -- "${tmp_dir:?}"
+					return 0
+				fi
+				if installer_version_lt "$tag" "$installed_tag"; then
+					log_error "远端最新版本 ${tag} 低于已安装版本 ${installed_tag}，拒绝自动降级（如确需降级请用 --tag ${tag}）"
+					rm -rf -- "${tmp_dir:?}"
+					return 1
+				fi
+			fi
+		fi
+		log_info "目标版本：${tag}${installed_tag:+（已安装 ${installed_tag}）}"
+
+		if ! installer_download_release "$region" "$tag" "$tmp_dir"; then
+			rm -rf -- "${tmp_dir:?}"
+			return 1
+		fi
+		if ! installer_verify_release "$tmp_dir" "debnas-${tag}.tar.gz" "$keyring" "$fpr"; then
+			log_error "完整性校验未通过，已删除下载文件，更新中止"
+			rm -rf -- "${tmp_dir:?}"
+			return 1
+		fi
+		mv -f -- "${tmp_dir}/debnas-${tag}.tar.gz" "$tarball"
+		log_success "签名与 SHA256 校验通过（签名者 ${fpr}）"
 	fi
 
 	local extract_dir="${tmp_dir}/extract"
 	if ! installer_extract "$tarball" "$extract_dir"; then
-		rm -rf "$tmp_dir"
+		rm -rf -- "${tmp_dir:?}"
 		return 1
 	fi
 
-	if ! installer_deploy "$extract_dir" "/opt/debnas"; then
-		rm -rf "$tmp_dir"
+	if ! installer_deploy "$extract_dir" "$install_dir"; then
+		rm -rf -- "${tmp_dir:?}"
 		return 1
 	fi
 
-	rm -rf "$tmp_dir"
+	rm -rf -- "${tmp_dir:?}"
+
+	if [[ "$unsigned" -eq 1 ]]; then
+		installer_marker_write "$install_dir" "" "$branch" 0 || true
+	else
+		installer_marker_write "$install_dir" "$tag" "" 1 || true
+	fi
 
 	# 迁移必须由"新代码"执行：当前进程加载的是旧版本的 DEBNAS_VERSION 与 _migrate_* 函数，
 	# 在此直接调用 migration_run 永远检测不到版本变化，新版本的迁移步骤也不会被执行
@@ -182,6 +310,20 @@ cmd_uninstall() {
 		log_info "已移除 DebNAS 定时任务"
 	fi
 
+	# 登录通知：移除 PAM 行与辅助脚本目录（否则 PAM 会引用已删除的脚本）
+	login_notify_pam_sync "" >/dev/null 2>&1 || true
+	if [[ -n "${DEBNAS_LIBEXEC_DIR:-}" && -d "$DEBNAS_LIBEXEC_DIR" ]]; then
+		rm -rf -- "$DEBNAS_LIBEXEC_DIR" && log_info "已移除辅助脚本目录: ${DEBNAS_LIBEXEC_DIR}/"
+	fi
+	# 通知邮箱兼容链接（/etc/exim4/notify_email -> /etc/debnas/notify_email），删除配置目录后会悬空
+	if [[ -n "${DEBNAS_LEGACY_NOTIFY_EMAIL_FILE:-}" && -L "$DEBNAS_LEGACY_NOTIFY_EMAIL_FILE" ]]; then
+		rm -f -- "$DEBNAS_LEGACY_NOTIFY_EMAIL_FILE"
+	fi
+	# 文件清单随 /var/lib/debnas 删除，先留一份到备份目录；备份目录默认保留
+	if [[ -f "${DEBNAS_MANIFEST_FILE:-}" && -d "${DEBNAS_BACKUP_ROOT:-}" ]]; then
+		cp -p -- "$DEBNAS_MANIFEST_FILE" "${DEBNAS_BACKUP_ROOT}/manifest.uninstalled" 2>/dev/null || true
+	fi
+
 	rm -rf /etc/debnas 2>/dev/null && log_info "已移除配置目录: /etc/debnas/"
 	rm -rf /var/log/debnas 2>/dev/null && log_info "已移除日志目录: /var/log/debnas/"
 	rm -rf /var/lib/debnas 2>/dev/null && log_info "已移除状态目录: /var/lib/debnas/"
@@ -189,7 +331,13 @@ cmd_uninstall() {
 
 	log_success "DebNAS 已卸载"
 	log_info "已安装的软件包和系统配置未被修改。如需恢复系统，请手动操作。"
+	[[ -n "${DEBNAS_BACKUP_ROOT:-}" ]] && log_info "被修改系统文件的原件保留在 ${DEBNAS_BACKUP_ROOT}/（含 original/ 首次修改前版本），确认不需要后可手动删除"
 	return 0
+}
+
+# 子命令：files — 列出 DebNAS 自有目录、修改过的系统文件、定时任务与审计目录
+cmd_files() {
+	manifest_list
 }
 
 # 子命令：doctor
@@ -348,6 +496,10 @@ main() {
 
 		doctor)
 			cmd_doctor "${subcmd_args[@]+"${subcmd_args[@]}"}"
+			;;
+
+		files)
+			cmd_files "${subcmd_args[@]+"${subcmd_args[@]}"}"
 			;;
 
 		cron)

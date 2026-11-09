@@ -54,16 +54,168 @@ _version_changed() {
 #   return 0
 # }
 
+# ==================== 布局迁移（FHS 收敛，与版本号无关） ====================
+# 说明：项目自有文件收敛到 /etc/debnas、/var/lib/debnas、/var/log/debnas 等同名目录后，
+#       旧位置的文件需要搬过去。规则：旧路径存在且新路径不存在时搬迁；全部幂等，
+#       每次 migration_run 都会执行（不依赖版本号变化），单项失败只告警不中断。
+#       设置 DEBNAS_SKIP_LAYOUT_MIGRATION=1 可跳过（测试用）。
+
+# 旧版威胁 IP 数据目录 / 日志
+DEBNAS_LEGACY_THREAT_IPS_DIR="${DEBNAS_LEGACY_THREAT_IPS_DIR:-/var/lib/firewalld-ipthreat}"
+DEBNAS_LEGACY_THREAT_IPS_LOG="${DEBNAS_LEGACY_THREAT_IPS_LOG:-/var/log/firewalld-ipthreat.log}"
+
+# 威胁 IP：/var/lib/firewalld-ipthreat → /var/lib/debnas/threat-ips，
+#          /var/log/firewalld-ipthreat.log → /var/log/debnas/threat-ips.log
+# 返回：0 成功或无需迁移，1 部分失败
+migration_layout_threat_ips() {
+  local old_dir="$DEBNAS_LEGACY_THREAT_IPS_DIR"
+  local new_dir="${DEBNAS_VAR_DIR}/threat-ips"
+  local old_log="$DEBNAS_LEGACY_THREAT_IPS_LOG"
+  local new_log="${DEBNAS_LOG_ROOT}/threat-ips.log"
+  local rc=0
+
+  if [[ -n "$old_dir" && -d "$old_dir" && ! -L "$old_dir" ]]; then
+    # 很早期的版本由 crontab 直接调用数据目录里的脚本：搬走会让该定时任务失效，保留并提示
+    if crontab -l 2>/dev/null | grep -qF "${old_dir}/"; then
+      log_warning "crontab 仍引用 ${old_dir}，暂不迁移；请运行 debnas run threat-ips 重新启用后再执行 debnas update"
+      rc=1
+    elif [[ ! -e "$new_dir" ]]; then
+      if mkdir -p -- "$(dirname -- "$new_dir")" 2>/dev/null && mv -- "$old_dir" "$new_dir" 2>/dev/null; then
+        log_info "已迁移威胁 IP 数据目录：${old_dir} → ${new_dir}"
+      else
+        log_warning "迁移威胁 IP 数据目录失败：${old_dir} → ${new_dir}"
+        rc=1
+      fi
+    else
+      # 新目录已存在：逐个搬入新目录中没有的文件，搬空后删除旧目录
+      local entry name
+      for entry in "$old_dir"/* "$old_dir"/.[!.]*; do
+        [[ -e "$entry" || -L "$entry" ]] || continue
+        name="${entry##*/}"
+        [[ -n "$name" ]] || continue
+        if [[ ! -e "${new_dir}/${name}" ]]; then
+          mv -- "$entry" "${new_dir}/${name}" 2>/dev/null || rc=1
+        fi
+      done
+      if ! rmdir -- "$old_dir" 2>/dev/null; then
+        log_warning "旧威胁 IP 数据目录非空，已保留：${old_dir}"
+      fi
+    fi
+  fi
+
+  if [[ -n "$old_log" && -f "$old_log" && ! -L "$old_log" && ! -e "$new_log" ]]; then
+    if mkdir -p -- "$DEBNAS_LOG_ROOT" 2>/dev/null && mv -- "$old_log" "$new_log" 2>/dev/null; then
+      log_info "已迁移威胁 IP 日志：${old_log} → ${new_log}"
+    else
+      log_warning "迁移威胁 IP 日志失败：${old_log} → ${new_log}"
+      rc=1
+    fi
+  fi
+  return "$rc"
+}
+
+# 通知邮箱：/etc/exim4/notify_email → /etc/debnas/notify_email（640 root），
+#           旧路径改为指向新路径的符号链接（兼容一个版本，供旧登录脚本/外部脚本读取）
+# 返回：0 成功或无需迁移，1 失败
+migration_layout_notify_email() {
+  local old="$DEBNAS_LEGACY_NOTIFY_EMAIL_FILE" new="$DEBNAS_NOTIFY_EMAIL_FILE"
+  if [[ -n "$old" && -f "$old" && ! -L "$old" && ! -e "$new" ]]; then
+    debnas_backup_file "$old" >/dev/null 2>&1 || true
+    if ! mkdir -p -- "$(dirname -- "$new")" 2>/dev/null || ! cp -p -- "$old" "$new" 2>/dev/null; then
+      log_warning "迁移通知邮箱失败：${old} → ${new}"
+      return 1
+    fi
+    chmod 640 -- "$new" 2>/dev/null || true
+    chown root:root -- "$new" 2>/dev/null || true
+    log_info "已迁移通知邮箱：${old} → ${new}"
+  fi
+  if [[ -f "$new" && -f "$old" && ! -L "$old" ]]; then
+    if ! layout_link_legacy_notify_email; then
+      log_warning "无法把 ${old} 替换为指向 ${new} 的符号链接"
+      return 1
+    fi
+    manifest_add "$old" || true
+  fi
+  return 0
+}
+
+# 登录通知脚本：/etc/pam.d/login-notify.sh → /usr/local/libexec/debnas/login-notify.sh，
+#               同步把 common-session 的 pam_exec 行改为新路径（原位替换，不留两条）
+# 返回：0 成功或无需迁移，1 失败
+migration_layout_login_notify() {
+  local old="$DEBNAS_LEGACY_LOGIN_NOTIFY_SCRIPT" new="$DEBNAS_LOGIN_NOTIFY_SCRIPT"
+  local pam="$DEBNAS_PAM_SESSION_FILE" rc=0
+
+  if [[ -n "$old" && -f "$old" && ! -L "$old" && ! -e "$new" ]]; then
+    local new_dir
+    new_dir=$(dirname -- "$new")
+    # 先复制，PAM 行切换成功后再删除旧脚本，保证任意时刻 PAM 引用的脚本都存在
+    if mkdir -p -- "$new_dir" 2>/dev/null && cp -p -- "$old" "$new" 2>/dev/null; then
+      chmod 755 -- "$new_dir" 2>/dev/null || true
+      chmod 750 -- "$new" 2>/dev/null || true
+      chown root:root -- "$new" 2>/dev/null || true
+      log_info "已迁移登录通知脚本：${old} → ${new}"
+    else
+      log_warning "迁移登录通知脚本失败：${old} → ${new}"
+      return 1
+    fi
+  fi
+
+  if [[ -f "$new" ]] && login_notify_pam_references "$old" "$pam"; then
+    local prc=0
+    login_notify_pam_sync "$new" "$pam" || prc=$?
+    if [[ "$prc" -eq 2 ]]; then
+      log_warning "更新 ${pam} 中的登录通知行失败，仍使用旧脚本 ${old}"
+      return 1
+    fi
+    log_info "已更新 ${pam} 登录通知行 → ${new}"
+  fi
+
+  if [[ -n "$old" && -f "$old" && ! -L "$old" && -f "$new" ]] && ! login_notify_pam_references "$old" "$pam"; then
+    debnas_backup_file "$old" >/dev/null 2>&1 || true
+    if rm -f -- "$old" 2>/dev/null; then
+      manifest_add "$old" || true
+    else
+      log_warning "删除旧登录通知脚本失败：${old}"
+      rc=1
+    fi
+  fi
+  return "$rc"
+}
+
+# 执行全部布局迁移（幂等；失败只告警）
+# 返回：始终 0
+migration_run_layout() {
+  if [[ "${DEBNAS_SKIP_LAYOUT_MIGRATION:-0}" == "1" ]]; then
+    return 0
+  fi
+  # 依赖 layout.sh / backup.sh / manifest.sh（bootstrap-core.sh 加载）；单独 source 本文件时跳过
+  if ! declare -F login_notify_pam_sync >/dev/null 2>&1 \
+    || ! declare -F debnas_backup_file >/dev/null 2>&1 \
+    || ! declare -F manifest_add >/dev/null 2>&1; then
+    return 0
+  fi
+  local DEBNAS_MANIFEST_SOURCE="${DEBNAS_MANIFEST_SOURCE:-migration}"
+  migration_layout_threat_ips || log_warning "威胁 IP 文件布局迁移未完成"
+  migration_layout_notify_email || log_warning "通知邮箱布局迁移未完成"
+  migration_layout_login_notify || log_warning "登录通知脚本布局迁移未完成"
+  return 0
+}
+
 # ==================== 公共接口 ====================
 
 # 检查并执行版本迁移
 # 参数：无（使用 DEBNAS_VERSION 环境变量）
 # 返回：0 成功（含无需迁移），1 迁移失败
-# 说明：在 cmd_update 完成后调用，检测版本变化并执行迁移
+# 说明：在 cmd_update 完成后调用，检测版本变化并执行迁移；
+#       文件布局迁移（migration_run_layout）幂等且与版本号无关，每次都会先执行
 migration_run() {
   local current_version="${DEBNAS_VERSION:-unknown}"
   local installed_version
   installed_version=$(_get_installed_version)
+
+  # 布局迁移：首次记录版本的老安装（无版本文件）同样可能有旧路径文件，因此放在版本判断之前
+  migration_run_layout
 
   # 首次安装或版本未知：仅记录版本，不执行迁移
   if [[ -z "$installed_version" ]]; then
@@ -133,6 +285,21 @@ migration_check_compatibility() {
   # 检查状态目录完整性
   if [[ ! -d "/var/lib/debnas/state" ]]; then
     log_warning "状态目录缺失：/var/lib/debnas/state"
+    issues=$((issues + 1))
+  fi
+
+  # 检查旧文件布局残留（由 migration_run_layout 迁移，debnas update 时自动执行）
+  if [[ -d "$DEBNAS_LEGACY_THREAT_IPS_DIR" ]]; then
+    log_warning "旧版威胁 IP 数据目录未迁移：${DEBNAS_LEGACY_THREAT_IPS_DIR}"
+    issues=$((issues + 1))
+  fi
+  if [[ -n "${DEBNAS_LEGACY_NOTIFY_EMAIL_FILE:-}" && -f "$DEBNAS_LEGACY_NOTIFY_EMAIL_FILE" && ! -L "$DEBNAS_LEGACY_NOTIFY_EMAIL_FILE" ]]; then
+    log_warning "通知邮箱仍在旧位置：${DEBNAS_LEGACY_NOTIFY_EMAIL_FILE}（新位置 ${DEBNAS_NOTIFY_EMAIL_FILE}）"
+    issues=$((issues + 1))
+  fi
+  if declare -F login_notify_pam_references >/dev/null 2>&1 \
+    && login_notify_pam_references "$DEBNAS_LEGACY_LOGIN_NOTIFY_SCRIPT"; then
+    log_warning "${DEBNAS_PAM_SESSION_FILE} 仍引用旧登录通知脚本：${DEBNAS_LEGACY_LOGIN_NOTIFY_SCRIPT}"
     issues=$((issues + 1))
   fi
 

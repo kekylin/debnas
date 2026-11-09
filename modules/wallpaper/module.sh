@@ -298,6 +298,89 @@ main_menu() {
   done
 }
 
+# ==================== 只读探测契约（docs/ARCHITECTURE.md §4.5） ====================
+
+# root crontab 中模块条目状态：on / off / unknown（非 root 无法读取 root crontab）
+_wp_cron_state() {
+  [[ "${EUID:-1}" -eq 0 ]] || { echo "unknown"; return 0; }
+  command -v crontab >/dev/null 2>&1 || { echo "off"; return 0; }
+  if cron_is_registered "wallpaper" 2>/dev/null; then echo "on"; else echo "off"; fi
+}
+
+# Cockpit 是否已安装（只查命令/包，不调用 --version）
+_wp_cockpit_installed() {
+  command -v cockpit-bridge >/dev/null 2>&1 && return 0
+  [[ "$(dpkg-query -W -f='${db:Status-Status}' cockpit-ws 2>/dev/null)" == "installed" ]]
+}
+
+# 当前状态：一行 "状态码|说明"（只读、< 300ms、不联网）
+module_status() {
+  if ! _wp_cockpit_installed; then
+    echo "absent|未安装 Cockpit"
+    return 0
+  fi
+  local enabled=0 has_bg=0 has_css=0 cron updated="" cron_desc
+  feature_enabled "wallpaper" 2>/dev/null && enabled=1
+  [[ -f "$WALLPAPER_FILE" ]] && has_bg=1
+  [[ -f "$BRANDING_CSS" ]] && has_css=1
+  cron=$(_wp_cron_state)
+  [[ "$has_bg" -eq 1 ]] && updated=$(date -r "$WALLPAPER_FILE" '+%Y-%m-%d' 2>/dev/null || true)
+  case "$cron" in
+    on)  cron_desc="每日更新已开启" ;;
+    off) cron_desc="未开启定时更新" ;;
+    *)   cron_desc="定时任务需 root 查看" ;;
+  esac
+
+  if [[ "$enabled" -eq 1 ]]; then
+    if [[ "$has_bg" -eq 1 && "$has_css" -eq 1 ]]; then
+      if [[ "$cron" == "on" ]]; then
+        echo "running|已启用 · ${cron_desc}${updated:+ · 壁纸更新于 ${updated}}"
+      else
+        echo "applied|已启用 · ${cron_desc}${updated:+ · 壁纸更新于 ${updated}}"
+      fi
+    else
+      echo "warn|已启用但 branding 文件缺失（login-bg.png/branding.css）"
+    fi
+    return 0
+  fi
+  if [[ "$has_bg" -eq 1 || "$has_css" -eq 1 ]]; then
+    echo "partial|branding 文件存在但功能未启用 · ${cron_desc}"
+    return 0
+  fi
+  echo "absent|未启用"
+}
+
+# 预演：每行 "类型|目标|备注"（无副作用；交互式模块，列出菜单动作的影响范围）
+module_plan() {
+  local cron
+  cron=$(_wp_cron_state)
+  echo "info|动作范围|交互菜单：启用/禁用壁纸、定时设置；非交互调用直接启用；cron 模式更新壁纸"
+  _wp_cockpit_installed \
+    || echo "risk|Cockpit|未安装：启用会失败（需先运行 cockpit 模块，且版本 ≥ 347）"
+  command -v wget >/dev/null 2>&1 || echo "pkg|wget|前置检查自动安装（@depends 声明）"
+  command -v curl >/dev/null 2>&1 || echo "risk|curl|未安装 curl：壁纸下载实际使用 curl，启用会失败"
+  echo "info|网络|启用/定时更新会访问壁纸 API（默认 bing.com，可由 debnas.conf 的 WALLPAPER_API_URL 覆盖）并下载图片"
+
+  # 启用
+  [[ -d "$BRANDING_DIR" ]] || echo "write|${BRANDING_DIR}/|启用：创建目录（755）"
+  echo "write|${WALLPAPER_FILE}|启用/定时更新：下载后直接覆盖，不另做备份"
+  echo "write|${BRANDING_CSS}|启用：登录页样式；内容变化时原件备份到 /var/backups/debnas/"
+  echo "write|${ISSUE_FILE}|启用：写入壁纸标题与版权；原件备份到 /var/backups/debnas/"
+  [[ -f "$STATE_FILE" ]] || echo "write|${STATE_FILE}|启用：首次成功后创建初始化标记"
+  echo "service|cockpit|启用/禁用：重启 cockpit（或 cockpit.socket）；定时更新仅在样式变化时重启"
+  case "$cron" in
+    on)  echo "info|定时任务|已开启每日更新" ;;
+    *)   echo "cron|wallpaper|定时设置：默认每天 00:00（可自定义 cron 表达式），未启用功能时自动启用" ;;
+  esac
+
+  # 禁用
+  echo "write|${BRANDING_DIR}|禁用：rm -rf 删除整个目录（含手工放入的品牌文件），不另做备份"
+  echo "write|${ISSUE_FILE}|禁用：恢复为默认横幅文字；原件备份到 /var/backups/debnas/"
+  echo "cron|wallpaper|禁用：移除 wallpaper 定时条目"
+  echo "risk|Cockpit 会话|启用/禁用会重启 Cockpit，已登录的 Web 会话会断开"
+  return 0
+}
+
 # ==================== 主入口 ====================
 main() {
   if [[ "${1:-}" == "enable" ]]; then
@@ -319,4 +402,5 @@ main() {
   fi
 }
 
-main "$@"
+# 契约守卫：DEBNAS_MODULE_ACTION=status|plan 时只加载函数供只读探测，不执行 main（docs/ARCHITECTURE.md §4.5）
+if [[ "${DEBNAS_MODULE_ACTION:-run}" == "run" ]]; then main "$@"; fi

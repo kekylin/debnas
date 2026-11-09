@@ -39,10 +39,44 @@ _timer_list_all() {
   echo "────────────────────────────────────────────"
 }
 
+# ==================== 只读探测契约（docs/ARCHITECTURE.md §4.5） ====================
+
+# 当前状态：一行 "状态码|说明"（只读、< 300ms、不联网）
+# 说明：DebNAS 定时任务都在 root crontab，非 root 无法读取时返回 unknown
+module_status() {
+  if [[ "${EUID:-1}" -ne 0 ]]; then
+    echo "unknown|需 root 读取 root crontab"
+    return 0
+  fi
+  if ! command -v crontab >/dev/null 2>&1; then
+    echo "absent|未安装 cron（crontab 命令不存在）"
+    return 0
+  fi
+  local entries=0 enabled=0 module_name
+  entries=$(crontab -l 2>/dev/null | grep -cF "$CRON_MARKER" || true)
+  entries="${entries:-0}"
+  for module_name in "${TIMER_MODULES[@]}"; do
+    cron_is_registered "$module_name" 2>/dev/null && enabled=$((enabled + 1))
+  done
+  if [[ "$entries" -eq 0 ]]; then
+    echo "absent|未启用任何 DebNAS 定时任务"
+  else
+    echo "applied|${entries} 条 DEBNAS-CRON 条目 · ${#TIMER_MODULES[@]} 个可定时模块中 ${enabled} 个已启用"
+  fi
+}
+
+# 预演：每行 "类型|目标|备注"（无副作用）
+module_plan() {
+  local IFS=$' \n\t'
+  echo "info|定时任务概览|只读列出 ${TIMER_MODULES[*]} 的定时状态与调度，不修改 crontab"
+  return 0
+}
+
 main() {
   _timer_list_all
   module_mark_action
   return 0
 }
 
-main "$@"
+# 契约守卫：DEBNAS_MODULE_ACTION=status|plan 时只加载函数供只读探测，不执行 main（docs/ARCHITECTURE.md §4.5）
+if [[ "${DEBNAS_MODULE_ACTION:-run}" == "run" ]]; then main "$@"; fi

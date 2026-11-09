@@ -36,9 +36,11 @@ DebNAS — Debian NAS 自动化部署工具
   config list              列出所有配置
   config <key>             查询配置值
   config <key> <value>     设置配置
-  update                  更新 DebNAS
+  update [--tag <版本>]   更新 DebNAS（校验 GPG 签名与 SHA256，默认最新稳定版）
+  update --unsigned [--branch <分支>]  按分支更新，不校验（仅调试，需交互确认）
   uninstall               卸载 DebNAS
   doctor                  系统状态诊断
+  files                   列出 DebNAS 文件布局与修改过的系统文件
   cron enable|disable|list   管理定时任务
 
 全局参数（临时生效，需配合子命令）:

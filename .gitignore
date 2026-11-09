@@ -25,3 +25,6 @@ tests/
 devdocs/
 old-projects/
 
+
+# 发布产物（tools/release.sh 输出，不入库）
+dist/

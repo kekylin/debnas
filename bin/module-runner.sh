@@ -4,6 +4,7 @@
 #
 # 用法：
 #   bash bin/module-runner.sh <模块名> [参数...]
+#   bash bin/module-runner.sh --probe status|plan <模块名>   # 只读探测，不执行 main
 #
 # 执行流程：
 #   preflight  → root/版本/依赖/状态/dry-run 检查
@@ -137,8 +138,9 @@ execute_module() {
 
   # 通过 bash 子进程执行模块（清除 bootstrap 标记，让模块重新加载库）
   # 保留模块真实退出码（2=依赖缺失、4=权限不足等），不再一律折叠为 1
+  # 同时清除 DEBNAS_MODULE_ACTION：该变量若从环境泄漏进来，受守卫的模块会跳过 main（静默不执行）
   local rc=0
-  (unset _DEBNAS_BOOTSTRAPPED; bash "$module_path" "$@") || rc=$?
+  (unset _DEBNAS_BOOTSTRAPPED DEBNAS_MODULE_ACTION; bash "$module_path" "$@") || rc=$?
   return "$rc"
 }
 
@@ -237,9 +239,33 @@ run_report() {
   log_stop_file 2>/dev/null || true
 }
 
+# ==================== 只读探测（status / plan） ====================
+# 用法：module-runner.sh --probe status|plan <模块名>
+# 以 DEBNAS_MODULE_ACTION=status|plan 加载模块，只调用 module_status / module_plan，
+# 不执行模块 main、不做 preflight（无需 root）、不写状态与日志。契约见 docs/ARCHITECTURE.md §4.5
+run_probe() {
+  local action="${1:-}" module_name="${2:-}"
+  if [[ "$action" != "status" && "$action" != "plan" ]] || [[ -z "$module_name" ]]; then
+    echo "用法: module-runner.sh --probe status|plan <模块名>" >&2
+    return 1
+  fi
+  discover_modules 2>/dev/null
+  if ! module_exists "$module_name"; then
+    log_error "模块不存在：${module_name}"
+    return 1
+  fi
+  module_probe "$module_name" "$action"
+}
+
 # ==================== 主流程 ====================
 
 main() {
+  if [[ "${1:-}" == "--probe" ]]; then
+    shift
+    run_probe "$@"
+    return $?
+  fi
+
   # 解析全局参数
   parse_global_args "$@"
 

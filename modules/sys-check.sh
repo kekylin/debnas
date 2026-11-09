@@ -14,12 +14,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${SCRIPT_DIR}/lib/bootstrap.sh"
 source "${SCRIPT_DIR}/lib/system/state.sh"
 
-# 检查依赖，确保必备命令已安装
+# 必备命令（依赖检查在 main 中进行，加载/只读探测阶段无副作用）
 REQUIRED_CMDS=(awk grep df uname curl)
-if ! check_dependencies "${REQUIRED_CMDS[@]}"; then
-  log_error "依赖缺失，请先安装必备命令：${REQUIRED_CMDS[*]}。"
-  exit "${ERROR_DEPENDENCY}"
-fi
 
 # 系统兼容性检查（最小化检查，仅检查项目脚本运行必需项）
 check_system_compatibility() {
@@ -127,9 +123,48 @@ check_system_compatibility() {
   fi
 }
 
+# ==================== 只读探测契约（docs/ARCHITECTURE.md §4.5） ====================
+
+# 当前状态：只读工具；做不联网的本地检查（系统/架构/内存/根分区），有问题报 warn，否则 unknown（不计入完成度）
+module_status() {
+  local IFS=$' \n\t'
+  local -a issues=()
+  local os_id codename arch mem_kb disk_kb
+  os_id=$( [[ -r /etc/os-release ]] && . /etc/os-release 2>/dev/null && printf '%s' "${ID:-}" ) || os_id=""
+  codename=$( [[ -r /etc/os-release ]] && . /etc/os-release 2>/dev/null && printf '%s' "${VERSION_CODENAME:-}" ) || codename=""
+  if [[ "$os_id" != "debian" ]]; then
+    issues+=("非 Debian 系统")
+  elif ! is_supported_codename "$codename" 2>/dev/null; then
+    issues+=("版本 ${codename:-未知} 不在支持列表")
+  fi
+  arch=$(uname -m 2>/dev/null) || arch=""
+  [[ "$arch" == "x86_64" ]] || issues+=("架构 ${arch:-未知}")
+  mem_kb=$(awk '/^MemTotal:/ { print $2; exit }' /proc/meminfo 2>/dev/null) || mem_kb=""
+  [[ -n "$mem_kb" && "$mem_kb" -lt 1048576 ]] && issues+=("内存低于 1GB")
+  disk_kb=$(df -Pk / 2>/dev/null | awk 'NR == 2 { print $4 }') || disk_kb=""
+  [[ -n "$disk_kb" && "$disk_kb" -lt 10485760 ]] && issues+=("根分区可用低于 10GB")
+  if [[ ${#issues[@]} -gt 0 ]]; then
+    echo "warn|只读工具 · 本地检查发现：${issues[*]}"
+  else
+    echo "unknown|只读工具 · 本地检查通过（${codename:-?}/${arch:-?}），网络连通性需执行检查"
+  fi
+}
+
+# 预演：只读查询
+module_plan() {
+  echo "info|-|只读查询，不修改系统（执行时联网探测镜像站连通性）"
+}
+
 # 主函数：直接执行检查
 main() {
+  # 检查依赖，确保必备命令已安装
+  if ! check_dependencies "${REQUIRED_CMDS[@]}"; then
+    log_error "依赖缺失，请先安装必备命令：${REQUIRED_CMDS[*]}。"
+    exit "${ERROR_DEPENDENCY}"
+  fi
+
   check_system_compatibility
 }
 
-main "$@" 
+# 契约守卫：DEBNAS_MODULE_ACTION=status|plan 时只加载函数供只读探测，不执行 main（docs/ARCHITECTURE.md §4.5）
+if [[ "${DEBNAS_MODULE_ACTION:-run}" == "run" ]]; then main "$@"; fi

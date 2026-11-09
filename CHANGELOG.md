@@ -27,8 +27,12 @@
 - firewall / fail2ban：按实际 SSH 端口放行与监控；按已安装服务放行 samba/nfs；jail.local 不覆盖用户自定义文件；局域网网段加入 ignoreip
 - docker-ce：固定校验 Docker 官方公钥指纹；docker-mirror：只合并 registry-mirrors，JSON 非法时拒绝覆盖
 - cockpit：转发头仅在 `cockpit_behind_proxy=1` 时写入，不再整文件覆盖用户配置；45drives 安装脚本失败不再被吞
+- cockpit-45drives：不再下载并以 root 执行 `repo.45drives.com/setup`，改为模块自写 DEB822 源（`45drives.sources`，Signed-By `/usr/share/keyrings/45drives-archive-keyring.gpg`），公钥须匹配固定主密钥指纹 `3FBD7E03…731C472B` 才原子写入；旧 `45drives-enterprise-<代号>.list` / `45drives.list` 集中备份到 `/var/backups/debnas` 后移除
+- tailscale：公钥下载后校验固定主密钥指纹 `2596A99E…957F5868`，不符拒绝安装；keyring 改为同目录临时文件原子替换（不截断已有文件）；源改为本地生成 DEB822 `tailscale.sources`，旧 `tailscale.list` 集中备份到 `/var/backups/debnas` 后移除
+- 45Drives / Tailscale 仓库与公钥地址可在 `debnas.conf` 配置镜像（`repo_45drives_url` `repo_45drives_key_url` `repo_tailscale_url` `repo_tailscale_key_url`，留空=官方），指纹校验不变；公钥下载失败重试 1 次并提示可配置镜像
 - login-mail：通知改为后台执行不阻塞登录，ip-api 明文地理查询默认关闭（`login_mail_geoip=1` 开启）
 - ops-report：HTML 报告转义所有系统来源数据（进程名/主机名/登录信息等）防 XSS；邮件主题 RFC 2047 编码并防头注入；报告文件 600 创建
+- 安装/更新包改为**发布 tag + SHA256 + GPG 签名**校验：`install.sh` 与 `debnas update` 不再拉取 main 分支归档，改为下载 Release 附件 `debnas-<tag>.tar.gz` / `SHA256SUMS` / `SHA256SUMS.asc`，用 `gpgv` + 内嵌（install.sh）或已安装（`keys/debnas-release.asc`）的发布公钥验签并核对主密钥指纹，再 `sha256sum -c`；任一步失败中止并删除下载物。`update` 自动发现新版本时拒绝降级。按分支安装须显式 `--unsigned`（醒目警告 + 交互确认，非交互拒绝）。新增 `tools/release.sh`（`--embed-key` / `--bump` / 构建签名自检）。⚠️ 维护者尚未配置发布公钥前，默认安装/更新会报错，需先完成 docs/MAINTENANCE.md「发布流程」
 
 ### Fixed（2026-11-09 全面审查修复）
 - cockpit-net：先检查 NetworkManager；检测到静态 IP 配置时拒绝执行并给出 nmcli 迁移提示，避免失联
@@ -40,6 +44,9 @@
 - lib/bin：installer_deploy 原子替换并部署 config/compose；install.sh 补复制 compose/；migration 使用新版本代码执行；module-runner 透传退出码；菜单 `08`/Y/N 快捷键/缩放错位；state/doctor/apt 多处 pipefail 中途退出
 
 ### Added
+- 新增 Cockpit 插件「共享管理」（`cockpit-shares` 模块，2026-11-09）：替代 45Drives cockpit-file-sharing 作为默认共享界面，管理 Samba 共享（注册表）、Samba 服务与全局项、NFS 导出（`/etc/exports.d/cockpit-file-sharing.exports`）与 Samba 用户密码；与 45Drives 共用后端，切换不丢共享；`debnas.conf` 新增 `file_sharing_ui=debnas|45drives`（二选一，一键方案改为安装 `cockpit-shares`，选 45drives 时转交 `cockpit-45drives`）与 `file_sharing_nfs`；`cockpit-45drives` 安装前检测并移除自研插件（`modules/cockpit-shares/`、`config/solutions/*.list`、`modules/cockpit-45drives.sh`）
+- 交互界面改为“方案 A：双栏 TUI 仪表盘”（2026-11-09）：顶部系统信息框（版本/架构/主机名/IP + CPU/内存/根分区条形仪表、运行时长、待更新包数，只读 apt 缓存不 apt update）、左栏分类（含“⚡ 一键部署”与完成度）、右栏功能列表（勾选框 + 当前状态 + 说明）、执行计划·预演框（d 预演 / 回车执行，执行前显示完整预演并确认）、快捷键行；差量重绘无闪烁、SIGWINCH 自适应、窄终端（<100 列或 <28 行）退化为单栏、`/` 搜索、`l` 日志、`?` 帮助；非 TTY 或 `DEBNAS_UI=classic` 回退旧版菜单（`lib/ui/dashboard.sh`、`lib/ui/textwidth.sh`、`lib/ui/sysinfo.sh`、`bin/menu.sh`）
+- 模块只读探测契约：可选 `module_status`（`状态码|说明`）与 `module_plan`（`类型|目标|备注`），模块末尾 main 调用改为 `DEBNAS_MODULE_ACTION` 守卫形式；新增 `lib/system/module-probe.sh`（加载器 + 超时 + 异步状态缓存）与 `module-runner.sh --probe status|plan <模块>`；firewall、docker-ce 为首批样板
 - 新增 `ops-report` 运维报告模块：支持 7/30/180/365 天终端摘要、本地 HTML 报告、Markdown 邮件通知与固定周报/年报定时任务
 - 新增统一“定时任务”管理模块（位于系统维护二级菜单），支持选择模块后启用/禁用/查看定时任务
 - 新增 `lib/system/feature.sh` 模块功能状态管理
@@ -86,6 +93,7 @@
 - `write_file_if_changed` 新增第 4 参数 `quiet` 静默模式，内容未变更时抑制日志输出
 
 ### Changed
+- 文件布局收敛到 FHS 同名目录（2026-11-09）：威胁 IP 数据 `/var/lib/firewalld-ipthreat` → `/var/lib/debnas/threat-ips`、日志 `/var/log/firewalld-ipthreat.log` → `/var/log/debnas/threat-ips.log`；通知收件邮箱 `/etc/exim4/notify_email` → `/etc/debnas/notify_email`（640 root，统一由 `notify_email_get/notify_email_set` 读写，旧路径回退一个版本并改为符号链接）；登录通知脚本 `/etc/pam.d/login-notify.sh` → `/usr/local/libexec/debnas/login-notify.sh`（`common-session` 的 pam_exec 行原位替换，不留两条）。`migration_run_layout` 幂等迁移旧文件，每次 `debnas update` 均执行。新增集中备份：`write_file_if_changed` 修改已有文件前备份到 `/var/backups/debnas/<时间戳-pid>/<原路径>`（首次原件另存 `original/`，默认保留最近 20 次运行，`backup_enabled`/`backup_keep` 可配），sources 等模块的同目录 `.bak` 改为统一备份；新增文件清单 `/var/lib/debnas/manifest` 与 `manifest_list`（供 `debnas files`）
 - 运维报告按 PRD 0.22.33 更新：改版为 Apple 极简浅色样式，页眉仅保留报告周期，页脚使用数据覆盖/生成时间/上一期/下一期四栏
 - 运维报告按 0.22 结构重排：新增“本周概览”事件脉冲与重点跟进，安全与入侵研判合并为单张明细表，服务与应用状态改为统一服务清单，磁盘容量与 I/O 合并为周期明细表
 - 运维报告按 PRD 0.20.0 将二级菜单改为数据生命周期状态模型：未启用只显示启用数据采集，数据不足不展示生成入口，暂停/恢复定时报告与停用运维报告分离

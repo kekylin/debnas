@@ -40,6 +40,93 @@ get_sshd_ports() {
   printf '%s\n' "$ports" | awk 'NF' | sort -un
 }
 
+# ==================== 只读探测契约（docs/ARCHITECTURE.md §4.5） ====================
+
+# 包是否已安装（只读查询 dpkg 数据库）
+_fw_pkg_installed() {
+  [[ "$(dpkg-query -W -f='${db:Status-Status}' "$1" 2>/dev/null)" == "installed" ]]
+}
+
+# 当前状态：一行 "状态码|说明"（只读、不联网）
+module_status() {
+  local cfg="/etc/firewalld/zones/public.xml"
+  if ! _fw_pkg_installed firewalld; then
+    if command -v ufw &>/dev/null && systemctl is-active --quiet ufw 2>/dev/null; then
+      echo "absent|未安装；UFW 运行中，安装时会停用 UFW"
+    else
+      echo "absent|未安装 firewalld"
+    fi
+    return 0
+  fi
+  if ! systemctl is-active --quiet firewalld 2>/dev/null; then
+    echo "warn|已安装但 firewalld 未运行"
+    return 0
+  fi
+  if [[ -r "$cfg" ]] && ! grep -q '<service name="cockpit"/>' "$cfg" 2>/dev/null; then
+    echo "partial|运行中 · public 区未放行 cockpit"
+    return 0
+  fi
+  echo "running|运行中 · public 区已放行 ssh/cockpit"
+}
+
+# 预演：每行 "类型|目标|备注"（只读，与 main 的判断逻辑保持一致）
+module_plan() {
+  local IFS=$' \n\t'
+  local cfg="/etc/firewalld/zones/public.xml"
+  local -a services=(ssh dhcpv6-client cockpit) ports=() missing=()
+  local port svc entry
+
+  if _fw_pkg_installed firewalld; then
+    echo "info|firewalld|已安装，跳过安装"
+  else
+    echo "pkg|firewalld|apt 安装（Debian 安装后立即启动）"
+  fi
+  if command -v ufw &>/dev/null; then
+    echo "service|ufw|停用并取消开机自启（避免与 firewalld 冲突）"
+    echo "risk|UFW|现有 UFW 规则将不再生效"
+  fi
+
+  for port in $(get_sshd_ports); do
+    [[ "$port" != "22" ]] && ports+=("$port")
+  done
+  service_is_installed smbd && services+=(samba)
+  service_is_installed nfs-server && services+=(nfs mountd rpc-bind)
+
+  if [[ ! -f "$cfg" ]]; then
+    echo "write|${cfg}|新建 public 区（放行 ${services[*]}${ports[*]:+ 及端口 ${ports[*]}}）"
+  else
+    grep -q '<service name="cockpit"/>' "$cfg" 2>/dev/null || missing+=("cockpit")
+    for svc in "${services[@]}"; do
+      [[ "$svc" == "dhcpv6-client" || "$svc" == "cockpit" ]] && continue
+      grep -qF "<service name=\"${svc}\"/>" "$cfg" 2>/dev/null || missing+=("$svc")
+    done
+    for port in "${ports[@]}"; do
+      grep -qF "<port protocol=\"tcp\" port=\"${port}\"/>" "$cfg" 2>/dev/null || missing+=("${port}/tcp")
+    done
+    if [[ ${#missing[@]} -gt 0 ]]; then
+      echo "write|${cfg}|追加 ${missing[*]}（sed -i 原地修改，不另做备份）"
+    else
+      echo "info|${cfg}|规则已齐全，不改动"
+    fi
+  fi
+  for port in "${ports[@]}"; do
+    echo "port|${port}/tcp|放行自定义 SSH 端口"
+  done
+  echo "port|${services[*]}|public 区放行服务（cockpit=9090）"
+
+  if systemctl is-active --quiet firewalld 2>/dev/null; then
+    echo "service|firewalld|已运行：新规则仅追加到运行时（不 reload，保留 fail2ban 规则）"
+  else
+    echo "service|firewalld|启动并设为开机自启"
+  fi
+
+  if [[ -n "${SSH_CONNECTION:-}" ]]; then
+    local conn_ip="${SSH_CONNECTION%% *}" conn_port="${SSH_CONNECTION##* }"
+    echo "risk|SSH|当前连接来自 ${conn_ip}，服务端端口 ${conn_port} 在放行列表内，不会断连"
+  fi
+  echo "risk|入站|启用后 public 区未放行的入站端口将被拦截（其他自建服务需另行放行）"
+}
+
 main() {
   
   # 定义配置文件路径，便于后续统一管理
@@ -150,4 +237,5 @@ main() {
   
 }
 
-main "$@"
+# 契约守卫：DEBNAS_MODULE_ACTION=status|plan 时只加载函数供只读探测，不执行 main（docs/ARCHITECTURE.md §4.5）
+if [[ "${DEBNAS_MODULE_ACTION:-run}" == "run" ]]; then main "$@"; fi

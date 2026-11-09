@@ -23,6 +23,9 @@ source "${_DEBNAS_ROOT}/lib/core/colors.sh"
 source "${_DEBNAS_ROOT}/lib/core/logging.sh"
 
 # ==================== 基础 System layer ====================
+source "${_DEBNAS_ROOT}/lib/system/layout.sh"
+source "${_DEBNAS_ROOT}/lib/system/manifest.sh"
+source "${_DEBNAS_ROOT}/lib/system/backup.sh"
 source "${_DEBNAS_ROOT}/lib/system/utils.sh"
 source "${_DEBNAS_ROOT}/lib/system/dependency.sh"
 source "${_DEBNAS_ROOT}/lib/system/tempfile.sh"

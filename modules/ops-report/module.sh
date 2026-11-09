@@ -33,7 +33,6 @@ readonly OPS_INCLUDE_DOCKER=1
 readonly OPS_INCLUDE_VM=1
 readonly OPS_INCLUDE_SMART=1
 readonly OPS_INCLUDE_SENSORS=1
-readonly OPS_EMAIL_CONFIG="/etc/exim4/notify_email"
 readonly OPS_SYSSTAT_DEFAULT="/etc/default/sysstat"
 readonly OPS_SYSSTAT_CONFIG="/etc/sysstat/sysstat"
 readonly OPS_LOGROTATE_CONFIG="/etc/logrotate.d/debnas-ops-report"
@@ -255,6 +254,134 @@ ops_menu() {
   done
 }
 
+# ==================== 只读探测契约（docs/ARCHITECTURE.md §4.5） ====================
+
+# root crontab 中模块条目状态：on / off / unknown（非 root 无法读取 root crontab）
+_ops_cron_state() {
+  [[ "${EUID:-1}" -eq 0 ]] || { echo "unknown"; return 0; }
+  command -v crontab >/dev/null 2>&1 || { echo "off"; return 0; }
+  if cron_is_registered "ops-report" 2>/dev/null; then echo "on"; else echo "off"; fi
+}
+
+# 最近一次报告时间（来自 state 的 report_file 文件名；无记录输出空）
+_ops_last_report_time() {
+  local file base
+  file=$(state_get "ops-report" "report_file" 2>/dev/null) || file=""
+  [[ -n "$file" ]] || return 0
+  base="${file##*/}"
+  if [[ "$base" =~ ([0-9]{8})-([0-9]{6})\.html$ ]]; then
+    printf '%s-%s-%s %s:%s' "${BASH_REMATCH[1]:0:4}" "${BASH_REMATCH[1]:4:2}" "${BASH_REMATCH[1]:6:2}" \
+      "${BASH_REMATCH[2]:0:2}" "${BASH_REMATCH[2]:2:2}"
+  fi
+}
+
+_ops_sysstat_active() {
+  command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet sysstat 2>/dev/null
+}
+
+# 当前状态：一行 "状态码|说明"（只读、< 300ms、不联网）
+module_status() {
+  local cron enabled=0 last sysstat_desc last_desc
+  cron=$(_ops_cron_state)
+  feature_enabled "ops-report" 2>/dev/null && enabled=1
+  last=$(_ops_last_report_time)
+  last_desc="${last:+最近报告 ${last}}"
+  last_desc="${last_desc:-尚无报告}"
+
+  if ! command -v sar >/dev/null 2>&1; then
+    sysstat_desc="sysstat 未安装"
+  elif _ops_sysstat_active; then
+    sysstat_desc="sysstat 运行中"
+  else
+    sysstat_desc="sysstat 未运行"
+  fi
+
+  case "$cron" in
+    on)
+      if [[ "$sysstat_desc" != "sysstat 运行中" ]]; then
+        echo "warn|定时报告已启用 · ${sysstat_desc} · ${last_desc}"
+      else
+        echo "running|定时报告已启用 · ${sysstat_desc} · ${last_desc}"
+      fi
+      ;;
+    off)
+      if [[ "$enabled" -eq 1 ]]; then
+        echo "partial|定时报告已暂停 · ${sysstat_desc} · ${last_desc}"
+      elif [[ -n "$last" ]]; then
+        echo "partial|未启用定时报告 · ${sysstat_desc} · ${last_desc}"
+      else
+        echo "absent|未启用 · ${sysstat_desc}"
+      fi
+      ;;
+    *)
+      if [[ "$enabled" -eq 1 ]]; then
+        echo "applied|已启用（定时任务需 root 查看）· ${sysstat_desc} · ${last_desc}"
+      elif [[ -n "$last" ]]; then
+        echo "partial|已生成过报告（定时任务需 root 查看）· ${sysstat_desc} · ${last_desc}"
+      else
+        echo "unknown|定时任务需 root 查看 · ${sysstat_desc} · ${last_desc}"
+      fi
+      ;;
+  esac
+}
+
+# 预演：每行 "类型|目标|备注"（无副作用；交互式模块，列出菜单动作的影响范围）
+module_plan() {
+  local IFS=$' \n\t'
+  local -a missing=()
+  local cron sadc_opts="" opt need_sysstat=0
+  cron=$(_ops_cron_state)
+
+  echo "info|动作范围|交互菜单：启用/禁用定时报告、生成最近 7/30/365 天报告；--yes 生成 7 天报告；cron 模式按周期生成（数据不足自动跳过）"
+  command -v sar >/dev/null 2>&1 || missing+=("sysstat")
+  command -v smartctl >/dev/null 2>&1 || missing+=("smartmontools")
+  [[ ${#missing[@]} -gt 0 ]] && echo "pkg|${missing[*]}|前置检查自动安装（失败时报告相应部分降级）"
+
+  # sysstat 配置（启用与每次生成报告都会执行 ops_setup_enable）
+  if [[ -r "$OPS_SYSSTAT_DEFAULT" ]] && grep -qx 'ENABLED="true"' "$OPS_SYSSTAT_DEFAULT" 2>/dev/null; then
+    echo "info|${OPS_SYSSTAT_DEFAULT}|已为 ENABLED=\"true\"，不改动"
+  else
+    echo "write|${OPS_SYSSTAT_DEFAULT}|设置 ENABLED=\"true\"；原件备份到 /var/backups/debnas/"
+  fi
+  if [[ -r "$OPS_SYSSTAT_CONFIG" ]]; then
+    grep -qx "HISTORY=${OPS_SYSSTAT_HISTORY}" "$OPS_SYSSTAT_CONFIG" 2>/dev/null || need_sysstat=1
+    grep -qx 'COMPRESSAFTER=14' "$OPS_SYSSTAT_CONFIG" 2>/dev/null || need_sysstat=1
+    sadc_opts=$(grep '^SADC_OPTIONS=' "$OPS_SYSSTAT_CONFIG" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d '"' || true)
+    for opt in "-D" "-S DISK" "-S XDISK"; do
+      [[ " ${sadc_opts} " == *" ${opt} "* ]] || need_sysstat=1
+    done
+  else
+    need_sysstat=1
+  fi
+  if [[ "$need_sysstat" -eq 1 ]]; then
+    echo "write|${OPS_SYSSTAT_CONFIG}|HISTORY=${OPS_SYSSTAT_HISTORY}、COMPRESSAFTER=14、SADC_OPTIONS 补 -D -S DISK -S XDISK；原件备份到 /var/backups/debnas/"
+  else
+    echo "info|${OPS_SYSSTAT_CONFIG}|保留 ${OPS_SYSSTAT_HISTORY} 天与磁盘采集参数已就绪，不改动"
+  fi
+  if _ops_sysstat_active; then
+    echo "service|sysstat|已运行；未设开机自启时补设"
+  else
+    echo "service|sysstat|启动并设为开机自启（启用及每次生成报告都会确保）"
+  fi
+  [[ -e "$OPS_LOGROTATE_CONFIG" ]] \
+    && echo "write|${OPS_LOGROTATE_CONFIG}|删除旧版遗留配置（避免与系统 wtmp/btmp 配置重复），不另做备份"
+
+  echo "write|${OPS_REPORTS_DIR}/|生成报告：weekly/monthly/annual 下写 HTML（600）并更新 latest.html 链接；目录 700"
+  echo "info|邮件|生成报告后发送到通知邮箱（未配置则跳过；HTML 附件不超过 2MB）"
+
+  case "$cron" in
+    on)  echo "info|定时任务|已启用（周一 01:00 周报；1 月 1 日 02:00 年报）" ;;
+    *)
+      echo "cron|ops-report 0 1 * * 1|启用定时报告：周一 01:00 周报（sysstat 数据不足 7 天时自动跳过）"
+      echo "cron|ops-report 0 2 1 1 * --period 1y --email|启用定时报告：1 月 1 日 02:00 年报"
+      ;;
+  esac
+  echo "cron|ops-report|禁用定时报告：移除全部 ops-report 条目（历史报告与采集数据保留）"
+  echo "info|耗时|生成报告会采集 journal、SMART、docker、登录日志，可能需要数十秒"
+  echo "risk|sysstat|每次生成报告都会确保 sysstat 运行并改写其配置（保留 ${OPS_SYSSTAT_HISTORY} 天历史，占用 /var/log/sysstat 空间）"
+  return 0
+}
+
 # ==================== 主入口 ====================
 main() {
   case "${1:-}" in
@@ -290,4 +417,5 @@ main() {
   ops_menu
 }
 
-main "$@"
+# 契约守卫：DEBNAS_MODULE_ACTION=status|plan 时只加载函数供只读探测，不执行 main（docs/ARCHITECTURE.md §4.5）
+if [[ "${DEBNAS_MODULE_ACTION:-run}" == "run" ]]; then main "$@"; fi

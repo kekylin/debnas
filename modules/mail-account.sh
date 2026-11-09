@@ -14,6 +14,120 @@ IFS=$'\n\t'
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${SCRIPT_DIR}/lib/bootstrap.sh"
 
+# ==================== 只读探测契约（docs/ARCHITECTURE.md §4.5） ====================
+
+# 邮箱打码：保留本地部分前 2 位（不足 3 位只留 1 位）+ 域名
+_mail_mask_email() {
+  local email="${1:-}" local_part domain
+  [[ "$email" == *@* ]] || { printf '***'; return 0; }
+  local_part="${email%@*}"
+  domain="${email##*@}"
+  if [[ ${#local_part} -le 2 ]]; then
+    printf '%s***@%s' "${local_part:0:1}" "$domain"
+  else
+    printf '%s***@%s' "${local_part:0:2}" "$domain"
+  fi
+}
+
+# 通知邮箱状态：输出 "set|<打码地址>" / "unset|" / "noperm|"（文件存在但当前用户无权读取）
+_mail_notify_state() {
+  local email="" f
+  if email=$(notify_email_get 2>/dev/null) && [[ -n "$email" ]]; then
+    printf 'set|%s' "$(_mail_mask_email "$email")"
+    return 0
+  fi
+  for f in "$DEBNAS_NOTIFY_EMAIL_FILE" "$DEBNAS_LEGACY_NOTIFY_EMAIL_FILE"; do
+    [[ -n "$f" && -e "$f" ]] || continue
+    if [[ ! -r "$f" ]]; then
+      printf 'noperm|'
+      return 0
+    fi
+    break
+  done
+  printf 'unset|'
+}
+
+# 当前 smarthost（未配置输出空）
+_mail_current_smarthost() {
+  local conf="/etc/exim4/update-exim4.conf.conf"
+  [[ -r "$conf" ]] || return 0
+  sed -n "s/^[[:space:]]*dc_smarthost='\([^']*\)'.*/\1/p" "$conf" 2>/dev/null | head -n 1 || true
+}
+
+# exim4 是否已安装（命令或包）
+_mail_exim_installed() {
+  command -v exim4 >/dev/null 2>&1 && return 0
+  [[ "$(dpkg-query -W -f='${db:Status-Status}' exim4-base 2>/dev/null)" == "installed" ]]
+}
+
+# 当前状态：一行 "状态码|说明"（只读、< 300ms、不联网）
+module_status() {
+  if ! _mail_exim_installed; then
+    echo "absent|未安装 exim4"
+    return 0
+  fi
+  local smarthost notify notify_kind notify_addr notify_desc
+  smarthost=$(_mail_current_smarthost)
+  notify=$(_mail_notify_state)
+  notify_kind="${notify%%|*}"
+  notify_addr="${notify#*|}"
+  case "$notify_kind" in
+    set)    notify_desc="通知 ${notify_addr}" ;;
+    noperm) notify_desc="通知邮箱已设置（需 root 查看）" ;;
+    *)      notify_desc="未设置通知邮箱" ;;
+  esac
+  if [[ -z "$smarthost" ]]; then
+    if [[ "$notify_kind" == "unset" ]]; then
+      echo "absent|已安装 exim4，未配置 SMTP 中继"
+    else
+      echo "partial|未配置 SMTP 中继 · ${notify_desc}"
+    fi
+    return 0
+  fi
+  if [[ "$notify_kind" == "unset" ]]; then
+    echo "partial|SMTP ${smarthost} · 未设置通知邮箱"
+    return 0
+  fi
+  if command -v systemctl >/dev/null 2>&1 && ! systemctl is-active --quiet exim4 2>/dev/null; then
+    echo "warn|SMTP ${smarthost} · ${notify_desc} · exim4 未运行"
+    return 0
+  fi
+  echo "applied|SMTP ${smarthost} · ${notify_desc}"
+}
+
+# 预演：每行 "类型|目标|备注"（无副作用；与 main 的判断保持一致）
+module_plan() {
+  local smarthost notify notify_kind legacy="$DEBNAS_LEGACY_NOTIFY_EMAIL_FILE"
+  smarthost=$(_mail_current_smarthost)
+  notify=$(_mail_notify_state)
+  notify_kind="${notify%%|*}"
+
+  if ! _mail_exim_installed; then
+    echo "risk|exim4|未安装 exim4：执行前置检查会拦截（需先安装 exim4-daemon-light）"
+  fi
+  if [[ -n "$smarthost" && "$notify_kind" != "unset" ]] && [[ -r /etc/email-addresses ]]; then
+    echo "info|mail-account|已配置（SMTP ${smarthost}）：执行时先询问是否重新配置；--yes 模式直接跳过"
+  fi
+  echo "info|交互输入|发件邮箱（限 qq/163/126/sina/aliyun/gmail/outlook/yahoo）、SMTP 授权码、通知收件邮箱；cron 模式不执行"
+  echo "write|/etc/exim4/update-exim4.conf.conf|satellite 模式 + smarthost；内容变化时原件备份到 /var/backups/debnas/"
+  echo "write|/etc/exim4/exim4.conf.localmacros|仅 465 端口写入 REMOTE_SMTP_SMARTHOST_PROTOCOL = smtps（保留其他宏）；原件备份到 /var/backups/debnas/"
+  echo "write|/etc/exim4/passwd.client|写入 SMTP 账号与授权码（640 root:Debian-exim）；原件备份到 /var/backups/debnas/"
+  echo "write|/etc/email-addresses|root 发件地址映射；原件备份到 /var/backups/debnas/"
+  echo "write|${DEBNAS_NOTIFY_EMAIL_FILE}|通知收件邮箱（640 root）；原件备份到 /var/backups/debnas/"
+  if [[ -n "$legacy" && ! -L "$legacy" ]]; then
+    if [[ -f "$legacy" ]]; then
+      echo "write|${legacy}|旧位置普通文件备份到 /var/backups/debnas/ 后替换为指向 ${DEBNAS_NOTIFY_EMAIL_FILE} 的符号链接"
+    else
+      echo "write|${legacy}|/etc/exim4 存在时创建指向 ${DEBNAS_NOTIFY_EMAIL_FILE} 的兼容符号链接"
+    fi
+  fi
+  echo "info|update-exim4.conf|重新生成 Exim4 运行配置"
+  echo "service|exim4|重启"
+  echo "info|测试邮件|经 SMTP 服务器向通知邮箱发送一封测试邮件（需联网；失败时模块报错退出）"
+  echo "risk|SMTP 授权码|以明文保存在 /etc/exim4/passwd.client（640 root:Debian-exim）；集中备份目录（700 root）中的旧版本同样含授权码"
+  return 0
+}
+
 main() {
   if [[ "${DEBNAS_CRON_MODE:-0}" -eq 1 ]]; then
     log_info "cron 模式下不支持交互操作，已跳过"
@@ -27,9 +141,7 @@ main() {
   if [[ -f /etc/email-addresses ]]; then
     current_sender=$(awk '{print $2}' /etc/email-addresses 2>/dev/null || true)
   fi
-  if [[ -f /etc/exim4/notify_email ]]; then
-    current_notify=$(head -1 /etc/exim4/notify_email 2>/dev/null || true)
-  fi
+  current_notify=$(notify_email_get 2>/dev/null) || current_notify=""
 
   if [[ -n "${current_smarthost}" && -n "${current_sender}" && -n "${current_notify}" ]]; then
     log_info "当前邮件配置："
@@ -181,7 +293,8 @@ configure_smtp_auth() {
   chown root:Debian-exim "$passwd_file" 2>/dev/null || true
   write_file_if_changed "$passwd_file" "*.$email_domain:${email}:${password}" 640 || true
   write_file_if_changed "/etc/email-addresses" "root: $email" || true
-  write_file_if_changed "/etc/exim4/notify_email" "$notify_email" || true
+  # 通知收件邮箱写到 /etc/debnas/notify_email（640 root），旧位置改为符号链接，见 lib/system/layout.sh
+  notify_email_set "$notify_email" || log_warning "写入通知邮箱失败：${DEBNAS_NOTIFY_EMAIL_FILE}"
 }
 
 # 重启 Exim4 邮件服务
@@ -310,4 +423,5 @@ log_info "• 配置验证时间: $(date +'%Y-%m-%d %H:%M')"
 
 }
 
-main "$@"
+# 契约守卫：DEBNAS_MODULE_ACTION=status|plan 时只加载函数供只读探测，不执行 main（docs/ARCHITECTURE.md §4.5）
+if [[ "${DEBNAS_MODULE_ACTION:-run}" == "run" ]]; then main "$@"; fi

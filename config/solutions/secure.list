@@ -3,6 +3,7 @@ sources
 basic-tools
 cockpit
 cockpit-net
+cockpit-shares
 mail-account
 login-mail
 security

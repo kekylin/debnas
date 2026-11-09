@@ -88,6 +88,29 @@ display_firewalld_fail2ban_info() {
   fi
 }
 
+# ==================== 只读探测契约（docs/ARCHITECTURE.md §4.5） ====================
+
+# 当前状态：只读工具，无"已应用"概念，给出 unknown + 服务摘要（不计入完成度）
+module_status() {
+  local cockpit="未安装" docker="未安装"
+  if systemctl is-active --quiet cockpit.socket 2>/dev/null || systemctl is-active --quiet cockpit 2>/dev/null; then
+    cockpit="运行中"
+  elif [[ "$(dpkg-query -W -f='${db:Status-Status}' cockpit 2>/dev/null)" == "installed" ]]; then
+    cockpit="未运行"
+  fi
+  if systemctl is-active --quiet docker 2>/dev/null; then
+    docker="运行中"
+  elif command -v docker >/dev/null 2>&1; then
+    docker="未运行"
+  fi
+  echo "unknown|只读工具 · cockpit ${cockpit} · docker ${docker}"
+}
+
+# 预演：只读查询
+module_plan() {
+  echo "info|-|只读查询，不修改系统"
+}
+
 # 主执行流程，串联各功能模块
 main() {
   # 获取主机 IP 地址
@@ -105,4 +128,5 @@ main() {
   display_firewalld_fail2ban_info
 }
 
-main "$@"
+# 契约守卫：DEBNAS_MODULE_ACTION=status|plan 时只加载函数供只读探测，不执行 main（docs/ARCHITECTURE.md §4.5）
+if [[ "${DEBNAS_MODULE_ACTION:-run}" == "run" ]]; then main "$@"; fi

@@ -118,6 +118,86 @@ menu() {
   done
 }
 
+# ==================== 只读探测契约（docs/ARCHITECTURE.md §4.5） ====================
+
+# 统计 /etc/hosts 中 DebNAS 区块
+# 输出："<状态> <条目数> <更新时间>"，状态 ∈ none|ok|broken（有 START 无 END）
+_hosts_sync_block_info() {
+  [[ -r "${HOSTS_FILE}" ]] || { echo "unreadable 0 -"; return 0; }
+  awk -v start="$START_MARK" -v end="$END_MARK" '
+    $0 == start { inb = 1; seen = 1; next }
+    inb && $0 == end { inb = 0; closed = 1; next }
+    inb && /^# 更新时间:/ { sub(/^# 更新时间:[[:space:]]*/, ""); gsub(/[[:space:]]+/, "_"); ts = $0; next }
+    inb && $0 !~ /^[[:space:]]*(#|$)/ { n++ }
+    END {
+      st = !seen ? "none" : (closed ? "ok" : "broken")
+      printf "%s %d %s\n", st, n + 0, (ts == "" ? "-" : ts)
+    }
+  ' "${HOSTS_FILE}" 2>/dev/null || echo "none 0 -"
+}
+
+# 当前状态：一行 "状态码|说明"
+module_status() {
+  local info st n ts enabled=0
+  info=$(_hosts_sync_block_info)
+  st="${info%% *}"; info="${info#* }"
+  n="${info%% *}"; ts="${info#* }"
+  ts="${ts//_/ }"
+  feature_enabled "hosts-sync" 2>/dev/null && enabled=1
+
+  case "$st" in
+    unreadable) echo "unknown|无法读取 ${HOSTS_FILE}"; return 0 ;;
+    broken) echo "warn|${HOSTS_FILE} 中 DebNAS 区块缺少结束标记（不会自动删除，请手动检查）"; return 0 ;;
+    none)
+      if [[ $enabled -eq 1 ]]; then
+        echo "warn|已启用但 ${HOSTS_FILE} 中无 DebNAS 区块（上次更新可能失败）"
+      else
+        echo "absent|未启用 Hosts 同步"
+      fi
+      return 0
+      ;;
+  esac
+  local desc="${n} 条${ts:+ · 更新于 ${ts}}"
+  [[ "$ts" == "-" ]] && desc="${n} 条"
+  if [[ "$n" -eq 0 ]]; then
+    echo "warn|DebNAS 区块为空"
+  elif [[ ${EUID:-$(id -u)} -ne 0 ]]; then
+    echo "applied|已写入 ${desc}（定时任务需 root 查看）"
+  elif cron_is_registered "hosts-sync" 2>/dev/null; then
+    echo "applied|已写入 ${desc} · 定时更新已开启"
+  else
+    echo "partial|已写入 ${desc} · 未设置定时更新（IP 可能过期）"
+  fi
+}
+
+# 预演：每行 "类型|目标|备注"（交互式模块：列出各菜单动作可能的影响）
+module_plan() {
+  local IFS=$' \n\t'
+  local -a missing=()
+  local cmd domain_count=0
+  for cmd in dig ping curl; do
+    command -v "$cmd" &>/dev/null || missing+=("${cmd_to_pkg[$cmd]:-$cmd}")
+  done
+  domain_count=$(load_domains 2>/dev/null | grep -c . || true)
+
+  echo "info|hosts-sync|交互式菜单：启用（立即解析并写入）/ 禁用（移除区块）/ 定时设置，按选择执行；--yes 时直接更新一次"
+  [[ ${#missing[@]} -gt 0 ]] && echo "pkg|${missing[*]}|启用/更新时自动安装"
+  if [[ -f "${DOMAINS_CONF_FILE}" ]]; then
+    echo "info|${DOMAINS_CONF_FILE}|域名列表已存在（${domain_count:-0} 个），保留不改"
+  else
+    echo "write|${DOMAINS_CONF_FILE}|首次创建默认域名列表（${domain_count:-0} 个，新文件）"
+  fi
+  echo "info|DNS 解析|联网经 AliDNS/TencentDNS/BaiduDNS/DNS114 解析 ${domain_count:-0} 个域名并测试连通性，执行时探测"
+  echo "write|${HOSTS_FILE}|启用/更新：重写 DebNAS 区块（区块外内容保留；原地覆盖保留 inode，不另做备份）；禁用：移除区块"
+  if [[ ${EUID:-$(id -u)} -eq 0 ]] && cron_is_registered "hosts-sync" 2>/dev/null; then
+    echo "info|cron|定时更新已开启（$(cron_get_schedule hosts-sync 2>/dev/null || echo 已注册)）；禁用时移除"
+  else
+    echo "cron|hosts-sync|仅当在「定时设置」中启用时写入 root crontab（默认 0 0 * * *）；禁用时移除"
+  fi
+  echo "risk|域名解析|列表内域名将固定解析到写入的 IP，未开定时更新时 IP 过期可能导致访问失败"
+  return 0
+}
+
 main() {
   if [[ "${1:-}" == "enable" ]]; then
     module_enable_feature
@@ -147,4 +227,5 @@ main() {
   fi
 }
 
-main "$@"
+# 契约守卫：DEBNAS_MODULE_ACTION=status|plan 时只加载函数供只读探测，不执行 main（docs/ARCHITECTURE.md §4.5）
+if [[ "${DEBNAS_MODULE_ACTION:-run}" == "run" ]]; then main "$@"; fi

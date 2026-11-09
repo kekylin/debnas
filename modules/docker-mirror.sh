@@ -14,15 +14,6 @@ IFS=$'\n\t'
 # 加载公共模块，确保依赖函数和常量可用
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${SCRIPT_DIR}/lib/bootstrap.sh"
-main() {
-source "${SCRIPT_DIR}/lib/system/state.sh"
-
-# 检查依赖，确保 Docker 已安装
-REQUIRED_CMDS=(docker)
-if ! check_dependencies "${REQUIRED_CMDS[@]}"; then
-  log_error "依赖缺失，请先安装 Docker。"
-  exit "${ERROR_DEPENDENCY}"
-fi
 
 # 从统一配置库获取 Docker 镜像加速地址
 DOCKER_MIRRORS=("${DOCKER_REGISTRY_MIRRORS[@]}")
@@ -77,6 +68,108 @@ build_merged_daemon_json() {
   fi
 }
 
+# ==================== 只读探测契约（docs/ARCHITECTURE.md §4.5） ====================
+
+# 输出 daemon.json 中已配置的 registry-mirrors（每行一个；无 jq 时按文本粗略提取）
+_dm_configured_mirrors() {
+  [[ -r "$DAEMON_JSON" ]] || return 0
+  if command -v jq >/dev/null 2>&1; then
+    jq -r '(.["registry-mirrors"] // [])[]? | strings' "$DAEMON_JSON" 2>/dev/null || true
+  else
+    tr -d '\n' < "$DAEMON_JSON" 2>/dev/null \
+      | grep -o '"registry-mirrors"[[:space:]]*:[[:space:]]*\[[^]]*\]' \
+      | grep -o '"[a-z]*://[^"]*"' | tr -d '"' || true
+  fi
+}
+
+# daemon.json 是否为合法 JSON 对象（无 jq 时视为合法，无法判断）
+_dm_json_valid() {
+  command -v jq >/dev/null 2>&1 || return 0
+  jq -e 'type == "object"' "$DAEMON_JSON" >/dev/null 2>&1
+}
+
+# DebNAS 加速源中尚未配置的（每行一个）
+_dm_missing_mirrors() {
+  local configured m
+  configured=$(_dm_configured_mirrors)
+  for m in "${DOCKER_MIRRORS[@]}"; do
+    grep -qxF -- "$m" <<< "$configured" || printf '%s\n' "$m"
+  done
+}
+
+# 当前状态：一行 "状态码|说明"
+module_status() {
+  local configured missing n_all=0 n_missing=0 total=${#DOCKER_MIRRORS[@]}
+  if ! command -v docker >/dev/null 2>&1; then
+    echo "absent|未安装 Docker"
+    return 0
+  fi
+  if [[ ! -s "$DAEMON_JSON" ]]; then
+    echo "absent|未配置镜像加速（无 ${DAEMON_JSON}）"
+    return 0
+  fi
+  if [[ ! -r "$DAEMON_JSON" ]]; then
+    echo "unknown|无权限读取 ${DAEMON_JSON}"
+    return 0
+  fi
+  if ! _dm_json_valid; then
+    echo "error|${DAEMON_JSON} 不是合法 JSON 对象，执行时会跳过"
+    return 0
+  fi
+  configured=$(_dm_configured_mirrors)
+  [[ -n "$configured" ]] && n_all=$(grep -c . <<< "$configured")
+  missing=$(_dm_missing_mirrors)
+  [[ -n "$missing" ]] && n_missing=$(grep -c . <<< "$missing")
+  if [[ $n_all -eq 0 ]]; then
+    echo "absent|daemon.json 未含 registry-mirrors"
+  elif [[ $n_missing -eq 0 ]]; then
+    echo "applied|已配置 ${n_all} 个加速源（含 DebNAS 默认 ${total} 个）"
+  else
+    echo "partial|已有 ${n_all} 个加速源，缺 DebNAS 默认 ${n_missing}/${total} 个"
+  fi
+}
+
+# 预演：每行 "类型|目标|备注"
+module_plan() {
+  local IFS=$' \n\t'
+  local missing
+  if ! command -v docker >/dev/null 2>&1; then
+    echo "info|docker|未安装 Docker，执行时会直接失败（请先运行 docker-ce 模块）"
+    return 0
+  fi
+  if [[ ! -s "$DAEMON_JSON" ]]; then
+    echo "write|${DAEMON_JSON}|新建，写入 registry-mirrors：${DOCKER_MIRRORS[*]}"
+  elif [[ ! -r "$DAEMON_JSON" ]]; then
+    command -v jq >/dev/null 2>&1 || echo "pkg|jq|合并已有 daemon.json 需要"
+    echo "write|${DAEMON_JSON}|无权限预读；执行时 jq 合并 registry-mirrors（保留其他键），内容变化时旧文件备份到 /var/backups/debnas/"
+  elif ! _dm_json_valid; then
+    echo "risk|${DAEMON_JSON}|不是合法 JSON 对象，执行时跳过且模块报错，需先手动修正"
+    return 0
+  else
+    command -v jq >/dev/null 2>&1 || echo "pkg|jq|合并已有 daemon.json 需要"
+    missing=$(_dm_missing_mirrors)
+    if [[ -z "$missing" ]]; then
+      echo "info|${DAEMON_JSON}|DebNAS 加速源均已配置，不改动、不重启 Docker"
+      return 0
+    fi
+    echo "write|${DAEMON_JSON}|jq 合并追加 $(tr '\n' ' ' <<< "$missing" | sed 's/ $//')（保留已有镜像与其他键）；旧文件备份到 /var/backups/debnas/"
+  fi
+  echo "service|docker|配置变化时重启 Docker"
+  echo "risk|Docker 重启|运行中的容器会被停止，按各自 restart 策略恢复"
+  echo "risk|第三方加速源|${DOCKER_MIRRORS[*]} 为第三方服务，拉取的镜像内容由其提供"
+  return 0
+}
+
+main() {
+source "${SCRIPT_DIR}/lib/system/state.sh"
+
+# 检查依赖，确保 Docker 已安装
+REQUIRED_CMDS=(docker)
+if ! check_dependencies "${REQUIRED_CMDS[@]}"; then
+  log_error "依赖缺失，请先安装 Docker。"
+  exit "${ERROR_DEPENDENCY}"
+fi
+
 # 主流程：构建配置、智能写入、按需重启
 log_warning "镜像加速地址为第三方服务（$(printf "%s " "${DOCKER_MIRRORS[@]}")），拉取的镜像内容由其提供，请按需评估"
 if ! new_content=$(build_merged_daemon_json "${DOCKER_MIRRORS[@]}"); then
@@ -98,4 +191,5 @@ fi
 
 }
 
-main "$@"
+# 契约守卫：DEBNAS_MODULE_ACTION=status|plan 时只加载函数供只读探测，不执行 main（docs/ARCHITECTURE.md §4.5）
+if [[ "${DEBNAS_MODULE_ACTION:-run}" == "run" ]]; then main "$@"; fi

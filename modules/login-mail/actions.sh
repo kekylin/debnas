@@ -8,27 +8,18 @@ enable_login_mail() {
     return 1
   fi
 
-  EMAIL_FILE="/etc/exim4/notify_email"
-  if [[ ! -f "$EMAIL_FILE" ]]; then
-    log_error "未检测到 $EMAIL_FILE，请先通过「设置发送邮件账户」模块完成配置。"
-    return 1
-  fi
-
-  read -r notify_email < "$EMAIL_FILE" || {
-    log_error "无法读取通知邮箱地址，请检查 $EMAIL_FILE 权限及内容。"
-    return 1
-  }
-
-  if [[ -z "$notify_email" ]]; then
-    log_error "通知邮箱地址为空，请先通过「设置发送邮件账户」模块完成配置。"
+  local notify_email=""
+  if ! notify_email=$(notify_email_get); then
+    log_error "未配置通知邮箱（$(notify_email_file) 不存在或为空），请先通过「设置发送邮件账户」模块完成配置。"
     return 1
   fi
 
   log_info "通知邮箱地址：$notify_email"
 
-  NOTIFY_SCRIPT="/etc/pam.d/login-notify.sh"
-  NOTIFY_SCRIPT_TMP=$(create_temp_file "notify-script" ".sh")
-  cat > "$NOTIFY_SCRIPT_TMP" << 'EOF'
+  # 脚本放在 DebNAS 自有目录（旧版位于 /etc/pam.d/login-notify.sh，由 migration.sh 迁移）
+  NOTIFY_SCRIPT="$DEBNAS_LOGIN_NOTIFY_SCRIPT"
+  local script_content=""
+  IFS= read -r -d '' script_content << 'EOF' || true
 #!/bin/bash
 # PAM 登录会话开启时发送邮件通知（UTF-8，带地理位置与处置指引）
 
@@ -38,12 +29,14 @@ export LANG="en_US.UTF-8"
 # 安全 IFS（不使用 set -e 避免邮件发送失败时脚本退出）
 IFS=$'\n\t'
 
-# 读取收件人（作为通知接收方，同时用于 From 头显示）
-NOTIFY_EMAIL_FILE="/etc/exim4/notify_email"
+# 读取收件人（新位置优先，旧位置兼容回退；路径由 DebNAS 生成脚本时填入）
 NOTIFY_TO=""
-if [[ -f "$NOTIFY_EMAIL_FILE" ]]; then
-  read -r NOTIFY_TO < "$NOTIFY_EMAIL_FILE" || true
-fi
+for NOTIFY_EMAIL_FILE in "__DEBNAS_NOTIFY_EMAIL_FILE__" "__DEBNAS_LEGACY_NOTIFY_EMAIL_FILE__"; do
+  if [[ -f "$NOTIFY_EMAIL_FILE" ]]; then
+    read -r NOTIFY_TO < "$NOTIFY_EMAIL_FILE" || true
+    break
+  fi
+done
 if [[ -z "$NOTIFY_TO" ]]; then
   # 未配置收件人则放弃发送
   exit 0
@@ -145,39 +138,68 @@ send_login_notify </dev/null >/dev/null 2>&1 &
 exit 0
 EOF
 
-  if [[ ! -f "$NOTIFY_SCRIPT" ]] || ! cmp -s "$NOTIFY_SCRIPT_TMP" "$NOTIFY_SCRIPT"; then
-    mv "$NOTIFY_SCRIPT_TMP" "$NOTIFY_SCRIPT"
-    chmod 755 "$NOTIFY_SCRIPT"
-    chown root:root "$NOTIFY_SCRIPT"
-    log_info "登录通知脚本已更新。"
-  else
-    rm -f "$NOTIFY_SCRIPT_TMP"
-  fi
+  script_content="${script_content%$'\n'}"
+  script_content="${script_content//__DEBNAS_NOTIFY_EMAIL_FILE__/${DEBNAS_NOTIFY_EMAIL_FILE}}"
+  script_content="${script_content//__DEBNAS_LEGACY_NOTIFY_EMAIL_FILE__/${DEBNAS_LEGACY_NOTIFY_EMAIL_FILE}}"
 
-  PAM_FILE="/etc/pam.d/common-session"
-  if ! grep -Fxq "session optional pam_exec.so debug /bin/bash $NOTIFY_SCRIPT" "$PAM_FILE" 2>/dev/null; then
-    echo "session optional pam_exec.so debug /bin/bash $NOTIFY_SCRIPT" >> "$PAM_FILE"
-    log_success "登录通知已启用"
-    module_mark_action
-  else
-    log_info "登录通知已配置，无需重复操作"
+  # 目录 755 root，脚本 750 root（pam_exec 以 root 身份通过 /bin/bash 调用）
+  local script_dir rc=0
+  script_dir=$(dirname -- "$NOTIFY_SCRIPT")
+  if ! mkdir -p -- "$script_dir"; then
+    log_error "创建目录失败：${script_dir}"
+    return 1
+  fi
+  chmod 755 -- "$script_dir" 2>/dev/null || true
+  chown root:root -- "$script_dir" 2>/dev/null || true
+  write_file_if_changed "$NOTIFY_SCRIPT" "$script_content" 750 1 || rc=$?
+  case "$rc" in
+    0) log_info "登录通知脚本已更新：${NOTIFY_SCRIPT}" ;;
+    2) log_error "写入登录通知脚本失败：${NOTIFY_SCRIPT}"; return 1 ;;
+  esac
+  chmod 750 -- "$NOTIFY_SCRIPT" 2>/dev/null || true
+  chown root:root -- "$NOTIFY_SCRIPT" 2>/dev/null || true
+
+  # PAM 行：旧路径（/etc/pam.d/login-notify.sh）的行原位替换为新路径，保证只有一条
+  PAM_FILE="$DEBNAS_PAM_SESSION_FILE"
+  rc=0
+  login_notify_pam_sync "$NOTIFY_SCRIPT" "$PAM_FILE" || rc=$?
+  case "$rc" in
+    0)
+      log_success "登录通知已启用"
+      module_mark_action
+      ;;
+    1) log_info "登录通知已配置，无需重复操作" ;;
+    *) log_error "更新 ${PAM_FILE} 失败"; return 1 ;;
+  esac
+
+  # 旧位置脚本已不再被 PAM 引用：移入集中备份后删除
+  if [[ -f "$DEBNAS_LEGACY_LOGIN_NOTIFY_SCRIPT" ]] \
+    && ! login_notify_pam_references "$DEBNAS_LEGACY_LOGIN_NOTIFY_SCRIPT" "$PAM_FILE"; then
+    debnas_backup_file "$DEBNAS_LEGACY_LOGIN_NOTIFY_SCRIPT" >/dev/null 2>&1 || true
+    rm -f -- "$DEBNAS_LEGACY_LOGIN_NOTIFY_SCRIPT" 2>/dev/null || true
   fi
 }
 
 disable_login_mail() {
-  NOTIFY_SCRIPT="/etc/pam.d/login-notify.sh"
-  PAM_FILE="/etc/pam.d/common-session"
+  PAM_FILE="$DEBNAS_PAM_SESSION_FILE"
+  local rc=0
 
-  if grep -Fxq "session optional pam_exec.so debug /bin/bash $NOTIFY_SCRIPT" "$PAM_FILE" 2>/dev/null; then
-    sed -i "/session optional pam_exec.so debug \/bin\/bash \/etc\/pam.d\/login-notify.sh/d" "$PAM_FILE"
-    log_success "登录通知已移除"
-    module_mark_action
-  else
-    log_info "登录通知未配置"
-  fi
+  # 新旧两种路径的 pam_exec 行一并移除
+  login_notify_pam_sync "" "$PAM_FILE" || rc=$?
+  case "$rc" in
+    0)
+      log_success "登录通知已移除"
+      module_mark_action
+      ;;
+    1) log_info "登录通知未配置" ;;
+    *) log_error "更新 ${PAM_FILE} 失败，保留登录通知脚本"; return 1 ;;
+  esac
 
-  if [ -f "$NOTIFY_SCRIPT" ]; then
-    rm -f "$NOTIFY_SCRIPT"
-    log_info "已删除登录通知脚本 $NOTIFY_SCRIPT。"
-  fi
+  local script
+  for script in "$DEBNAS_LOGIN_NOTIFY_SCRIPT" "$DEBNAS_LEGACY_LOGIN_NOTIFY_SCRIPT"; do
+    if [[ -n "$script" && -f "$script" ]]; then
+      rm -f -- "$script"
+      log_info "已删除登录通知脚本 ${script}。"
+    fi
+  done
 }

@@ -59,12 +59,19 @@ wget https://github.com/kekylin/debnas/raw/main/install.sh && bash install.sh
 - 下载时两个地址互为备用，任一失效自动切换
 - 安装完成后自动启动交互菜单
 
+#### 完整性校验与信任边界
+- 安装脚本默认下载固定发布版本的代码包（GitHub/Gitee Release 附件），先用脚本内嵌的发布公钥通过 `gpgv` 验证 `SHA256SUMS` 的 GPG 签名并核对签名者指纹，再用 `sha256sum` 校验代码包；任一步失败即中止安装。`debnas update` 使用已安装目录中的公钥做同样的校验。
+- 签名保护的是之后下载的代码包；`install.sh` 本身经 HTTPS 从代码托管平台获取，它的可信度取决于下载渠道。上面的命令指向**发布 tag 下的 `install.sh`**（而不是随时变动的 main 分支），发布后内容不再变化。谨慎的用户可从 Release 页面下载 `install.sh`、`SHA256SUMS`、`SHA256SUMS.asc`，用 `gpg --verify SHA256SUMS.asc SHA256SUMS && sha256sum -c --ignore-missing SHA256SUMS` 自行核验后再执行。
+- 安装指定版本：`bash install.sh --tag <版本号>`。
+- 开发调试可按分支安装（**不做任何校验**）：`bash install.sh --unsigned --branch dev`，脚本会醒目警告并要求手动输入 `yes`，非交互环境下拒绝执行。
+
 ### 4、登陆使用
 > **脚本执行完毕后，SSH 控制台将输出 Cockpit 与 Docker 管理平台地址，请按提示登录访问。**
 
 Cockpit  
 一个基于 Web 的服务器图形界面，在 Web 浏览器中查看您的服务器并使用鼠标执行系统任务。启动容器、管理存储、配置网络和检查日志都很容易。基本上，您可以将 Cockpit 视为图形“桌面界面”。
 Cockpit是直接使用系统账户进行登陆使用，出于安全考虑，Cockpit默认禁用root账户登陆，建议使用您安装系统时创建的第一个用户登陆。
+Samba / NFS 共享在 Cockpit 左侧菜单「共享管理」中配置（DebNAS 自研插件）。如更习惯 45Drives 的 File Sharing 插件，可在 `/etc/debnas/debnas.conf` 设置 `file_sharing_ui=45drives` 后重新运行「安装共享管理面板」，两者共用同一份配置，切换后共享不丢失。
   ```shell
 https://localhost:9090
   ```

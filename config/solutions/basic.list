@@ -3,6 +3,7 @@ sources
 basic-tools
 cockpit
 cockpit-net
+cockpit-shares
 docker-ce
 docker-mirror
 service-query

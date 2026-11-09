@@ -1,11 +1,13 @@
 # ==================== 常量定义 ====================
 REQUIRED_CMDS=(firewall-cmd ipset wget gzip awk sed grep sort head crontab sipcalc)
 
-DATA_DIR="/var/lib/firewalld-ipthreat"
-LOG_DIR="/var/log"
+# 数据与日志位于 DebNAS 自有目录（旧版 /var/lib/firewalld-ipthreat、/var/log/firewalld-ipthreat.log
+# 由 lib/system/migration.sh 的 migration_layout_threat_ips 迁移）
+DATA_DIR="${DEBNAS_VAR_DIR:-/var/lib/debnas}/threat-ips"
+LOG_DIR="${DEBNAS_LOG_ROOT:-/var/log/debnas}"
 CONFIG_FILE="${DATA_DIR}/ipthreat.conf"
 CRON_SCRIPT_PATH="${DATA_DIR}/firewalld_ipthreat.sh"
-LOG_FILE="/var/log/firewalld-ipthreat.log"
+LOG_FILE="${LOG_DIR}/threat-ips.log"
 
 DEFAULT_THREAT_LEVEL=50
 DEFAULT_UPDATE_CRON="0 0 * * *"

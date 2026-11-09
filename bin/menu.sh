@@ -13,6 +13,11 @@ _DEBNAS_ROOT="$(cd "$(dirname "${_DEBNAS_SCRIPT}")/.." && pwd)"
 # 加载统一库
 source "${_DEBNAS_ROOT}/lib/bootstrap.sh"
 
+# 方案 A 仪表盘（仅交互菜单使用，不放进 bootstrap，避免拖慢每个模块的加载）
+source "${_DEBNAS_ROOT}/lib/ui/textwidth.sh"
+source "${_DEBNAS_ROOT}/lib/ui/sysinfo.sh"
+source "${_DEBNAS_ROOT}/lib/ui/dashboard.sh"
+
 # ==================== 部署方案 ====================
 
 declare -a SOLUTION_NAMES=()
@@ -272,7 +277,13 @@ setup_environment() {
 # ==================== 主入口 ====================
 
 main() {
-  ui_screen_clear    # 仅此一次清屏
+  # 界面选择：TTY + UTF-8 时使用方案 A 双栏仪表盘；非 TTY 或 DEBNAS_UI=classic 回退旧版菜单
+  local use_dashboard=0
+  if ui_dashboard_available; then
+    use_dashboard=1
+  else
+    ui_screen_clear    # 旧版界面：仅此一次清屏（仪表盘使用备用屏幕，不清主屏）
+  fi
 
   setup_environment
 
@@ -284,6 +295,15 @@ main() {
   # 发现模块并使用自动发现模式
   discover_modules 2>/dev/null
   load_solutions
+
+  if [[ $use_dashboard -eq 1 ]]; then
+    if ui_dashboard_main "${_MENU_TMP_DIR:-}"; then
+      log_info "用户退出 DebNAS"
+      exit 0
+    fi
+    # 仪表盘初始化失败（如无可用模块）：回退旧版菜单
+    ui_screen_clear
+  fi
   main_menu_loop
 }
 
