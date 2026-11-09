@@ -134,7 +134,7 @@ module_status() {
   static=$(_cnet_blockers)
   if [[ -n "$static" ]]; then
     local first="${static%%$'\n'*}"
-    echo "warn|存在 NetworkManager 无法安全接管的网络配置（${first}），执行会拒绝切换"
+    echo "warn|存在 NetworkManager 无法安全接管的网络配置（${first}），执行时将跳过切换（网络保持原样）"
     return 0
   fi
   local ifaces
