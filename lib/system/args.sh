@@ -9,7 +9,7 @@ IFS=$'\n\t'
 # ==================== 常量定义 ====================
 
 # DebNAS 版本（日期版本号）
-readonly DEBNAS_VERSION="${DEBNAS_VERSION:-v2026.06}"
+readonly DEBNAS_VERSION="${DEBNAS_VERSION:-v2026.11.0}"
 
 # ==================== 公共接口 ====================
 

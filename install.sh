@@ -41,7 +41,7 @@ readonly BRANCH_GLOBAL_BASE="https://github.com/kekylin/debnas/archive/refs/head
 readonly BRANCH_CN_BASE="https://gitee.com/kekylin/debnas/repository/archive"
 
 # 默认安装的稳定版本（由 tools/release.sh 更新，勿手改；为空表示尚未发布签名版本）
-readonly DEBNAS_RELEASE_TAG=""
+readonly DEBNAS_RELEASE_TAG="v2026.11.0"
 
 # >>> DEBNAS-RELEASE-PUBKEY-BEGIN（由 tools/release.sh --embed-key 生成，勿手改）
 # 发布公钥主密钥指纹（大写十六进制无空格）与 ASCII armor 公钥（与 keys/debnas-release.asc 一致）
