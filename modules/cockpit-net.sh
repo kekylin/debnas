@@ -188,7 +188,7 @@ module_plan() {
   static=$(_cnet_blockers)
   if [[ -n "$static" ]]; then
     while IFS= read -r line; do
-      [[ -n "$line" ]] && echo "risk|${line%%: *}|${line#*: }：执行将拒绝切换并报错退出，不做任何变更"
+      [[ -n "$line" ]] && echo "risk|${line%%: *}|${line#*: }：执行时将告警并跳过切换（不报错、不做任何变更）"
     done <<< "$static"
     echo "info|处理方法|ifupdown 静态/特殊配置：先用 nmcli 或 Cockpit 建立等价连接并移除原配置；netplan/networkd 管理的系统（如云镜像）请勿切换，Cockpit 可直接只读查看网络"
     return 0
@@ -241,29 +241,31 @@ main() {
     exit 0
   fi
 
-  # 由 netplan / systemd-networkd 管理网络的系统（如云镜像）：切换后 NM 与 networkd 争抢同一网卡，拒绝执行
+  # 由 netplan / systemd-networkd 管理网络的系统（如云镜像）：切换后 NM 与 networkd 争抢同一网卡，跳过
   local other_managers
   other_managers=$(_cnet_other_managers)
   if [[ -n "$other_managers" ]]; then
-    log_error "检测到本机网络由 netplan / systemd-networkd 管理，切换到 NetworkManager 会与其争抢网卡（双 DHCP、地址冲突甚至失联），已中止，未做任何变更："
+    # 本模块是可选项：不切换不影响任何功能，因此告警后跳过（返回成功），避免一键方案在此中断
+    log_warning "检测到本机网络由 netplan / systemd-networkd 管理，切换到 NetworkManager 会与其争抢网卡（双 DHCP、地址冲突甚至失联），已跳过，未做任何变更："
     while IFS= read -r line; do
-      log_error "  ${line}"
+      log_warning "  ${line}"
     done <<< "$other_managers"
     log_info "此类系统无需执行本模块；如确需由 NetworkManager 接管，请先把 netplan 的 renderer 改为 NetworkManager 并 netplan apply，确认网络正常后再运行。"
-    exit "${ERROR_GENERAL}"
+    exit 0
   fi
 
   # 检测 ifupdown（含 source / source-directory 引入的文件）中的静态/手动网卡配置（lo、DHCP、SLAAC 除外），
   # 以及网桥/绑定/VLAN/无线认证/钩子脚本等 NM 无法等价接管的指令；注释后 NM 只会按 DHCP 接管，导致远程失联，因此拒绝自动切换
   static_ifaces=$(_cnet_static_ifaces)
   if [[ -n "$static_ifaces" ]]; then
-    log_error "检测到 ifupdown 静态/手动网卡或网桥/绑定/VLAN/钩子等配置，自动切换到 NetworkManager 会丢失这些配置并导致失联，已中止："
+    # 同上：静态 IP 是 NAS 最常见的配置，告警后跳过（返回成功），不中断一键方案；网络保持原样
+    log_warning "检测到 ifupdown 静态/手动网卡或网桥/绑定/VLAN/钩子等配置，自动切换到 NetworkManager 会丢失这些配置并导致失联，已跳过，网络配置保持原样："
     while IFS= read -r line; do
-      log_error "  ${line}"
+      log_warning "  ${line}"
     done <<< "$static_ifaces"
     log_info "请先用 nmcli（如 nmcli con add type ethernet ifname <网卡> ipv4.method manual ipv4.addresses <IP/掩码> ipv4.gateway <网关> ipv4.dns <DNS>）"
     log_info "或在 Cockpit 中建立等价连接，再移除上述 ifupdown 配置后重新运行本模块。"
-    exit "${ERROR_GENERAL}"
+    exit 0
   fi
 
   # 注释 /etc/network/interfaces 中的内容，避免与 NetworkManager 冲突
