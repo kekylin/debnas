@@ -8,7 +8,7 @@ IFS=$'\n\t'
 
 # 获取项目根目录
 _DEBNAS_SCRIPT="$(readlink -f "${BASH_SOURCE[0]}")"
-_DEBNAS_ROOT="$(cd "$(dirname "${_DEBNAS_SCRIPT}")/.." && pwd)"
+_DEBNAS_ROOT="$(cd "${_DEBNAS_SCRIPT%/*}/.." && pwd)"  # readlink -f 输出绝对路径，参数展开取目录
 
 # 加载统一库
 source "${_DEBNAS_ROOT}/lib/bootstrap.sh"

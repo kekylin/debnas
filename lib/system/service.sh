@@ -170,38 +170,102 @@ sysctl_set() {
   fi
 }
 
+# sysctl 持久化目录（不设 readonly，允许测试覆盖）
+DEBNAS_SYSCTL_DIR="${DEBNAS_SYSCTL_DIR:-/etc/sysctl.d}"
+
 # 将 sysctl 参数持久化到配置文件
 # 参数：$1 - 参数名
 #       $2 - 参数值
 #       $3 - 配置文件名（可选，默认 debnas.conf）
 # 返回：0 成功，1 失败
+# 说明：读出现有内容 → 删除同名参数的旧行 → 追加 "名 = 值" → 经 write_file_if_changed 写入
+#       （原子替换、修改前集中备份并登记清单）；文件中已有完全相同的行时不改文件、不调用 sysctl_set
 sysctl_persist() {
   local param_name="${1:?sysctl_persist: 缺少参数名}"
   local param_value="${2:?sysctl_persist: 缺少参数值}"
   local conf_file="${3:-debnas.conf}"
-  local conf_path="/etc/sysctl.d/${conf_file}"
-
-  # 确保目录存在
-  mkdir -p /etc/sysctl.d
-
+  local conf_path="${DEBNAS_SYSCTL_DIR}/${conf_file}"
   local conf_line="${param_name} = ${param_value}"
+  local line rest new_content="" rc=0
 
-  # 幂等检查：配置文件中已存在相同配置
-  # 整行精确匹配（-x）：子串匹配会把 "vm.swappiness = 10" 误判为已包含 "vm.swappiness = 1"
-  if [[ -f "$conf_path" ]] && grep -qxF -- "$conf_line" "$conf_path" 2>/dev/null; then
-    log_info "sysctl 持久化配置已存在：${conf_path}"
-    return 0
-  fi
-
-  # 移除旧值（如果有不同值的同名参数）
   if [[ -f "$conf_path" ]]; then
-    sed -i "/^${param_name//./\\.}[[:space:]]*=/d" "$conf_path" 2>/dev/null || true
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      # 幂等检查：整行精确匹配（子串匹配会把 "vm.swappiness = 10" 误判为已包含 "vm.swappiness = 1"）
+      if [[ "$line" == "$conf_line" ]]; then
+        log_info "sysctl 持久化配置已存在：${conf_path}"
+        return 0
+      fi
+      # 移除同名参数的旧值（行首为参数名，其后可有空白，再接 =）
+      rest="${line#"$param_name"}"
+      if [[ "$line" == "$param_name"* && "$rest" =~ ^[[:space:]]*= ]]; then
+        continue
+      fi
+      new_content+="${line}"$'\n'
+    done < "$conf_path"
   fi
+  new_content+="$conf_line"
 
-  # 追加新值
-  echo "$conf_line" >> "$conf_path"
+  write_file_if_changed "$conf_path" "$new_content" "" 1 || rc=$?
+  if [[ "$rc" -eq 2 ]]; then
+    log_error "sysctl 参数持久化失败：${conf_path}"
+    return 1
+  fi
   log_info "sysctl 参数已持久化：${conf_path}"
 
   # 立即生效
   sysctl_set "$param_name" "$param_value"
+}
+
+# sshd 配置路径（不设 readonly，允许测试覆盖）
+DEBNAS_SSHD_CONFIG="${DEBNAS_SSHD_CONFIG:-/etc/ssh/sshd_config}"
+
+# 检测 sshd 实际监听端口（防火墙放行、fail2ban 封禁用：ssh 服务名只覆盖 22，自定义端口必须单独处理）
+# 参数：$1 - 可选 --no-session：不追加当前 SSH 会话端口
+# 输出：每行一个端口，升序去重
+# 返回：始终 0（只读，非 root 也可运行）
+# 说明：依次尝试 ① sshd -T（需 root，反映 Include/Match 合并后的生效值）
+#       ② sshd_config 与 sshd_config.d/*.conf 中的 Port 行 ③ 默认 22；
+#       另追加当前 SSH 会话所连的服务端端口（SSH_CONNECTION 第 4 字段），防止把自己锁在门外
+sshd_listen_ports() {
+  local with_session=1 key value cfg found=0 port
+  local -a ports=() cfgs=()
+  [[ "${1:-}" == "--no-session" ]] && with_session=0
+
+  if command -v sshd >/dev/null 2>&1; then
+    while IFS=$' \t' read -r key value _; do
+      [[ "$key" == "port" && "$value" =~ ^[0-9]{1,5}$ ]] && { ports[10#$value]=1; found=1; }
+    done < <(sshd -T 2>/dev/null || true)
+  fi
+  if (( found == 0 )); then
+    for cfg in "$DEBNAS_SSHD_CONFIG" "${DEBNAS_SSHD_CONFIG}.d"/*.conf; do
+      [[ -f "$cfg" && -r "$cfg" ]] && cfgs+=("$cfg")
+    done
+    for cfg in "${cfgs[@]+"${cfgs[@]}"}"; do
+      while IFS=$' \t' read -r key value _ || [[ -n "$key" ]]; do
+        [[ "${key,,}" == "port" && "$value" =~ ^[0-9]{1,5}$ ]] && { ports[10#$value]=1; found=1; }
+      done < "$cfg"
+    done
+  fi
+  # 未显式配置 Port 时 sshd 默认监听 22
+  (( found )) || ports[22]=1
+
+  if (( with_session )) && [[ -n "${SSH_CONNECTION:-}" ]]; then
+    port="${SSH_CONNECTION##* }"
+    [[ "$port" =~ ^[0-9]{1,5}$ ]] && ports[10#$port]=1
+  fi
+  # 稀疏下标数组按下标升序遍历，即数值升序去重
+  for port in "${!ports[@]}"; do
+    (( port > 0 )) && printf '%s\n' "$port"
+  done
+  return 0
+}
+
+# sshd 监听端口（逗号分隔，供 fail2ban port= 等使用）
+# 参数：同 sshd_listen_ports
+# 输出：如 "22,2222"
+sshd_listen_ports_csv() {
+  local IFS=','
+  local -a ports=()
+  mapfile -t ports < <(sshd_listen_ports "$@")
+  printf '%s\n' "${ports[*]}"
 }

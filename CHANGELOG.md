@@ -35,6 +35,7 @@
 - 安装/更新包改为**发布 tag + SHA256 + GPG 签名**校验：`install.sh` 与 `debnas update` 不再拉取 main 分支归档，改为下载 Release 附件 `debnas-<tag>.tar.gz` / `SHA256SUMS` / `SHA256SUMS.asc`，用 `gpgv` + 内嵌（install.sh）或已安装（`keys/debnas-release.asc`）的发布公钥验签并核对主密钥指纹，再 `sha256sum -c`；任一步失败中止并删除下载物。`update` 自动发现新版本时拒绝降级。按分支安装须显式 `--unsigned`（醒目警告 + 交互确认，非交互拒绝）。新增 `tools/release.sh`（`--embed-key` / `--bump` / 构建签名自检）。⚠️ 维护者尚未配置发布公钥前，默认安装/更新会报错，需先完成 docs/MAINTENANCE.md「发布流程」
 
 ### Fixed（2026-11-09 全面审查修复）
+- `bootstrap-core.sh` 把系统目录整体前置到 PATH，导致调用方/测试放在前面的命令被 `/usr/sbin` 同名命令抢先（bbr 单测因此读到真机拥塞算法，root 测试机上会真的改内核参数）；改为只追加缺失目录，cron 环境下 `/usr/sbin` 仍可用
 - cockpit-net：先检查 NetworkManager；检测到静态 IP 配置时拒绝执行并给出 nmcli 迁移提示，避免失联
 - mail-account：Exim smarthost 端口改为 `host::port`（原写法实际走 25 端口）；465 支持 smtps
 - sources：重复运行不再覆盖原始 .bak；sid/testing 不再生成不存在的套件
@@ -93,6 +94,14 @@
 - `write_file_if_changed` 新增第 4 参数 `quiet` 静默模式，内容未变更时抑制日志输出
 
 ### Changed
+- lib 代码质量第一阶段（2026-11-09，只改 lib/、bin/、install.sh、tools/，模块输出不变）：
+  - 收拢公共函数供模块统一调用：`keyring_install_verified` / `gpg_key_fingerprint_verify`（新增 `lib/system/keyring.sh`，合并 docker-ce / cockpit-45drives / tailscale 三份公钥下载与指纹校验，取最严格行为：恰好一把主密钥、拒绝私钥/吊销、超时+重试 1 次、同目录临时文件原子替换）、`sshd_listen_ports(_csv)`、`cron_state`、`config_get_bool`、`get_primary_user`（`get_first_regular_user` 保留为 deprecated 包装）、`config_get_url`、`pkg_is_installed`、`get_module_field_var`、`pinning_render` / `pinning_file_exists`
+  - `get_system_codename` / OS ID 优先读 `/etc/os-release`（逐行解析，不 source、不 fork），`lsb_release`（Debian 12 上为 Python，慢）仅作回退；路径可由 `DEBNAS_OS_RELEASE` 覆盖
+  - 发布校验逻辑单一来源：`lib/system/installer.sh` 的 DEBNAS-RELEASE-VERIFY 区块为唯一实现，install.sh 内副本由 `tools/release.sh --embed-key / --bump / --sync-verify` 同步生成，构建发布时检查 tag 内两份一致（新增 `tests/unit/lib/test-release-sync.bats`）；install.sh 仍单文件可运行
+  - `write_pinning_file` 改经 `write_file_if_changed` 写入并去掉时间戳（幂等、可备份、登记清单）；`sysctl_persist` 改为读出→计算→`write_file_if_changed` 写入（不再 `sed -i` / `>>`）
+  - 模块探测：只认行首的真正守卫行（注释中出现守卫文字的未改造模块不再被 source）；`module_status` 返回 `unknown|只读工具…` 的只读工具不再被执行记录改写为"已应用"
+  - module-runner preflight 的依赖检查改用 `ensure_module_deps`（与交互式模块共用）；dependency.sh 合并重复的缺失检测/安装/列表逻辑
+  - 性能：模块发现 ~210ms→~30ms（不再每模块 fork head/basename，不再扫描整个注册表）；`--probe status` ~290ms→~110ms；仪表盘单帧 ~60ms→~9ms（宽度/截断结果缓存、去掉每帧的子 shell 与 tr）、初始化 ~300ms→~75ms；state_get / manifest / write_file_if_changed 去掉 grep|cut、basename/dirname、date 等子进程
 - 文件布局收敛到 FHS 同名目录（2026-11-09）：威胁 IP 数据 `/var/lib/firewalld-ipthreat` → `/var/lib/debnas/threat-ips`、日志 `/var/log/firewalld-ipthreat.log` → `/var/log/debnas/threat-ips.log`；通知收件邮箱 `/etc/exim4/notify_email` → `/etc/debnas/notify_email`（640 root，统一由 `notify_email_get/notify_email_set` 读写，旧路径回退一个版本并改为符号链接）；登录通知脚本 `/etc/pam.d/login-notify.sh` → `/usr/local/libexec/debnas/login-notify.sh`（`common-session` 的 pam_exec 行原位替换，不留两条）。`migration_run_layout` 幂等迁移旧文件，每次 `debnas update` 均执行。新增集中备份：`write_file_if_changed` 修改已有文件前备份到 `/var/backups/debnas/<时间戳-pid>/<原路径>`（首次原件另存 `original/`，默认保留最近 20 次运行，`backup_enabled`/`backup_keep` 可配），sources 等模块的同目录 `.bak` 改为统一备份；新增文件清单 `/var/lib/debnas/manifest` 与 `manifest_list`（供 `debnas files`）
 - 运维报告按 PRD 0.22.33 更新：改版为 Apple 极简浅色样式，页眉仅保留报告周期，页脚使用数据覆盖/生成时间/上一期/下一期四栏
 - 运维报告按 0.22 结构重排：新增“本周概览”事件脉冲与重点跟进，安全与入侵研判合并为单张明细表，服务与应用状态改为统一服务清单，磁盘容量与 I/O 合并为周期明细表
@@ -171,6 +180,7 @@
 - ops-report 报告渲染重构：删除 report.sh 内 4 代历史渲染函数死代码（legacy/017/无后缀/v022，约 2000 行），统一渲染函数命名去除版本号后缀并合并 network_metrics 薄包装
 
 ### Deprecated
+- `get_first_regular_user` → `get_primary_user`；`check_pinning_status`（带日志）→ `pinning_file_exists`（2026-11-09，旧名保留为薄包装）
 - Phase 1 UI 基础层：`print_highlight()` 弃用（MAGENTA 已禁用，改用 `print_accent`）
 - Phase 1 UI 基础层：`print_separator()` 弃用（设计规范：用空行呼吸感替代分隔线）
 - Phase 1 UI 基础层：`print_submenu_title()` 弃用（Phase 2 由 `ui_header` + 面包屑替代）
@@ -179,6 +189,7 @@
 - Phase 2 菜单交互：`show_menu()` / `show_menu_with_border()` / `get_user_choice()` / `run_submenu()` 弃用（由 `ui_menu` 替代，旧函数保留向后兼容）
 
 ### Removed
+- 删除无调用方的库函数：`get_remaining_args`（args.sh）、`list_missing_dependencies`（dependency.sh）、`show_menu_with_border`（ui/menu.sh）、`show_all_pinning_status`（apt-pinning.sh）（2026-11-09）
 - 删除 sys-patches、hosts-sync 旧 cron 子模块及模块内定时设置菜单
 - 移除多语言（i18n）支持：删除 `lib/i18n/`、`--lang` 参数与 `lang` 配置项，界面固定为中文
 - 移除无引用的错误码常量（`ERROR_CONFIG`、`ERROR_PARAMETER`）及兼容别名（`GENERAL`/`DEPENDENCY`/`CONFIG`/`PERMISSION`/`PARAMETER`/`UNSUPPORTED_OS`）

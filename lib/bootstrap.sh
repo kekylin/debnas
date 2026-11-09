@@ -12,7 +12,12 @@ if [[ "${_DEBNAS_BOOTSTRAPPED:-0}" -eq 1 ]]; then
 fi
 
 # 获取项目根目录
-export DEBNAS_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if [[ "${BASH_SOURCE[0]}" == */* ]]; then
+  DEBNAS_ROOT="$(cd "${BASH_SOURCE[0]%/*}/.." && pwd)"
+else
+  DEBNAS_ROOT="$(cd .. && pwd)"
+fi
+export DEBNAS_ROOT
 _DEBNAS_ROOT="$DEBNAS_ROOT"  # 向后兼容旧代码
 
 # ==================== 早期标志解析 ====================

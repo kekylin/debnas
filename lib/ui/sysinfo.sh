@@ -150,7 +150,7 @@ ui_sysinfo_updates_start() {
   # （apt-get -s upgrade 在待更新包多时可能要十几秒）
   local cache="${DEBNAS_UPDATES_CACHE:-${DEBNAS_STATE_DIR:-/var/lib/debnas/state}/updates.cache}"
   local key="" ck="" cv=""
-  key=$(stat -c '%Y' /var/lib/apt/lists /var/lib/dpkg/status 2>/dev/null | tr '\n' ':') || key=""
+  key=$(stat -c '%Y' /var/lib/apt/lists /var/lib/dpkg/status 2>/dev/null) && key="${key//$'\n'/:}:" || key=""
   if [[ -n "$key" && -r "$cache" ]] && IFS=' ' read -r ck cv < "$cache" && [[ "$ck" == "$key" && "$cv" =~ ^[0-9]+$ ]]; then
     _SI_UPDATES="$cv"
     return 0

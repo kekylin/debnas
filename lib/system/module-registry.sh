@@ -69,8 +69,8 @@ _get_modules_dir() {
 # 返回：0 成功，1 失败
 _parse_single_file() {
   local file_path="$1"
-  local file_name
-  file_name=$(basename "$file_path" .sh)
+  local file_name="${file_path##*/}"
+  file_name="${file_name%.sh}"
   local module_name="${2:-$file_name}"
 
   # 默认值
@@ -92,14 +92,28 @@ _parse_single_file() {
   _MODULE_REGISTRY["${module_name}.since"]=""
   _MODULE_REGISTRY["${module_name}.interactive"]="false"
 
-  # 从文件头部提取元数据（只扫描前 30 行，避免性能问题）
+  # 从文件头部提取元数据（只扫描前 30 行，避免性能问题；mapfile 一次读入，不 fork head）
   local line key value
   local has_metadata=0
-  while IFS= read -r line; do
+  local -a head_lines=()
+  mapfile -n 30 -t head_lines 2>/dev/null < "$file_path" || true
+  for line in "${head_lines[@]+"${head_lines[@]}"}"; do
     # 跳过非注释行（元数据必须在文件头部注释中）
-    if [[ "$line" =~ ^#[[:space:]]*@([a-z_]+):[[:space:]]*(.*) ]]; then
-      key="${BASH_REMATCH[1]}"
-      value="${BASH_REMATCH[2]}"
+    # 格式 "#<空白>@key:<空白>value"，key 仅含 a-z 与 _；用参数展开解析
+    # （等价于 ^#[[:space:]]*@([a-z_]+):[[:space:]]*(.*)，省去逐行正则匹配）
+    key=""
+    if [[ "$line" == "#"*"@"*":"* ]]; then
+      value="${line#\#}"
+      value="${value#"${value%%[![:space:]]*}"}"
+      if [[ "$value" == "@"*":"* ]]; then
+        key="${value%%:*}"
+        key="${key#@}"
+        [[ -n "$key" && "$key" != *[!a-z_]* ]] || key=""
+      fi
+    fi
+    if [[ -n "$key" ]]; then
+      value="${value#*:}"
+      value="${value#"${value%%[![:space:]]*}"}"
       # 去除尾部空格
       value="${value%"${value##*[![:space:]]}"}"
 
@@ -149,11 +163,11 @@ _parse_single_file() {
       esac
       has_metadata=1
     fi
-    # 遇到第一个非注释、非空行时停止扫描
-    if [[ ! "$line" =~ ^[[:space:]]*# ]] && [[ -n "$line" ]]; then
+    # 遇到第一个非注释、非空行时停止扫描（去掉前导空白后不以 # 开头）
+    if [[ -n "$line" && "${line#"${line%%[![:space:]]*}"}" != "#"* ]]; then
       break
     fi
-  done < <(head -30 "$file_path")
+  done
 
   if [[ "$has_metadata" -eq 0 ]]; then
     log_warning "模块缺少元数据声明：${file_path}（使用默认值）"
@@ -167,9 +181,8 @@ _parse_single_file() {
 # 参数：$1 - 模块目录路径
 # 说明：目录式模块的入口文件为 module.sh
 _parse_directory_module() {
-  local dir_path="$1"
-  local dir_name
-  dir_name=$(basename "$dir_path")
+  local dir_path="${1%/}"
+  local dir_name="${dir_path##*/}"
   local entry_file="${dir_path}/module.sh"
 
   if [[ -f "$entry_file" ]]; then
@@ -204,30 +217,29 @@ discover_modules() {
   _DISCOVERED_MODULES=()
   _MODULES_DISCOVERED=1
 
-  # 扫描 .sh 文件（简单模块）
-  local entry
+  # 扫描 .sh 文件（简单模块）与目录式模块，按解析顺序记录模块名
+  # （原实现事后遍历整个注册表的全部键筛 *.module，模块数 × 字段数次比较）
+  local entry module_name
+  local -a parsed=()
   for entry in "${modules_dir}"/*.sh; do
     [[ -f "$entry" ]] || continue
+    _LAST_PARSED_MODULE=""
     _parse_single_file "$entry"
+    [[ -n "$_LAST_PARSED_MODULE" ]] && parsed+=("$_LAST_PARSED_MODULE")
   done
-
-  # 扫描目录式模块
   for entry in "${modules_dir}"/*/; do
     [[ -d "$entry" ]] || continue
+    _LAST_PARSED_MODULE=""
     _parse_directory_module "$entry"
+    [[ -n "$_LAST_PARSED_MODULE" ]] && parsed+=("$_LAST_PARSED_MODULE")
   done
 
-  # 构建已发现模块列表（去重）
+  # 构建已发现模块列表（去重；只保留注册表中仍存在的模块——@module 改名会清掉同名旧条目）
   local -A seen_modules=()
-  local key module_name
-  for key in "${!_MODULE_REGISTRY[@]}"; do
-    if [[ "$key" == *.module ]]; then
-      module_name="${_MODULE_REGISTRY[$key]}"
-      if [[ -z "${seen_modules[$module_name]:-}" ]]; then
-        seen_modules["$module_name"]=1
-        _DISCOVERED_MODULES+=("$module_name")
-      fi
-    fi
+  for module_name in "${parsed[@]+"${parsed[@]}"}"; do
+    [[ -z "${seen_modules[$module_name]:-}" && -n "${_MODULE_REGISTRY["${module_name}.module"]:-}" ]] || continue
+    seen_modules["$module_name"]=1
+    _DISCOVERED_MODULES+=("$module_name")
   done
 
   return 0
@@ -246,7 +258,9 @@ parse_module_metadata() {
 
   # 临时解析到局部数组
   local -A metadata=()
-  while IFS= read -r line; do
+  local line n=0
+  [[ -r "$file_path" ]] || return 0
+  while (( n++ < 30 )) && IFS= read -r line; do
     if [[ "$line" =~ ^#[[:space:]]*@([a-z_]+):[[:space:]]*(.*) ]]; then
       local key="${BASH_REMATCH[1]}"
       local value="${BASH_REMATCH[2]}"
@@ -256,7 +270,7 @@ parse_module_metadata() {
     if [[ ! "$line" =~ ^[[:space:]]*# ]] && [[ -n "$line" ]]; then
       break
     fi
-  done < <(head -30 "$file_path")
+  done < "$file_path"
 
   # 输出结果
   local k
@@ -356,6 +370,28 @@ get_module_field() {
     return 0
   fi
   return 1
+}
+
+# 读取模块元数据字段到变量（get_module_field 的无子 shell 版本，供热路径使用）
+# 说明：get_module_field 经 $(...) 调用时每次 fork 一个子 shell，且子 shell 中的
+#       惰性 discover_modules 结果不会保留；本函数在当前 shell 内完成
+# 参数：$1 - 接收结果的变量名
+#       $2 - 模块名
+#       $3 - 字段名
+#       $4 - 默认值（可选）
+# 返回：0 有值（或使用了非空默认值），1 无值（变量置空）
+get_module_field_var() {
+  local _gmfv_var="${1:?get_module_field_var: 缺少变量名}"
+  local _gmfv_module="${2:?get_module_field_var: 缺少模块名}"
+  local _gmfv_field="${3:?get_module_field_var: 缺少字段名}"
+  local _gmfv_value
+
+  if [[ "$_MODULES_DISCOVERED" -eq 0 ]]; then
+    discover_modules
+  fi
+  _gmfv_value="${_MODULE_REGISTRY["${_gmfv_module}.${_gmfv_field}"]:-${4:-}}"
+  printf -v "$_gmfv_var" '%s' "$_gmfv_value"
+  [[ -n "$_gmfv_value" ]]
 }
 
 # 解析模块依赖（拓扑排序）

@@ -288,16 +288,14 @@ cron_list() {
   echo "定时任务"
   echo "─────────────────────────────────────────────────"
 
+  local line module_name f1 f2 f3 f4 f5
   while IFS= read -r line; do
-    # 提取模块名（从标记中）
-    local module_name
-    module_name=$(echo "$line" | sed "s/.*${CRON_MARKER} *//")
-
+    # 提取模块名（最后一个标记之后的内容，去掉前导空格）
+    module_name="${line##*"${CRON_MARKER}"}"
+    module_name="${module_name#"${module_name%%[! ]*}"}"
     # 提取 cron 表达式（前 5 个字段）
-    local schedule
-    schedule=$(echo "$line" | awk '{print $1, $2, $3, $4, $5}')
-
-    printf "  %-30s %s\n" "$module_name" "$schedule"
+    IFS=$' \t' read -r f1 f2 f3 f4 f5 _ <<< "$line"
+    printf "  %-30s %s %s %s %s %s\n" "$module_name" "$f1" "$f2" "$f3" "$f4" "$f5"
   done <<< "$debnas_entries"
 
   echo "─────────────────────────────────────────────────"
@@ -317,6 +315,46 @@ cron_is_registered() {
   printf '%s\n' "$current_crontab" | _cron_has_marker "$marker"
 }
 
+# 当前进程能否读取 root crontab（DebNAS 定时任务都写在 root crontab）
+# 返回：0 能（root），1 不能（拆成函数便于测试覆盖）
+_cron_can_read_root() {
+  [[ "${EUID:-$(id -u)}" -eq 0 ]]
+}
+
+# 查询模块定时任务状态（只读，供 module_status / module_plan 使用，不报错不打日志）
+# 参数：$1 - 模块名
+#       $2 - 变体附加参数（可选，即 cron_register_variant 的第 3 个参数；省略时查该模块的任意条目）
+# 输出：on（已注册）/ off（未注册或系统无 crontab 命令）/ unknown（非 root 无法读取 root crontab）
+# 返回：始终 0
+cron_state() {
+  local module_name="${1:?cron_state: 缺少模块名}"
+  local variant="${2:-}" marker line suffix
+  if ! _cron_can_read_root; then
+    echo "unknown"
+    return 0
+  fi
+  if ! command -v crontab >/dev/null 2>&1; then
+    echo "off"
+    return 0
+  fi
+  marker="${CRON_MARKER} ${module_name}"
+  if [[ -n "$variant" ]]; then
+    suffix=" run ${module_name} ${variant} ${marker}"
+  else
+    suffix="${marker}"
+  fi
+  while IFS= read -r line; do
+    # 与 _cron_has_marker 相同：去掉行尾空白后按后缀精确匹配（避免 cockpit 误配 cockpit-ext）
+    line="${line%"${line##*[![:space:]]}"}"
+    if [[ "$line" == *"$suffix" ]]; then
+      echo "on"
+      return 0
+    fi
+  done < <(_get_current_crontab)
+  echo "off"
+  return 0
+}
+
 # 获取模块当前 cron 表达式
 # 参数：$1 - 模块名
 # 输出：cron 表达式；未注册时输出空
@@ -328,7 +366,9 @@ cron_get_schedule() {
   # 只取主调度条目（"run <模块> <标记>"），跳过带附加参数的变体条目
   line=$(_get_current_crontab | grep -F -- " run ${module_name} ${marker}" | head -1) || true
   [[ -n "$line" ]] || return 1
-  echo "$line" | awk '{print $1, $2, $3, $4, $5}'
+  local f1 f2 f3 f4 f5
+  IFS=$' \t' read -r f1 f2 f3 f4 f5 _ <<< "$line"
+  echo "${f1} ${f2} ${f3} ${f4} ${f5}"
 }
 
 # 将常见 cron 表达式转换为可读描述

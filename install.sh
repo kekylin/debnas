@@ -67,16 +67,13 @@ INSTALL_TAG=""
 INSTALL_BRANCH=""
 UNSIGNED_MODE=0
 
-# 发布 tag 名校验：只允许字母数字开头，后接字母数字 . _ -（不含 / 与空白，防 URL/路径注入）
+# 发布 tag / 分支名校验（实现见下方 DEBNAS-RELEASE-VERIFY 区块）
 is_valid_tag() {
-  [[ "${1:-}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]]
+  release_valid_tag "$@"
 }
 
-# 分支名校验：在 tag 规则基础上允许 /，但禁止 .. 与首尾 /
 is_valid_branch() {
-  local b="${1:-}"
-  [[ "$b" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$ ]] || return 1
-  [[ "$b" != *..* && "$b" != */ && "$b" != *//* ]]
+  release_valid_branch "$@"
 }
 
 parse_args() {
@@ -266,17 +263,52 @@ do_uninstall() {
 }
 
 # ==================== 完整性校验 ====================
-# ⚠️ dearmor_pubkey / verify_release 与 lib/system/installer.sh 中的
-#    installer_dearmor_key / installer_verify_release 逻辑必须保持同步
+# 下方区块是 lib/system/installer.sh 中同名区块的副本（单一来源在 lib），
+# 由 tools/release.sh --embed-key / --bump / --sync-verify 自动同步，勿在此手改；
+# tests/unit/lib/test-release-sync.bats 断言两份逐字一致。本脚本仍须单文件可运行。
 
-# 把 ASCII armor 公钥转换为 gpgv 可用的二进制 keyring
+# >>> DEBNAS-RELEASE-VERIFY-BEGIN（单一来源：lib/system/installer.sh；install.sh 中的同名区块由 tools/release.sh 同步生成，勿手改）
+# 发布产物校验：debnas update（lib）与自包含引导脚本 install.sh 共用这一份代码。
+# 只依赖 bash、awk、coreutils（base64/sha256sum）与 gpgv；错误经 _release_fail 输出。
+
+# 输出校验错误：已加载 lib 日志时用 log_error；install.sh 不加载 lib，按其 [FAIL] 格式写 stderr
+_release_fail() {
+  if declare -F log_error >/dev/null 2>&1; then
+    log_error "$1"
+  else
+    printf '[FAIL] %s\n' "$1" >&2
+  fi
+}
+
+# 发布 tag 名校验：只允许字母数字开头，后接字母数字 . _ -（不含 / 与空白，防 URL/路径注入）
+release_valid_tag() {
+  [[ "${1:-}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]]
+}
+
+# 分支名校验：在 tag 规则基础上允许 /，但禁止 .. 与首尾 /
+release_valid_branch() {
+  local b="${1:-}"
+  [[ "$b" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$ ]] || return 1
+  [[ "$b" != *..* && "$b" != */ && "$b" != *//* ]]
+}
+
+# 删除某个 tag 的三个下载物
+# 参数：$1 - 目录  $2 - tar 包文件名
+release_discard() {
+  local dir="${1:-}" name="${2:-}"
+  if [[ -n "$dir" && -n "$name" ]]; then
+    rm -f -- "${dir:?}/${name:?}" "${dir:?}/SHA256SUMS" "${dir:?}/SHA256SUMS.asc"
+  fi
+}
+
+# 把 ASCII armor 公钥（stdin）转换为 gpgv 可用的二进制 keyring
 # 纯 awk + coreutils base64 实现，不依赖 gpg 完整包（gpgv 不接受 armor 格式的 keyring）
-# 参数：$1 - armor 文本  $2 - 输出 keyring 文件
+# 参数：$1 - 输出 keyring 文件；stdin - armor 文本
 # 返回：0 成功；1 文本中没有恰好一个公钥块或解码失败
-dearmor_pubkey() {
-  local armor="$1" out="$2" body
+release_dearmor() {
+  local out="$1" body
   # mawk 不支持 {n} 区间，CRC24 行（= 加 4 个 base64 字符）逐字符匹配
-  body=$(printf '%s\n' "$armor" | awk '
+  body=$(awk '
     /^-----BEGIN PGP PUBLIC KEY BLOCK-----/ { inblk = 1; n++; next }
     /^-----END PGP PUBLIC KEY BLOCK-----/   { inblk = 0; next }
     !inblk { next }
@@ -296,44 +328,41 @@ dearmor_pubkey() {
 #       $3 - 二进制 keyring 文件
 #       $4 - 期望的签名者主密钥指纹（40/64 位十六进制，大小写/空格不敏感）
 # 返回：0 通过；1 失败（失败时删除三个下载物）
-verify_release() {
-  local dir="${1:-}" name="${2:-}"
-  if _verify_release_steps "$@"; then
+release_verify() {
+  if _release_verify_steps "$@"; then
     return 0
   fi
-  if [[ -n "$dir" && -n "$name" ]]; then
-    rm -f -- "${dir:?}/${name:?}" "${dir:?}/SHA256SUMS" "${dir:?}/SHA256SUMS.asc"
-  fi
+  release_discard "${1:-}" "${2:-}"
   return 1
 }
 
-_verify_release_steps() {
+_release_verify_steps() {
   local dir="${1:-}" name="${2:-}" keyring="${3:-}" expected="${4:-}"
 
   expected="${expected//[[:space:]]/}"
   expected="${expected^^}"
   if [[ ! "$expected" =~ ^([0-9A-F]{40}|[0-9A-F]{64})$ ]]; then
-    _fail "发布公钥指纹无效或未配置"
+    _release_fail "发布公钥指纹无效或未配置"
     return 1
   fi
   if [[ ! "$name" =~ ^debnas-[A-Za-z0-9][A-Za-z0-9._-]*\.tar\.gz$ ]]; then
-    _fail "非法的产物文件名: ${name}"
+    _release_fail "非法的产物文件名: ${name}"
     return 1
   fi
   local f
   for f in "$name" SHA256SUMS SHA256SUMS.asc; do
     if [[ -z "$dir" || ! -s "${dir}/${f}" ]]; then
-      _fail "缺少发布产物: ${f}"
+      _release_fail "缺少发布产物: ${f}"
       return 1
     fi
   done
   if [[ ! -s "$keyring" ]]; then
-    _fail "发布公钥 keyring 不存在: ${keyring}"
+    _release_fail "发布公钥 keyring 不存在: ${keyring}"
     return 1
   fi
   for f in gpgv sha256sum; do
     if ! command -v "$f" >/dev/null 2>&1; then
-      _fail "缺少命令 ${f}（apt install gpgv coreutils）"
+      _release_fail "缺少命令 ${f}（apt install gpgv coreutils）"
       return 1
     fi
   done
@@ -356,34 +385,46 @@ _verify_release_steps() {
       last = b
     } END { if (!found && last != "") print "MISMATCH:" last }' "${work}/status")
   if [[ "$rc" -ne 0 || -n "$bad" || -z "$signer" ]]; then
-    _fail "SHA256SUMS 签名验证失败（gpgv 退出码 ${rc}${bad:+，${bad}}）"
+    _release_fail "SHA256SUMS 签名验证失败（gpgv 退出码 ${rc}${bad:+，${bad}}）"
     sed 's/^/    gpgv: /' "${work}/stderr" >&2 || true
     rm -rf -- "${work:?}"
     return 1
   fi
   if [[ "$signer" == MISMATCH:* ]]; then
-    _fail "签名者指纹不匹配：期望 ${expected}，实际 ${signer#MISMATCH:}"
+    _release_fail "签名者指纹不匹配：期望 ${expected}，实际 ${signer#MISMATCH:}"
     rm -rf -- "${work:?}"
     return 1
   fi
 
   # 第 2 步：只取 tar 包对应的那一行做 sha256sum -c（防止清单里其他条目干扰/路径穿越）
-  local entries hash
-  entries=$(awk -v n="$name" 'NF == 2 && ($2 == n || $2 == "*" n) { print $1 }' "${dir}/SHA256SUMS")
-  if [[ ! "$entries" =~ ^[0-9a-f]{64}$ ]]; then
-    _fail "SHA256SUMS 中没有（或有多条）${name} 的校验和"
+  local hash
+  hash=$(awk -v n="$name" 'NF == 2 && ($2 == n || $2 == "*" n) { print $1 }' "${dir}/SHA256SUMS")
+  if [[ ! "$hash" =~ ^[0-9a-f]{64}$ ]]; then
+    _release_fail "SHA256SUMS 中没有（或有多条）${name} 的校验和"
     rm -rf -- "${work:?}"
     return 1
   fi
-  hash="$entries"
   printf '%s  %s\n' "$hash" "$name" > "${work}/check"
   if ! (cd "$dir" && sha256sum --check --strict --status "${work}/check"); then
-    _fail "SHA256 校验失败：${name} 与已签名的校验和不一致，文件可能被篡改"
+    _release_fail "SHA256 校验失败：${name} 与已签名的校验和不一致，文件可能被篡改"
     rm -rf -- "${work:?}"
     return 1
   fi
   rm -rf -- "${work:?}"
   return 0
+}
+# <<< DEBNAS-RELEASE-VERIFY-END
+
+# 把 ASCII armor 公钥文本转换为 gpgv 可用的二进制 keyring
+# 参数：$1 - armor 文本  $2 - 输出 keyring 文件
+# 返回：0 成功；1 文本中没有恰好一个公钥块或解码失败
+dearmor_pubkey() {
+  printf '%s\n' "${1:-}" | release_dearmor "$2"
+}
+
+# 验证发布产物（参数与返回值见 release_verify；失败时删除三个下载物）
+verify_release() {
+  release_verify "$@"
 }
 
 # ==================== 安装流程 ====================
@@ -463,7 +504,7 @@ download_release() {
     if [[ "$ok" -eq 1 ]]; then
       return 0
     fi
-    rm -f -- "${outdir:?}/${name:?}" "${outdir:?}/SHA256SUMS" "${outdir:?}/SHA256SUMS.asc"
+    release_discard "$outdir" "$name"
     _warn "源 ${base%%/releases/*} 下载失败，切换备用源"
   done
   return 1

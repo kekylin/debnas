@@ -118,6 +118,16 @@ apt_install_packages() {
   apt_install_safe "${to_install[@]}"
 }
 
+# 软件包是否已安装（只认 dpkg 状态 installed；已卸载仅剩配置文件的不算）
+# 说明：只读查询，不打日志，供 module_status / module_plan 使用（替代各模块自写的 _xx_pkg_installed）
+# 参数：$1 - 包名（单个）
+# 返回：0 已安装，1 未安装或查询失败
+pkg_is_installed() {
+  local pkg="${1:?pkg_is_installed: 缺少包名}" status=""
+  status=$(dpkg-query -W -f='${db:Status-Status}' "$pkg" 2>/dev/null) || return 1
+  [[ "$status" == "installed" ]]
+}
+
 # 安全安装软件包（锁等待 + 错误提示）
 # 参数：$@ - 包名列表
 # 返回：0 成功，1 失败

@@ -51,20 +51,22 @@ _ensure_state_dir() {
 state_get() {
   local module_name="${1:?state_get: 缺少模块名}"
   local key="${2:?state_get: 缺少键名}"
-  local state_file
-  state_file=$(_state_file "$module_name")
+  local state_file="${DEBNAS_STATE_DIR}/${module_name}.state" line
 
-  if [[ ! -f "$state_file" ]]; then
+  if [[ ! -f "$state_file" || ! -r "$state_file" ]]; then
     return 1
   fi
 
-  local value
-  # 末尾 || true：键不存在时 grep 返回 1，pipefail + set -e 下会让直接调用方退出
-  value=$(grep "^${key}=" "$state_file" 2>/dev/null | head -1 | cut -d= -f2-) || true
-  if [[ -n "$value" ]]; then
-    echo "$value"
-    return 0
-  fi
+  # 纯 bash 逐行匹配，取第一条 key=（状态文件只有几行；原 grep|head|cut 每次 3 个进程，
+  # 仪表盘合并执行记录时每个模块都会调用）
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" == "${key}="* ]]; then
+      line="${line#*=}"
+      [[ -n "$line" ]] || return 1
+      echo "$line"
+      return 0
+    fi
+  done < "$state_file"
   return 1
 }
 
@@ -221,8 +223,9 @@ state_list_installed() {
   local state_file module_name last_result
   for state_file in "${DEBNAS_STATE_DIR}"/*.state; do
     [[ -f "$state_file" ]] || continue
-    module_name=$(basename "$state_file" .state)
-    last_result=$(grep "^last_result=" "$state_file" 2>/dev/null | cut -d= -f2-) || true
+    module_name="${state_file##*/}"
+    module_name="${module_name%.state}"
+    last_result=$(state_get "$module_name" "last_result") || last_result=""
     if [[ "$last_result" == "$STATE_SUCCESS" ]]; then
       echo "$module_name"
     fi

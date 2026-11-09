@@ -500,18 +500,6 @@ show_menu() {
   print_menu_item "0" "返回" "true"
 }
 
-# @deprecated Phase 2: 显示带分隔线的菜单（由 ui_menu 替代）
-# 参数：$1 - 菜单标题，$2... - 菜单选项数组
-# 返回值：无
-show_menu_with_border() {
-  local title="$1"
-  shift
-  local -a options=("$@")
-  
-  print_submenu_title "$title"
-  show_menu "" "${options[@]}"
-}
-
 # @deprecated Phase 2: 获取用户选择（由 ui_menu 替代）
 # 参数：$1 - 最大选项数
 # 返回值：用户选择的编号（0表示返回）

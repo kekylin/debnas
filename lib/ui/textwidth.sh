@@ -17,6 +17,20 @@ IFS=$'\n\t'
 declare -g _UI_W=0
 declare -g _UI_FIT=""
 
+# 结果缓存：仪表盘每帧对同一批名称/说明重复计算宽度与截断（纯函数，结果只取决于输入与 locale）
+# 键带 UTF-8 语义标记（ui_utf8_ensure/restore 切换 locale 后旧结果不会误用）；超过上限整体清空
+declare -g -A _UI_W_CACHE=() _UI_FIT_CACHE=()
+declare -g _UI_CACHE_N=0
+_UI_CACHE_MAX=4096
+
+# 缓存计数，超过上限清空两个缓存
+_ui_cache_bump() {
+  if (( ++_UI_CACHE_N > _UI_CACHE_MAX )); then
+    _UI_W_CACHE=() _UI_FIT_CACHE=()
+    _UI_CACHE_N=1
+  fi
+}
+
 # 判断码点是否为双宽字符
 # 参数：$1 — 十进制码点
 # 返回：0 双宽，1 否
@@ -98,16 +112,29 @@ ui_str_width() {
   # 快速路径：剔除可打印 ASCII 后为空 → 宽度即字符数
   local rest="${s//[ -~]/}"
   if [[ -n "$rest" ]]; then
+    local u='中' key
+    key="${#u}|${s}"
+    if [[ -n "${_UI_W_CACHE[$key]+x}" ]]; then
+      _UI_W=${_UI_W_CACHE[$key]}
+      return 0
+    fi
     local i n=${#rest} c cp
     for (( i = 0; i < n; i++ )); do
       c="${rest:i:1}"
       printf -v cp '%d' "'$c" 2>/dev/null || continue
-      if _ui_cp_is_zero "$cp"; then
+      # 常见区间内联判断（省去函数调用）：Latin-1 与制表符/几何图形占 1 列、常用汉字占 2 列
+      if (( cp < 0x0300 || (cp >= 0x2500 && cp <= 0x25FC) )); then
+        continue
+      elif (( cp >= 0x4E00 && cp <= 0x9FFF )); then
+        (( w++ )) || true
+      elif _ui_cp_is_zero "$cp"; then
         (( w-- )) || true
       elif _ui_cp_is_wide "$cp"; then
         (( w++ )) || true
       fi
     done
+    _ui_cache_bump
+    _UI_W_CACHE[$key]=$w
   fi
   _UI_W=$w
 }
@@ -121,6 +148,12 @@ ui_str_fit() {
   local s="${1:-}" width="${2:-0}" align="${3:-left}"
   if (( width <= 0 )); then
     _UI_FIT=""
+    return 0
+  fi
+  local u='中' key
+  key="${#u}|${width}|${align}|${s}"
+  if [[ -n "${_UI_FIT_CACHE[$key]+x}" ]]; then
+    _UI_FIT="${_UI_FIT_CACHE[$key]}"
     return 0
   fi
   ui_str_width "$s"
@@ -154,6 +187,8 @@ ui_str_fit() {
     fi
   fi
   _UI_FIT="$s"
+  _ui_cache_bump
+  _UI_FIT_CACHE[$key]="$s"
 }
 
 # 按显示宽度折行（用于详情说明）

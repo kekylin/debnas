@@ -109,6 +109,40 @@ config_read() {
   return 1
 }
 
+# 读取全局配置（debnas.conf）中的布尔开关（统一各模块的开关读法）
+# 参数：$1 - 键名（如 add_user_to_sudo、cockpit_behind_proxy、login_mail_geoip、file_sharing_nfs）
+#       $2 - 默认值：1/0（也接受 true/false、yes/no、on/off）；传空串表示"无默认"（三态开关）
+# 返回：0 开（1/true/yes/on，不分大小写）
+#       1 关（0/false/no/off）
+#       2 未设置或值无法识别，且默认值为空/无法识别（三态开关据此走"自动"分支）
+# 说明：只返回状态码、不输出、不打日志，可直接用于 if（rc=2 在 if 中按"关"处理，三态开关请显式取 $?）
+config_get_bool() {
+  local key="${1:?config_get_bool: 缺少键名}" default="${2-}" value="" v
+  value=$(config_read "global" "$key" "" 2>/dev/null) || value=""
+  for v in "$value" "$default"; do
+    case "${v,,}" in
+      1 | true | yes | on) return 0 ;;
+      0 | false | no | off) return 1 ;;
+    esac
+  done
+  return 2
+}
+
+# 读取全局配置中可替换为镜像的 http(s) 地址（留空=默认地址）
+# 参数：$1 - 键名（如 repo_45drives_url、repo_tailscale_key_url），$2 - 默认地址
+# 输出：去掉末尾 / 的地址
+# 返回：0 合法；1 不是不含空白的单个 http(s):// 地址（已记录错误）
+config_get_url() {
+  local key="${1:?config_get_url: 缺少键名}" default_url="${2:-}" url=""
+  url=$(config_read "global" "$key" "" 2>/dev/null) || url=""
+  [[ -n "$url" ]] || url="$default_url"
+  if [[ ! "$url" =~ ^https?://[^[:space:]]+$ ]]; then
+    log_error "debnas.conf 中 ${key} 不是合法的 http(s) 地址：${url}"
+    return 1
+  fi
+  echo "${url%/}"
+}
+
 # 写入配置值
 # 参数：$1 - 模块名（"global" 表示全局配置）
 #       $2 - 键名

@@ -1,7 +1,8 @@
 #!/bin/bash
 # 功能：DebNAS 安装/更新公共逻辑
 # 说明：提供下载、签名校验、解压、文件部署的统一函数，供 cmd_update 等复用
-# 注意：install.sh 引导脚本因自包含需求不使用此库（校验逻辑在其中有一份同步副本）
+# 注意：install.sh 引导脚本因自包含需求不加载本库；其中的发布校验区块
+#       （DEBNAS-RELEASE-VERIFY）由 tools/release.sh 从本文件同步生成
 
 set -euo pipefail
 IFS=$'\n\t'
@@ -27,15 +28,13 @@ readonly DEBNAS_RELEASE_FPR_REL="keys/debnas-release.fpr"
 
 # ==================== 公共函数 ====================
 
-# 发布 tag / 分支名校验（与 install.sh 的 is_valid_tag / is_valid_branch 一致）
+# 发布 tag / 分支名校验（实现在下方 DEBNAS-RELEASE-VERIFY 区块，与 install.sh 共用）
 installer_valid_tag() {
-  [[ "${1:-}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]]
+  release_valid_tag "$@"
 }
 
 installer_valid_branch() {
-  local b="${1:-}"
-  [[ "$b" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$ ]] || return 1
-  [[ "$b" != *..* && "$b" != */ && "$b" != *//* ]]
+  release_valid_branch "$@"
 }
 
 # 根据 region 获取发布产物下载 URL（主源）
@@ -71,15 +70,6 @@ installer_fetch() {
   return 1
 }
 
-# 删除某个 tag 的三个下载物
-# 参数：$1 - 目录  $2 - tar 包文件名
-_installer_discard_release() {
-  local dir="$1" name="$2"
-  if [[ -n "$dir" && -n "$name" ]]; then
-    rm -f -- "${dir:?}/${name:?}" "${dir:?}/SHA256SUMS" "${dir:?}/SHA256SUMS.asc"
-  fi
-}
-
 # 下载某个 tag 的三个发布产物（同一来源取齐，否则整体切换备用源）
 # 参数：$1 - region (cn|global)  $2 - tag  $3 - 输出目录
 # 返回：0 成功，1 失败
@@ -111,7 +101,7 @@ installer_download_release() {
     if [[ "$ok" -eq 1 ]]; then
       return 0
     fi
-    _installer_discard_release "$outdir" "$name"
+    release_discard "$outdir" "$name"
     log_warning "源 ${base%%/releases/*} 下载失败，尝试备用源..."
   done
   log_error "所有下载源均失败"
@@ -176,15 +166,50 @@ installer_marker_write() {
 }
 
 # ==================== 签名校验 ====================
-# ⚠️ installer_dearmor_key / installer_verify_release 与 install.sh 中的
-#    dearmor_pubkey / verify_release 逻辑必须保持同步
+# 校验逻辑的唯一实现在下方 DEBNAS-RELEASE-VERIFY 区块；install.sh 内的副本由
+# tools/release.sh（--embed-key / --bump / --sync-verify）从这里同步生成，
+# tests/unit/lib/test-release-sync.bats 断言两份区块逐字一致。
 
-# 把 ASCII armor 公钥文件转换为 gpgv 可用的二进制 keyring（不依赖 gpg 完整包）
-# 参数：$1 - armor 公钥文件  $2 - 输出 keyring 文件
-# 返回：0 成功；1 文件中没有恰好一个公钥块或解码失败
-installer_dearmor_key() {
-  local armor_file="$1" out="$2" body
-  [[ -f "$armor_file" ]] || return 1
+# >>> DEBNAS-RELEASE-VERIFY-BEGIN（单一来源：lib/system/installer.sh；install.sh 中的同名区块由 tools/release.sh 同步生成，勿手改）
+# 发布产物校验：debnas update（lib）与自包含引导脚本 install.sh 共用这一份代码。
+# 只依赖 bash、awk、coreutils（base64/sha256sum）与 gpgv；错误经 _release_fail 输出。
+
+# 输出校验错误：已加载 lib 日志时用 log_error；install.sh 不加载 lib，按其 [FAIL] 格式写 stderr
+_release_fail() {
+  if declare -F log_error >/dev/null 2>&1; then
+    log_error "$1"
+  else
+    printf '[FAIL] %s\n' "$1" >&2
+  fi
+}
+
+# 发布 tag 名校验：只允许字母数字开头，后接字母数字 . _ -（不含 / 与空白，防 URL/路径注入）
+release_valid_tag() {
+  [[ "${1:-}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]]
+}
+
+# 分支名校验：在 tag 规则基础上允许 /，但禁止 .. 与首尾 /
+release_valid_branch() {
+  local b="${1:-}"
+  [[ "$b" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$ ]] || return 1
+  [[ "$b" != *..* && "$b" != */ && "$b" != *//* ]]
+}
+
+# 删除某个 tag 的三个下载物
+# 参数：$1 - 目录  $2 - tar 包文件名
+release_discard() {
+  local dir="${1:-}" name="${2:-}"
+  if [[ -n "$dir" && -n "$name" ]]; then
+    rm -f -- "${dir:?}/${name:?}" "${dir:?}/SHA256SUMS" "${dir:?}/SHA256SUMS.asc"
+  fi
+}
+
+# 把 ASCII armor 公钥（stdin）转换为 gpgv 可用的二进制 keyring
+# 纯 awk + coreutils base64 实现，不依赖 gpg 完整包（gpgv 不接受 armor 格式的 keyring）
+# 参数：$1 - 输出 keyring 文件；stdin - armor 文本
+# 返回：0 成功；1 文本中没有恰好一个公钥块或解码失败
+release_dearmor() {
+  local out="$1" body
   # mawk 不支持 {n} 区间，CRC24 行（= 加 4 个 base64 字符）逐字符匹配
   body=$(awk '
     /^-----BEGIN PGP PUBLIC KEY BLOCK-----/ { inblk = 1; n++; next }
@@ -194,26 +219,10 @@ installer_dearmor_key() {
     /^=[A-Za-z0-9+\/][A-Za-z0-9+\/][A-Za-z0-9+\/][A-Za-z0-9+\/]$/ { next }
     /:/ { next }
     NF { print }
-    END { if (n != 1) exit 1 }' "$armor_file") || return 1
+    END { if (n != 1) exit 1 }') || return 1
   [[ -n "$body" ]] || return 1
   printf '%s\n' "$body" | base64 -d > "$out" 2>/dev/null || return 1
   [[ -s "$out" ]]
-}
-
-# 从安装目录加载发布公钥（已安装的可信副本，不从网络获取）
-# 参数：$1 - 安装目录  $2 - 输出 keyring 文件
-# 输出：主密钥指纹；返回：0 成功，1 公钥/指纹缺失或无效
-installer_load_release_key() {
-  local install_dir="$1" out="$2" fpr=""
-  if [[ -f "${install_dir}/${DEBNAS_RELEASE_FPR_REL}" ]]; then
-    fpr=$(tr -d '[:space:]' < "${install_dir}/${DEBNAS_RELEASE_FPR_REL}") || fpr=""
-  fi
-  fpr="${fpr^^}"
-  if [[ ! "$fpr" =~ ^([0-9A-F]{40}|[0-9A-F]{64})$ ]]; then
-    return 1
-  fi
-  installer_dearmor_key "${install_dir}/${DEBNAS_RELEASE_KEY_REL}" "$out" || return 1
-  echo "$fpr"
 }
 
 # 验证发布产物：先 gpgv 验签 SHA256SUMS 并核对签名者指纹，再 sha256sum -c 校验 tar 包
@@ -222,41 +231,41 @@ installer_load_release_key() {
 #       $3 - 二进制 keyring 文件
 #       $4 - 期望的签名者主密钥指纹（40/64 位十六进制，大小写/空格不敏感）
 # 返回：0 通过；1 失败（失败时删除三个下载物）
-installer_verify_release() {
-  if _installer_verify_steps "$@"; then
+release_verify() {
+  if _release_verify_steps "$@"; then
     return 0
   fi
-  _installer_discard_release "${1:-}" "${2:-}"
+  release_discard "${1:-}" "${2:-}"
   return 1
 }
 
-_installer_verify_steps() {
+_release_verify_steps() {
   local dir="${1:-}" name="${2:-}" keyring="${3:-}" expected="${4:-}"
 
   expected="${expected//[[:space:]]/}"
   expected="${expected^^}"
   if [[ ! "$expected" =~ ^([0-9A-F]{40}|[0-9A-F]{64})$ ]]; then
-    log_error "发布公钥指纹无效或未配置"
+    _release_fail "发布公钥指纹无效或未配置"
     return 1
   fi
   if [[ ! "$name" =~ ^debnas-[A-Za-z0-9][A-Za-z0-9._-]*\.tar\.gz$ ]]; then
-    log_error "非法的产物文件名: ${name}"
+    _release_fail "非法的产物文件名: ${name}"
     return 1
   fi
   local f
   for f in "$name" SHA256SUMS SHA256SUMS.asc; do
     if [[ -z "$dir" || ! -s "${dir}/${f}" ]]; then
-      log_error "缺少发布产物: ${f}"
+      _release_fail "缺少发布产物: ${f}"
       return 1
     fi
   done
   if [[ ! -s "$keyring" ]]; then
-    log_error "发布公钥 keyring 不存在: ${keyring}"
+    _release_fail "发布公钥 keyring 不存在: ${keyring}"
     return 1
   fi
   for f in gpgv sha256sum; do
     if ! command -v "$f" >/dev/null 2>&1; then
-      log_error "缺少命令 ${f}（apt install gpgv coreutils）"
+      _release_fail "缺少命令 ${f}（apt install gpgv coreutils）"
       return 1
     fi
   done
@@ -279,13 +288,13 @@ _installer_verify_steps() {
       last = b
     } END { if (!found && last != "") print "MISMATCH:" last }' "${work}/status")
   if [[ "$rc" -ne 0 || -n "$bad" || -z "$signer" ]]; then
-    log_error "SHA256SUMS 签名验证失败（gpgv 退出码 ${rc}${bad:+，${bad}}）"
+    _release_fail "SHA256SUMS 签名验证失败（gpgv 退出码 ${rc}${bad:+，${bad}}）"
     sed 's/^/    gpgv: /' "${work}/stderr" >&2 || true
     rm -rf -- "${work:?}"
     return 1
   fi
   if [[ "$signer" == MISMATCH:* ]]; then
-    log_error "签名者指纹不匹配：期望 ${expected}，实际 ${signer#MISMATCH:}"
+    _release_fail "签名者指纹不匹配：期望 ${expected}，实际 ${signer#MISMATCH:}"
     rm -rf -- "${work:?}"
     return 1
   fi
@@ -294,18 +303,49 @@ _installer_verify_steps() {
   local hash
   hash=$(awk -v n="$name" 'NF == 2 && ($2 == n || $2 == "*" n) { print $1 }' "${dir}/SHA256SUMS")
   if [[ ! "$hash" =~ ^[0-9a-f]{64}$ ]]; then
-    log_error "SHA256SUMS 中没有（或有多条）${name} 的校验和"
+    _release_fail "SHA256SUMS 中没有（或有多条）${name} 的校验和"
     rm -rf -- "${work:?}"
     return 1
   fi
   printf '%s  %s\n' "$hash" "$name" > "${work}/check"
   if ! (cd "$dir" && sha256sum --check --strict --status "${work}/check"); then
-    log_error "SHA256 校验失败：${name} 与已签名的校验和不一致，文件可能被篡改"
+    _release_fail "SHA256 校验失败：${name} 与已签名的校验和不一致，文件可能被篡改"
     rm -rf -- "${work:?}"
     return 1
   fi
   rm -rf -- "${work:?}"
   return 0
+}
+# <<< DEBNAS-RELEASE-VERIFY-END
+
+# 把 ASCII armor 公钥文件转换为 gpgv 可用的二进制 keyring（不依赖 gpg 完整包）
+# 参数：$1 - armor 公钥文件  $2 - 输出 keyring 文件
+# 返回：0 成功；1 文件中没有恰好一个公钥块或解码失败
+installer_dearmor_key() {
+  local armor_file="$1" out="$2"
+  [[ -f "$armor_file" ]] || return 1
+  release_dearmor "$out" < "$armor_file"
+}
+
+# 从安装目录加载发布公钥（已安装的可信副本，不从网络获取）
+# 参数：$1 - 安装目录  $2 - 输出 keyring 文件
+# 输出：主密钥指纹；返回：0 成功，1 公钥/指纹缺失或无效
+installer_load_release_key() {
+  local install_dir="$1" out="$2" fpr=""
+  if [[ -f "${install_dir}/${DEBNAS_RELEASE_FPR_REL}" ]]; then
+    fpr=$(tr -d '[:space:]' < "${install_dir}/${DEBNAS_RELEASE_FPR_REL}") || fpr=""
+  fi
+  fpr="${fpr^^}"
+  if [[ ! "$fpr" =~ ^([0-9A-F]{40}|[0-9A-F]{64})$ ]]; then
+    return 1
+  fi
+  installer_dearmor_key "${install_dir}/${DEBNAS_RELEASE_KEY_REL}" "$out" || return 1
+  echo "$fpr"
+}
+
+# 验证发布产物（参数与返回值见 release_verify）
+installer_verify_release() {
+  release_verify "$@"
 }
 
 # 解压仓库压缩包

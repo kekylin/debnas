@@ -121,35 +121,87 @@ declare -gA cmd_to_level=(
   ["virsh"]="$DEP_LEVEL_SERVICE"
 )
 
+# ==================== 内部函数 ====================
+
+# 内部函数的输出（避免命令替换产生子 shell）
+declare -g _DEP_LEVEL=""
+declare -g -a _DEP_MISSING=() _DEP_FAILED=()
+
+# 计算命令的依赖级别，写入全局 _DEP_LEVEL（不经命令替换，循环中不 fork 子 shell）
+# 参数：$1 - 命令名
+_dep_level_of() {
+  local cmd="$1"
+  if [[ -v "cmd_to_level[$cmd]" ]]; then
+    _DEP_LEVEL="${cmd_to_level[$cmd]}"
+  elif [[ -v "cmd_to_pkg[$cmd]" && -z "${cmd_to_pkg[$cmd]}" ]]; then
+    # 映射表中包名为空 = 系统自带命令
+    _DEP_LEVEL="$DEP_LEVEL_SYSTEM"
+  else
+    # 保守默认：未知命令视为工具依赖
+    _DEP_LEVEL="$DEP_LEVEL_TOOL"
+  fi
+}
+
+# 筛出不存在的命令，写入全局数组 _DEP_MISSING
+# 参数：命令列表
+_dep_filter_missing() {
+  local cmd
+  _DEP_MISSING=()
+  for cmd in "$@"; do
+    command -v "$cmd" &>/dev/null || _DEP_MISSING+=("$cmd")
+  done
+}
+
+# 逐行列出缺失命令及其软件包（"  - cmd （软件包: pkg）"）
+# 参数：命令列表
+_dep_print_missing() {
+  local cmd pkg_name
+  for cmd in "$@"; do
+    pkg_name="${cmd_to_pkg[$cmd]:-}"
+    printf "  - %s" "$cmd"
+    if [[ -n "$pkg_name" ]]; then
+      printf " （软件包: %s）" "$pkg_name"
+    fi
+    printf "\n"
+  done
+}
+
+# 逐个 apt install 命令对应的软件包（调用方已完成 apt update），失败的命令写入全局数组 _DEP_FAILED
+# 参数：命令列表（无包映射的命令告警后跳过）
+_dep_install_cmds() {
+  local cmd pkg_name
+  _DEP_FAILED=()
+  for cmd in "$@"; do
+    pkg_name="${cmd_to_pkg[$cmd]:-}"
+    if [[ -z "$pkg_name" ]]; then
+      log_warning "无法确定 ${cmd} 的软件包名"
+      continue
+    fi
+    if DEBIAN_FRONTEND=noninteractive apt install -y -qq "$pkg_name" 2>/dev/null; then
+      log_success "${cmd} 就绪"
+    else
+      log_error "${cmd} 安装失败"
+      _DEP_FAILED+=("$cmd")
+    fi
+  done
+}
+
 # ==================== 公共接口 ====================
 
 # 获取命令的依赖级别
 # 参数：$1 - 命令名
-# 输出：system / tool / service / unknown
+# 输出：system / tool / service
 get_dependency_level() {
   local cmd="${1:?get_dependency_level: 缺少命令名}"
-  if [[ -v "cmd_to_level[$cmd]" ]]; then
-    echo "${cmd_to_level[$cmd]}"
-  else
-    # 未显式分级的命令：检查映射表
-    if [[ -v "cmd_to_pkg[$cmd]" ]]; then
-      local pkg="${cmd_to_pkg[$cmd]}"
-      if [[ -z "$pkg" ]]; then
-        echo "$DEP_LEVEL_SYSTEM"
-      else
-        # 保守默认：未知命令视为工具依赖
-        echo "$DEP_LEVEL_TOOL"
-      fi
-    else
-      echo "$DEP_LEVEL_TOOL"
-    fi
-  fi
+  _dep_level_of "$cmd"
+  echo "$_DEP_LEVEL"
 }
 
 # 检查依赖命令是否存在（兼容旧接口，不区分级别）
 # 参数：命令列表
 # 返回：0 全部存在，1 有缺失
 check_dependencies() {
+  local cmd
   for cmd in "$@"; do
     command -v "$cmd" &>/dev/null || return 1
   done
@@ -161,16 +213,10 @@ check_dependencies() {
 # 参数：命令列表
 # 返回：0 全部存在，1 有缺失（已记录 fatal 日志）
 check_system_deps() {
-  local -a missing=()
-  for cmd in "$@"; do
-    if ! command -v "$cmd" &>/dev/null; then
-      missing+=("$cmd")
-    fi
-  done
-
-  if [[ ${#missing[@]} -gt 0 ]]; then
-    log_fatal_return "系统基础命令缺失：${missing[*]}"
-    log_fatal_return "这些命令应由 Debian 最小化安装提供，系统可能已损坏"
+  _dep_filter_missing "$@"
+  if [[ ${#_DEP_MISSING[@]} -gt 0 ]]; then
+    log_fatal_return "系统基础命令缺失：${_DEP_MISSING[*]}" || true
+    log_fatal_return "这些命令应由 Debian 最小化安装提供，系统可能已损坏" || true
     return 1
   fi
   return 0
@@ -181,16 +227,11 @@ check_system_deps() {
 # 参数：命令列表
 # 返回：0 全部就绪，1 部分安装失败（不阻断，模块自行处理）
 check_and_install_tool_deps() {
-  local -a missing=()
-  for cmd in "$@"; do
-    if ! command -v "$cmd" &>/dev/null; then
-      missing+=("$cmd")
-    fi
-  done
-
-  if [[ ${#missing[@]} -eq 0 ]]; then
+  _dep_filter_missing "$@"
+  if [[ ${#_DEP_MISSING[@]} -eq 0 ]]; then
     return 0
   fi
+  local -a missing=("${_DEP_MISSING[@]}")
 
   log_info "安装工具依赖：${missing[*]}"
 
@@ -206,27 +247,9 @@ check_and_install_tool_deps() {
     return 1
   fi
 
-  local -a still_missing=()
-  for cmd in "${missing[@]}"; do
-    local pkg_name=""
-    if [[ -v "cmd_to_pkg[$cmd]" ]]; then
-      pkg_name="${cmd_to_pkg[$cmd]}"
-    fi
-    if [[ -z "$pkg_name" ]]; then
-      # 无包映射的系统命令，不应出现在这里
-      log_warning "无法确定 ${cmd} 的软件包名"
-      continue
-    fi
-    if DEBIAN_FRONTEND=noninteractive apt install -y -qq "$pkg_name" 2>/dev/null; then
-      log_success "${cmd} 就绪"
-    else
-      log_error "${cmd} 安装失败"
-      still_missing+=("$cmd")
-    fi
-  done
-
-  if [[ ${#still_missing[@]} -gt 0 ]]; then
-    log_warning "以下工具安装失败：${still_missing[*]}，模块将自行处理"
+  _dep_install_cmds "${missing[@]}"
+  if [[ ${#_DEP_FAILED[@]} -gt 0 ]]; then
+    log_warning "以下工具安装失败：${_DEP_FAILED[*]}，模块将自行处理"
     return 1
   fi
   return 0
@@ -238,42 +261,22 @@ check_and_install_tool_deps() {
 # 参数：命令列表
 # 返回：0 全部存在，1 有缺失（已记录提示）
 check_service_deps() {
-  local -a missing=()
-  for cmd in "$@"; do
-    if ! command -v "$cmd" &>/dev/null; then
-      missing+=("$cmd")
-    fi
-  done
-
-  if [[ ${#missing[@]} -eq 0 ]]; then
+  _dep_filter_missing "$@"
+  if [[ ${#_DEP_MISSING[@]} -eq 0 ]]; then
     return 0
   fi
 
   log_error "以下服务级依赖未安装："
-  for cmd in "${missing[@]}"; do
-    local pkg_name=""
-    if [[ -v "cmd_to_pkg[$cmd]" ]]; then
-      pkg_name="${cmd_to_pkg[$cmd]}"
-    fi
-    printf "  - %s" "$cmd"
-    if [[ -n "$pkg_name" ]]; then
-      printf " （软件包: %s）" "$pkg_name"
-    fi
-    printf "\n"
-  done
+  _dep_print_missing "${_DEP_MISSING[@]}"
   log_error "服务级依赖不会自动安装。请先运行对应的模块（如 firewall、docker-ce 等）"
   return 1
 }
 
-# 检查主软件源是否已配置
+# 检查主软件源是否已配置（sources.list 中有 deb 行，或 debian.sources 中有 Types: deb）
 has_valid_main_apt_source() {
-  if grep -E '^[[:space:]]*deb[[:space:]]+' /etc/apt/sources.list 2>/dev/null | grep -vqE '^[[:space:]]*#'; then
-    return 0
-  fi
-  if [ -f /etc/apt/sources.list.d/debian.sources ]; then
-    if grep -E '^[[:space:]]*Types:[[:space:]]*deb' /etc/apt/sources.list.d/debian.sources 2>/dev/null | grep -vqE '^[[:space:]]*#'; then
-      return 0
-    fi
+  grep -qE '^[[:space:]]*deb[[:space:]]+' /etc/apt/sources.list 2>/dev/null && return 0
+  if [[ -f /etc/apt/sources.list.d/debian.sources ]]; then
+    grep -qE '^[[:space:]]*Types:[[:space:]]*deb' /etc/apt/sources.list.d/debian.sources 2>/dev/null && return 0
   fi
   return 1
 }
@@ -287,10 +290,10 @@ check_dependencies_by_level() {
   local -a tool_cmds=()
   local -a service_cmds=()
 
+  local cmd
   for cmd in "$@"; do
-    local level
-    level=$(get_dependency_level "$cmd")
-    case "$level" in
+    _dep_level_of "$cmd"
+    case "$_DEP_LEVEL" in
       "$DEP_LEVEL_SYSTEM")  system_cmds+=("$cmd") ;;
       "$DEP_LEVEL_TOOL")    tool_cmds+=("$cmd") ;;
       "$DEP_LEVEL_SERVICE") service_cmds+=("$cmd") ;;
@@ -369,13 +372,8 @@ ensure_module_deps() {
 # 参数：命令列表
 # 返回：0 全部就绪，1 有缺失
 install_missing_dependencies() {
-  local missing_cmds=()
-  for cmd in "$@"; do
-    if ! command -v "$cmd" &>/dev/null; then
-      missing_cmds+=("$cmd")
-    fi
-  done
-  if [[ ${#missing_cmds[@]} -eq 0 ]]; then
+  _dep_filter_missing "$@"
+  if [[ ${#_DEP_MISSING[@]} -eq 0 ]]; then
     return 0
   fi
 
@@ -383,23 +381,17 @@ install_missing_dependencies() {
   local -a tool_cmds=()
   local -a service_cmds=()
   local -a system_cmds=()
+  local cmd
 
-  for cmd in "${missing_cmds[@]}"; do
-    local level
-    level=$(get_dependency_level "$cmd")
-    case "$level" in
+  for cmd in "${_DEP_MISSING[@]}"; do
+    _dep_level_of "$cmd"
+    case "$_DEP_LEVEL" in
       "$DEP_LEVEL_SYSTEM")
         system_cmds+=("$cmd")
         ;;
       "$DEP_LEVEL_TOOL")
         # 只处理有包映射的命令
-        local pkg_name=""
-        if [[ -v "cmd_to_pkg[$cmd]" ]]; then
-          pkg_name="${cmd_to_pkg[$cmd]}"
-        fi
-        if [[ -n "$pkg_name" ]]; then
-          tool_cmds+=("$cmd")
-        fi
+        [[ -n "${cmd_to_pkg[$cmd]:-}" ]] && tool_cmds+=("$cmd")
         ;;
       "$DEP_LEVEL_SERVICE")
         service_cmds+=("$cmd")
@@ -410,7 +402,7 @@ install_missing_dependencies() {
   # Tier 0 系统命令缺失 → 致命
   if [[ ${#system_cmds[@]} -gt 0 ]]; then
     log_warning "发现缺失的依赖命令：${system_cmds[*]}"
-    log_fatal_return "系统基础命令缺失：${system_cmds[*]}，系统可能已损坏"
+    log_fatal_return "系统基础命令缺失：${system_cmds[*]}，系统可能已损坏" || true
     return 1
   fi
 
@@ -418,17 +410,7 @@ install_missing_dependencies() {
   if [[ ${#service_cmds[@]} -gt 0 ]]; then
     log_warning "发现缺失的依赖命令：${service_cmds[*]}"
     log_error "以下服务级依赖未安装，请先运行对应模块："
-    for cmd in "${service_cmds[@]}"; do
-      local pkg_name=""
-      if [[ -v "cmd_to_pkg[$cmd]" ]]; then
-        pkg_name="${cmd_to_pkg[$cmd]}"
-      fi
-      printf "  - %s" "$cmd"
-      if [[ -n "$pkg_name" ]]; then
-        printf " （软件包: %s）" "$pkg_name"
-      fi
-      printf "\n"
-    done
+    _dep_print_missing "${service_cmds[@]}"
     return 1
   fi
 
@@ -449,23 +431,9 @@ install_missing_dependencies() {
     return 1
   fi
 
-  local install_failed=0
-  for cmd in "${tool_cmds[@]}"; do
-    local pkg_name=""
-    if [[ -v "cmd_to_pkg[$cmd]" ]]; then
-      pkg_name="${cmd_to_pkg[$cmd]}"
-    fi
-    if [[ -n "$pkg_name" ]]; then
-      if DEBIAN_FRONTEND=noninteractive apt install -y -qq "$pkg_name" 2>/dev/null; then
-        log_success "${cmd} 就绪"
-      else
-        log_error "${cmd} 安装失败"
-        install_failed=1
-      fi
-    fi
-  done
   # 旧实现返回最后一条 log 的状态（恒为 0），安装失败也报"就绪"
-  return "$install_failed"
+  _dep_install_cmds "${tool_cmds[@]}"
+  [[ ${#_DEP_FAILED[@]} -eq 0 ]]
 }
 
 # 确保命令可用（检测 + 自动安装一体化，兼容旧接口）
@@ -489,9 +457,8 @@ ensure_command() {
   fi
 
   # Tier 2 服务依赖不自动安装
-  local level
-  level=$(get_dependency_level "$cmd")
-  if [[ "$level" == "$DEP_LEVEL_SERVICE" ]]; then
+  _dep_level_of "$cmd"
+  if [[ "$_DEP_LEVEL" == "$DEP_LEVEL_SERVICE" ]]; then
     log_error "${cmd} 是服务级依赖，不会自动安装。请先运行对应模块"
     return 1
   fi
@@ -502,57 +469,4 @@ ensure_command() {
 
   apt_update_safe || log_warning "APT 索引更新失败，使用现有缓存继续安装"
   DEBIAN_FRONTEND=noninteractive apt install -y -qq "$pkg" 2>/dev/null
-}
-
-# 列出缺失依赖并给出手动安装建议
-# 参数：命令列表
-list_missing_dependencies() {
-  local missing_cmds=()
-  for cmd in "$@"; do
-    if ! command -v "$cmd" &>/dev/null; then
-      missing_cmds+=("$cmd")
-    fi
-  done
-  if [[ ${#missing_cmds[@]} -eq 0 ]]; then
-    log_info "所有依赖命令均已安装"
-    return 0
-  fi
-  log_warning "以下依赖命令缺失："
-  for cmd in "${missing_cmds[@]}"; do
-    local level
-    level=$(get_dependency_level "$cmd")
-    local level_label=""
-    case "$level" in
-      "$DEP_LEVEL_SYSTEM")  level_label="[系统] 系统可能已损坏" ;;
-      "$DEP_LEVEL_SERVICE") level_label="[服务] 请先运行对应模块" ;;
-      *)                    level_label="[工具] 可自动安装" ;;
-    esac
-    echo "  - ${cmd} ${level_label}"
-  done
-
-  if ! has_valid_main_apt_source; then
-    log_error "未检测到有效主软件源，请先配置软件源后再安装依赖。"
-    return 1
-  fi
-
-  # 只对工具依赖给出 apt install 建议
-  local has_installable=false
-  for cmd in "${missing_cmds[@]}"; do
-    local pkg_name=""
-    if [[ -v "cmd_to_pkg[$cmd]" ]]; then
-      pkg_name="${cmd_to_pkg[$cmd]}"
-    fi
-    if [[ -n "$pkg_name" ]]; then
-      local level
-      level=$(get_dependency_level "$cmd")
-      if [[ "$level" == "$DEP_LEVEL_TOOL" ]]; then
-        echo "apt install $pkg_name  # $cmd"
-        has_installable=true
-      fi
-    fi
-  done
-
-  if ! $has_installable; then
-    log_info "缺失的依赖无需通过 apt 安装（可能是系统命令或服务级依赖）"
-  fi
 }

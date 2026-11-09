@@ -8,53 +8,68 @@ IFS=$'\n\t'
 
 # ==================== 底层 OS 信息获取函数 ====================
 
+# os-release 路径（不设 readonly，允许测试覆盖；与 lib/ui/sysinfo.sh 共用同名变量）
+DEBNAS_OS_RELEASE="${DEBNAS_OS_RELEASE:-/etc/os-release}"
+
+# 读取 os-release 中的单个字段
+# 说明：逐行解析 KEY=VALUE 并去掉成对引号，不 source 文件，不污染调用方变量，也不 fork 外部命令；
+#       未显式指定 DEBNAS_OS_RELEASE 且 /etc/os-release 不可读时回退 /usr/lib/os-release（os-release(5)）
+# 参数：$1 - 字段名（如 ID、VERSION_CODENAME）
+# 输出：字段值（字段不存在时输出空行）
+# 返回：0 已读取文件，1 文件不可读
+_os_release_field() {
+  local want="$1" file="$DEBNAS_OS_RELEASE" line value=""
+  if [[ ! -r "$file" ]]; then
+    [[ "$file" == "/etc/os-release" && -r /usr/lib/os-release ]] || return 1
+    file="/usr/lib/os-release"
+  fi
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ "$line" == "${want}="* ]] || continue
+    value="${line#*=}"
+    if [[ ${#value} -ge 2 && ( "$value" == \"*\" || "$value" == \'*\' ) ]]; then
+      value="${value:1:${#value}-2}"
+    fi
+    break
+  done < "$file"
+  printf '%s\n' "$value"
+}
+
 # 获取操作系统 ID
+# 说明：优先读 os-release 的 ID；为空时回退 lsb_release（Debian 12 上是 Python 程序，启动慢）
 # 参数：无
 # 返回：操作系统 ID 字符串（小写）
 _get_os_id() {
-  local os_id
-
-  if command -v lsb_release >/dev/null 2>&1; then
+  local os_id="" have_file=1
+  os_id=$(_os_release_field ID) || have_file=0
+  if [[ -z "$os_id" ]] && command -v lsb_release >/dev/null 2>&1; then
     os_id=$(lsb_release -is)
-  else
-    if [[ -f /etc/os-release ]]; then
-      # 在子 shell 中 source，避免 ID/NAME/VERSION 等变量污染调用方全局作用域
-      # shellcheck source=/dev/null
-      os_id=$(. /etc/os-release && echo "${ID:-}")
-    else
-      return 1
-    fi
+  elif [[ -z "$os_id" && "$have_file" -eq 0 ]]; then
+    return 1
   fi
-
   echo "${os_id,,}"
 }
 
 # 获取系统代号
+# 说明：优先读 os-release 的 VERSION_CODENAME；为空时回退 lsb_release -cs
 # 参数：无
 # 返回：系统代号字符串
 _get_os_codename() {
-  if command -v lsb_release >/dev/null 2>&1; then
+  local codename="" have_file=1
+  codename=$(_os_release_field VERSION_CODENAME) || have_file=0
+  if [[ -z "$codename" ]] && command -v lsb_release >/dev/null 2>&1; then
     lsb_release -cs
-  else
-    if [[ -f /etc/os-release ]]; then
-      # shellcheck source=/dev/null
-      (. /etc/os-release && echo "${VERSION_CODENAME:-}")
-    else
-      return 1
-    fi
+    return
+  elif [[ -z "$codename" && "$have_file" -eq 0 ]]; then
+    return 1
   fi
+  echo "$codename"
 }
 
 # 获取系统版本号
 # 参数：无
 # 返回：系统版本号字符串
 _get_os_version_id() {
-  if [[ -f /etc/os-release ]]; then
-    # shellcheck source=/dev/null
-    (. /etc/os-release && echo "${VERSION_ID:-}")
-  else
-    return 1
-  fi
+  _os_release_field VERSION_ID
 }
 
 # ==================== 版本验证函数 ====================
@@ -303,10 +318,30 @@ verify_architecture_support() {
   return 1
 }
 
-# 获取第一个常规用户（UID >= 1000，排除 nobody）
-# 返回：用户名字符串，找不到则返回空
+# passwd 文件路径（不设 readonly，允许测试覆盖）
+DEBNAS_PASSWD_FILE="${DEBNAS_PASSWD_FILE:-/etc/passwd}"
+
+# 获取主普通用户：passwd 中首个 UID ≥ 1000 的用户（排除 nobody / UID 65534）
+# 说明：纯 bash 逐行解析，不 fork awk；只读本地 passwd（不查 LDAP/NSS）
+# 参数：无
+# 输出：用户名；找不到时输出空
+# 返回：始终 0
+get_primary_user() {
+  local name uid _
+  [[ -r "$DEBNAS_PASSWD_FILE" ]] || return 0
+  while IFS=: read -r name _ uid _ || [[ -n "$name" ]]; do
+    [[ "$uid" =~ ^[0-9]{1,10}$ && "$name" != "nobody" ]] || continue
+    if (( 10#$uid >= 1000 && 10#$uid != 65534 )); then
+      printf '%s\n' "$name"
+      return 0
+    fi
+  done < "$DEBNAS_PASSWD_FILE"
+  return 0
+}
+
+# deprecated：旧名，保留为薄包装，新代码请用 get_primary_user
 get_first_regular_user() {
-  awk -F: '$3>=1000 && $1 != "nobody" {print $1; exit}' /etc/passwd
+  get_primary_user
 }
 
 # 智能写入文件（内容比较去重）
@@ -342,15 +377,16 @@ write_file_if_changed() {
     return 2
   fi
 
-  # 确保父目录存在
-  local dir
-  dir=$(dirname -- "$file")
+  # 确保父目录存在（参数展开取目录，不 fork dirname）
+  local dir="." base="${file##*/}"
+  [[ "$file" == */* ]] && dir="${file%/*}"
+  [[ -n "$dir" ]] || dir="/"
   mkdir -p -- "$dir" 2>/dev/null || true
 
   # 内容比较：相同则跳过
   if [[ -f "$file" ]]; then
     local current_content cmp_content="$new_content"
-    current_content=$(cat -- "$file" 2>/dev/null) || current_content=""
+    { current_content=$(< "$file"); } 2>/dev/null || current_content=""
     # $(...) 会去掉文件末尾换行，新内容也做同样处理，否则以换行结尾的内容每次都被判为"已变更"
     while [[ "$cmp_content" == *$'\n' ]]; do
       cmp_content="${cmp_content%$'\n'}"
@@ -375,7 +411,7 @@ write_file_if_changed() {
 
   # 写入同目录临时文件（mktemp 创建为 0600，写入期间内容不会被其他用户读到）
   local tmp_file=""
-  tmp_file=$(mktemp -- "${dir}/.$(basename -- "$file").debnas.XXXXXX" 2>/dev/null) || tmp_file=""
+  tmp_file=$(mktemp -- "${dir}/.${base}.debnas.XXXXXX" 2>/dev/null) || tmp_file=""
   if [[ -z "$tmp_file" ]]; then
     log_error "写入失败（无法创建临时文件）：$file"
     return 2

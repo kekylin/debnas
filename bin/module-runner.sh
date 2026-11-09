@@ -17,7 +17,7 @@ IFS=$'\n\t'
 
 # 获取项目根目录
 _DEBNAS_SCRIPT="$(readlink -f "${BASH_SOURCE[0]}")"
-_DEBNAS_ROOT="$(cd "$(dirname "${_DEBNAS_SCRIPT}")/.." && pwd)"
+_DEBNAS_ROOT="$(cd "${_DEBNAS_SCRIPT%/*}/.." && pwd)"  # readlink -f 输出绝对路径，参数展开取目录
 
 # 加载统一库
 source "${_DEBNAS_ROOT}/lib/bootstrap.sh"
@@ -46,39 +46,6 @@ preflight_environment_check() {
     log_error "此模块不支持当前 CPU 架构，所需架构: $required_arch"
     return 1
   fi
-}
-
-# Preflight: 依赖命令检查（按 Tier 0/1/2 分级处理）
-preflight_dependencies() {
-  local module_name="$1"
-  local depends_str
-  depends_str=$(get_module_field "$module_name" "depends" "" 2>/dev/null) || depends_str=""
-
-  if [[ -z "$depends_str" ]]; then
-    return 0
-  fi
-
-  local -a dep_cmds=()
-  IFS=' ,' read -ra dep_cmds <<< "$depends_str"
-
-  # 去空格、去空元素
-  local -a clean_cmds=()
-  local cmd
-  for cmd in "${dep_cmds[@]}"; do
-    cmd="${cmd#"${cmd%%[![:space:]]*}"}"
-    cmd="${cmd%"${cmd##*[![:space:]]}"}"
-    [[ -n "$cmd" ]] || continue
-    clean_cmds+=("$cmd")
-  done
-
-  if [[ ${#clean_cmds[@]} -eq 0 ]]; then
-    return 0
-  fi
-
-  log_info "检查依赖命令：${depends_str}"
-
-  # 按级别分流处理
-  check_dependencies_by_level "${clean_cmds[@]}"
 }
 
 # Preflight: dry-run 模式
@@ -145,7 +112,7 @@ execute_module() {
 }
 
 # ==================== Preflight 阶段 ====================
-# 执行所有预检查：权限、版本、依赖、幂等性、依赖模块
+# 执行所有预检查：权限、版本、依赖命令、依赖模块
 # 返回：0=通过，1=失败，2=跳过（已安装/dry-run）
 
 run_preflight() {
@@ -179,30 +146,10 @@ run_preflight() {
 
   log_info "开始 preflight 检查：${module_name}"
 
-  # 依赖命令
-  if ! preflight_dependencies "$module_name"; then
+  # 依赖命令（按 Tier 0/1/2 分级处理）+ 依赖模块（检查是否已就绪，不自动执行）
+  # 与交互式模块操作前调用的是同一个函数（lib/system/dependency.sh ensure_module_deps）
+  if ! ensure_module_deps "$module_name"; then
     return 1
-  fi
-
-  # 依赖模块（检查是否已就绪，不自动执行）
-  # 例外：部署方案中批量执行时，依赖模块由方案编排顺序保证
-  local dep_modules
-  dep_modules=$(get_module_field "$module_name" "depend_modules" "" 2>/dev/null) || dep_modules=""
-  if [[ -n "$dep_modules" ]]; then
-    log_info "检查依赖模块：${dep_modules}"
-    local -a not_ready=()
-    mapfile -t not_ready < <(check_module_deps_ready "$module_name" 2>/dev/null) || not_ready=()
-    if [[ ${#not_ready[@]} -gt 0 ]]; then
-      log_error "以下依赖模块尚未完成，请先执行："
-      local nd
-      for nd in "${not_ready[@]}"; do
-        local nd_name
-        nd_name=$(get_module_field "$nd" "name" "$nd" 2>/dev/null) || nd_name="$nd"
-        echo "  debnas run ${nd}   # ${nd_name}"
-      done
-      return 1
-    fi
-    log_info "依赖模块已全部就绪：${dep_modules}"
   fi
 
   return 0

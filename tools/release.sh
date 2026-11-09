@@ -4,7 +4,11 @@
 # 用法:
 #   bash tools/release.sh --embed-key <公钥文件>   # 配置/轮换发布公钥（写 keys/ 与 install.sh 内嵌区块）
 #   bash tools/release.sh --bump <tag>             # 仅把 install.sh 默认版本与 README 安装命令改为 <tag>
+#   bash tools/release.sh --sync-verify            # 把 lib/system/installer.sh 的发布校验区块同步到 install.sh
 #   bash tools/release.sh <tag> <GPG 密钥 ID>       # 生成发布产物到 dist/<tag>/、签名并自检
+#
+# 发布校验逻辑单一来源：lib/system/installer.sh 中 DEBNAS-RELEASE-VERIFY 区块；
+#   --embed-key / --bump 会顺带同步到 install.sh，构建发布时检查 tag 内两份是否一致。
 #
 # 推荐顺序（详见 docs/MAINTENANCE.md「发布流程」）:
 #   --bump vX.Y.Z → 提交 → git tag -a vX.Y.Z → release.sh vX.Y.Z <key> → 上传 Release
@@ -27,6 +31,9 @@ KEY_ASC="${REPO_ROOT}/keys/debnas-release.asc"
 KEY_FPR="${REPO_ROOT}/keys/debnas-release.fpr"
 MARK_BEGIN="# >>> DEBNAS-RELEASE-PUBKEY-BEGIN"
 MARK_END="# <<< DEBNAS-RELEASE-PUBKEY-END"
+LIB_INSTALLER="${REPO_ROOT}/lib/system/installer.sh"
+VERIFY_BEGIN="# >>> DEBNAS-RELEASE-VERIFY-BEGIN"
+VERIFY_END="# <<< DEBNAS-RELEASE-VERIFY-END"
 
 _msg()  { printf "[%s] %s\n" "$1" "$2" >&2; }
 info()  { _msg "INFO" "$1"; }
@@ -59,7 +66,59 @@ valid_tag() {
 }
 
 usage() {
-  sed -n '2,19p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '2,23p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+}
+
+# ==================== 发布校验区块同步（--sync-verify） ====================
+
+# 输出文件中 DEBNAS-RELEASE-VERIFY 区块（含起止标记行；标记行之后的说明文字不计入比较）
+# 参数：$1 - 文件
+extract_verify_block() {
+  awk -v mb="$VERIFY_BEGIN" -v me="$VERIFY_END" '
+    index($0, mb) == 1 { p = 1; print mb; next }
+    index($0, me) == 1 { if (p) print me; p = 0; next }
+    p { print }' "$1"
+}
+
+# 检查文件中起止标记各恰好一个
+# 参数：$1 - 文件  $2 - 显示名
+check_verify_marks() {
+  local n_begin n_end
+  n_begin=$(grep -c "^${VERIFY_BEGIN}" "$1" || true)
+  n_end=$(grep -c "^${VERIFY_END}" "$1" || true)
+  [[ "$n_begin" -eq 1 && "$n_end" -eq 1 ]] || die "$2 中发布校验区块标记应各有 1 个（起 ${n_begin}，止 ${n_end}）"
+}
+
+# 用 lib/system/installer.sh 的区块替换 install.sh 的区块（内容相同则不写）
+sync_verify_block() {
+  [[ -f "$LIB_INSTALLER" ]] || die "找不到 ${LIB_INSTALLER}（发布校验逻辑的单一来源）"
+  check_verify_marks "$LIB_INSTALLER" "lib/system/installer.sh"
+  check_verify_marks "$INSTALL_SH" "install.sh"
+  local tmpd block new_install
+  tmpd=$(mktemp -d "${TMPDIR:-/tmp}/debnas-sync.XXXXXX")
+  block="${tmpd}/block"
+  new_install="${tmpd}/install.sh"
+  # lib 中的起始标记行带说明文字，install.sh 中保持同一行（整行复制）
+  awk -v mb="$VERIFY_BEGIN" -v me="$VERIFY_END" '
+    index($0, mb) == 1 { p = 1 }
+    p { print }
+    index($0, me) == 1 { p = 0 }' "$LIB_INSTALLER" > "$block"
+  awk -v bf="$block" -v mb="$VERIFY_BEGIN" -v me="$VERIFY_END" '
+    index($0, mb) == 1 { while ((getline l < bf) > 0) print l; skip = 1; next }
+    index($0, me) == 1 && skip { skip = 0; next }
+    !skip { print }' "$INSTALL_SH" > "$new_install"
+  if ! bash -n "$new_install"; then
+    rm -rf -- "${tmpd:?}"
+    die "同步后的 install.sh 语法错误，未写入"
+  fi
+  if cmp -s "$new_install" "$INSTALL_SH"; then
+    rm -rf -- "${tmpd:?}"
+    info "install.sh 发布校验区块已与 lib/system/installer.sh 一致"
+    return 0
+  fi
+  cat "$new_install" > "$INSTALL_SH"
+  rm -rf -- "${tmpd:?}"
+  ok "已把 lib/system/installer.sh 的发布校验区块同步到 install.sh"
 }
 
 # ==================== --embed-key ====================
@@ -68,6 +127,7 @@ embed_key() {
   local keyfile="${1:-}"
   [[ -n "$keyfile" && -f "$keyfile" ]] || die "公钥文件不存在: ${keyfile}"
   need_cmd gpg awk base64 cmp
+  sync_verify_block
   make_tmp
   local home="${_TMP}/gnupg"
   mkdir -m 700 "$home"
@@ -145,6 +205,7 @@ embed_key() {
 bump_tag() {
   local tag="${1:-}"
   valid_tag "$tag" || die "非法的 tag: ${tag}"
+  sync_verify_block
   grep -q '^readonly DEBNAS_RELEASE_TAG="[^"]*"$' "$INSTALL_SH" || die "install.sh 中找不到 DEBNAS_RELEASE_TAG 常量"
   sed -i "s/^readonly DEBNAS_RELEASE_TAG=\"[^\"]*\"$/readonly DEBNAS_RELEASE_TAG=\"${tag}\"/" "$INSTALL_SH"
   grep -q "^readonly DEBNAS_RELEASE_TAG=\"${tag}\"$" "$INSTALL_SH" || die "更新 DEBNAS_RELEASE_TAG 失败"
@@ -171,6 +232,15 @@ build_release() {
   make_tmp
   local tag_install="${_TMP}/install.sh"
   git show "${tag}:install.sh" > "$tag_install" || die "tag 中没有 install.sh"
+
+  # 发布校验区块：tag 内 install.sh 必须与 tag 内 lib/system/installer.sh 一致（单一来源）
+  local tag_lib="${_TMP}/installer.sh"
+  git show "${tag}:lib/system/installer.sh" > "$tag_lib" || die "tag 中没有 lib/system/installer.sh"
+  check_verify_marks "$tag_lib" "tag 内 lib/system/installer.sh"
+  check_verify_marks "$tag_install" "tag 内 install.sh"
+  if ! cmp -s <(extract_verify_block "$tag_lib") <(extract_verify_block "$tag_install"); then
+    die "tag ${tag} 中 install.sh 的发布校验区块与 lib/system/installer.sh 不一致：先 --sync-verify 并提交，再重新打 tag"
+  fi
 
   # tag 内 install.sh 的内嵌公钥就是用户实际用来验证的公钥
   local emb_fpr tag_default tag_fpr
@@ -259,6 +329,10 @@ main() {
     --bump)
       [[ $# -eq 2 ]] || die "用法: tools/release.sh --bump <tag>"
       bump_tag "$2"
+      ;;
+    --sync-verify)
+      [[ $# -eq 1 ]] || die "用法: tools/release.sh --sync-verify"
+      sync_verify_block
       ;;
     --help|-h|"")
       usage

@@ -16,8 +16,12 @@
 set -euo pipefail
 IFS=$'\n\t'
 
-# 守卫标记：模块入口文件包含此字符串才视为支持探测
+# 守卫标记（保留旧常量供外部引用）
 readonly MODULE_PROBE_GUARD_MARK='DEBNAS_MODULE_ACTION:-run'
+# 守卫行：模块入口文件中有以此开头的行（行首、非注释）才视为支持探测
+readonly MODULE_PROBE_GUARD_RE='^if \[\[ "\$\{DEBNAS_MODULE_ACTION:-run\}" == "run" \]\]'
+# 只读工具约定：module_status 返回 unknown 且说明以此开头时，不用执行记录改写为 applied
+readonly MODULE_STATUS_READONLY_PREFIX='只读工具'
 
 # 合法取值
 readonly MODULE_STATUS_CODES=" applied running partial absent warn error unknown "
@@ -91,14 +95,15 @@ module_plan_normalize() {
 # ==================== 加载 ====================
 
 # 判断模块是否已按契约加守卫（可安全 source）
+# 说明：只认行首的真正守卫行，注释或字符串里出现 DEBNAS_MODULE_ACTION 不算
 # 参数：$1 — 模块名
 # 返回：0 支持，1 不支持
 module_probe_supported() {
   local module_name="${1:?module_probe_supported: 缺少模块名}"
-  local path
-  path=$(get_module_path "$module_name" 2>/dev/null) || return 1
+  local path=""
+  get_module_field_var path "$module_name" "path" || return 1
   [[ -f "$path" ]] || return 1
-  grep -qF "$MODULE_PROBE_GUARD_MARK" "$path" 2>/dev/null
+  grep -qE -- "$MODULE_PROBE_GUARD_RE" "$path" 2>/dev/null
 }
 
 # 回退结果（模块未加守卫或未实现对应函数）
@@ -155,8 +160,8 @@ module_probe() {
     return 0
   fi
 
-  local path tmp timeout rc=0
-  path=$(get_module_path "$module_name")
+  local path="" tmp timeout rc=0
+  get_module_field_var path "$module_name" "path"
   tmp=$(mktemp 2>/dev/null) || tmp=""
   if [[ -z "$tmp" ]]; then
     [[ "$action" == "status" ]] && printf 'unknown|无法创建临时文件\n' || printf 'info|%s|无法创建临时文件\n' "$module_name"
@@ -169,8 +174,8 @@ module_probe() {
   _module_probe_wait "$pid" "$timeout" || rc=$?
 
   local raw=""
-  raw=$(cat "$tmp" 2>/dev/null) || raw=""
-  [[ -n "$tmp" ]] && rm -f "$tmp"
+  { raw=$(< "$tmp"); } 2>/dev/null || raw=""
+  [[ -n "$tmp" ]] && rm -f -- "$tmp"
 
   if [[ $rc -eq 124 ]]; then
     [[ "$action" == "status" ]] && printf 'unknown|状态检测超时\n' || printf 'info|%s|预演超时（>%ss），结果不完整\n' "$module_name" "$timeout"
@@ -192,16 +197,25 @@ module_probe() {
 # 参数：$1 — pid，$2 — 超时秒数（整数）
 # 返回：进程退出码；超时返回 124
 _module_probe_wait() {
-  local pid="$1" timeout="$2"
+  local pid="$1" timeout="$2" fd="" tick=0.01
   local deadline=$(( ${EPOCHREALTIME/[.,]/} / 1000 + timeout * 1000 ))
+  # 睡眠用的空管道只打开一次（原实现每轮 <(:) 都 fork 一个子进程）；
+  # 10ms 轮询：多数探测几十毫秒内结束，结束后最多再等一个周期
+  exec {fd}<> <(:) 2>/dev/null || fd=""
   while kill -0 "$pid" 2>/dev/null; do
     if (( ${EPOCHREALTIME/[.,]/} / 1000 >= deadline )); then
       kill "$pid" 2>/dev/null || true
       wait "$pid" 2>/dev/null || true
+      [[ -n "$fd" ]] && exec {fd}>&-
       return 124
     fi
-    read -rt 0.02 <> <(:) 2>/dev/null || true
+    if [[ -n "$fd" ]]; then
+      read -rt "$tick" -u "$fd" 2>/dev/null || true
+    else
+      read -rt "$tick" <> <(:) 2>/dev/null || true
+    fi
   done
+  [[ -n "$fd" ]] && exec {fd}>&-
   local rc=0
   wait "$pid" 2>/dev/null || rc=$?
   return "$rc"
@@ -210,12 +224,16 @@ _module_probe_wait() {
 # ==================== 状态缓存（仪表盘批量/异步采集） ====================
 
 # 合并执行记录：模块未提供状态检测时，用 module-runner 写入的 state 文件补充
+# 约定：只读工具（sys-check、service-query 等）没有"已应用"概念，其 module_status 返回
+#       "unknown|只读工具 …"；说明以 MODULE_STATUS_READONLY_PREFIX 开头的 unknown 原样保留，
+#       不因有成功执行记录而改写为 applied（docs/ARCHITECTURE.md §4.5.1）
 # 参数：$1 — 模块名，$2 — "code|desc"
 # 输出：stdout 合并后的 "code|desc"
 module_status_merge_state() {
   local module_name="$1" result="$2"
-  local code="${result%%|*}"
+  local code="${result%%|*}" desc="${result#*|}"
   [[ "$code" == "unknown" ]] || { printf '%s\n' "$result"; return 0; }
+  [[ "$desc" == "${MODULE_STATUS_READONLY_PREFIX}"* ]] && { printf '%s\n' "$result"; return 0; }
   local last=""
   last=$(state_get "$module_name" "last_result" 2>/dev/null) || last=""
   case "$last" in
@@ -247,7 +265,7 @@ module_status_collect_start() {
       _MODULE_STATUS["$module_name"]=$(module_status_merge_state "$module_name" "unknown|未提供状态检测")
       continue
     fi
-    path=$(get_module_path "$module_name" 2>/dev/null) || continue
+    get_module_field_var path "$module_name" "path" || continue
     _MODULE_STATUS["$module_name"]="pending|检测中"
     (
       raw=$( _module_probe_exec "$path" status "$module_name" 2>/dev/null ) || raw="${raw:-error|状态检测失败}"

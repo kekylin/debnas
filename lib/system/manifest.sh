@@ -44,16 +44,21 @@ _manifest_source() {
     printf '%s' "$DEBNAS_MANIFEST_SOURCE"
     return 0
   fi
+  # 参数展开取目录名/文件名（不 fork basename/dirname）
   local entry="${0:-unknown}" name
   case "$entry" in
     */modules/*/module.sh)
-      name=$(basename -- "$(dirname -- "$entry")")
+      name="${entry%/module.sh}"
+      while [[ "$name" == */ ]]; do name="${name%/}"; done
+      name="${name##*/}"
       ;;
     */modules/*.sh)
-      name=$(basename -- "$entry" .sh)
+      name="${entry##*/}"
+      name="${name%.sh}"
       ;;
     *)
-      name=$(basename -- "$entry" 2>/dev/null) || name="unknown"
+      name="${entry%/}"
+      name="${name##*/}"
       ;;
   esac
   printf '%s' "${name:-unknown}"
@@ -111,7 +116,9 @@ manifest_add() {
     mkdir -p -- "$(dirname -- "$mf")" 2>/dev/null || return 0
     created=1
   fi
-  printf '%s\t%s\t%s\n' "$path" "$(date '+%Y-%m-%d %H:%M:%S')" "$source" >> "$mf" 2>/dev/null || return 0
+  local ts
+  printf -v ts '%(%Y-%m-%d %H:%M:%S)T' -1
+  printf '%s\t%s\t%s\n' "$path" "$ts" "$source" >> "$mf" 2>/dev/null || return 0
   if [[ "$created" -eq 1 ]]; then
     chmod 640 -- "$mf" 2>/dev/null || true
   fi

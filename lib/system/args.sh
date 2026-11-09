@@ -163,10 +163,3 @@ parse_global_args() {
 	DEBNAS_REMAINING_ARGS_ARRAY=("${remaining_args[@]+"${remaining_args[@]}"}")
 	return 0
 }
-
-# 获取剩余参数为数组
-# 参数：无
-# 输出：将 DEBNAS_REMAINING_ARGS_ARRAY 复制到调用方的 REMAINING 数组
-get_remaining_args() {
-	REMAINING=("${DEBNAS_REMAINING_ARGS_ARRAY[@]+"${DEBNAS_REMAINING_ARGS_ARRAY[@]}"}")
-}

@@ -44,7 +44,7 @@ declare -g _DASH_PLAN_SIG="" _DASH_PLAN_RISKS=0
 # 布局与帧
 declare -g _DASH_COLS=80 _DASH_ROWS=24 _DASH_W=79 _DASH_MODE="wide"
 declare -g -a _DASH_FRAME=() _DASH_PREV=()
-declare -g _DASH_L=""
+declare -g _DASH_L="" _DASH_SIG="" _DASH_DESC=""
 declare -g _DASH_TUI_ON=0 _DASH_STTY="" _DASH_DIR="" _DASH_RUNNER=""
 declare -g _DASH_LAST_SAMPLE=0 _DASH_LAST_DISK=0
 
@@ -86,22 +86,29 @@ ui_dashboard_available() {
 # 模型构建
 # ═══════════════════════════════════════════════════════════════
 
-# 读取模块说明：优先 @description，其次文件头 "# 功能：..." 注释
-_dash_module_desc() {
-  local module_name="$1" desc path line n=0
-  desc=$(get_module_field "$module_name" "description" "" 2>/dev/null) || desc=""
-  if [[ -z "$desc" ]]; then
-    path=$(get_module_path "$module_name" 2>/dev/null) || path=""
+# 读取模块说明到全局 _DASH_DESC：优先 @description，其次文件头 "# 功能：..." 注释（不 fork）
+_dash_module_desc_get() {
+  local module_name="$1" path="" line n=0
+  _DASH_DESC=""
+  get_module_field_var _DASH_DESC "$module_name" "description" || _DASH_DESC=""
+  if [[ -z "$_DASH_DESC" ]]; then
+    get_module_field_var path "$module_name" "path" || path=""
     if [[ -n "$path" && -r "$path" ]]; then
       while IFS= read -r line && (( n++ < 20 )); do
         if [[ "$line" =~ ^#[[:space:]]*功能[:：][[:space:]]*(.*)$ ]]; then
-          desc="${BASH_REMATCH[1]}"
+          _DASH_DESC="${BASH_REMATCH[1]}"
           break
         fi
       done < "$path"
     fi
   fi
-  printf '%s' "$desc"
+  return 0
+}
+
+# 读取模块说明（stdout 版本）
+_dash_module_desc() {
+  _dash_module_desc_get "$1"
+  printf '%s' "$_DASH_DESC"
 }
 
 # 读取方案文件中的模块列表（每行一个，忽略注释/空行）
@@ -121,7 +128,7 @@ _dash_build_model() {
   local IFS=$'\n\t'
   _DASH_CAT_NAME=() _DASH_CAT_KIND=() _DASH_CAT_FIRST=() _DASH_CAT_LEN=() _DASH_KEYS_ALL=()
   _DASH_ITEM_NAME=() _DASH_ITEM_DESC=() _DASH_ITEM_MODS=()
-  local i key mods m names start
+  local i key mods m names start mname
 
   # 一键部署
   if [[ ${#SOLUTION_NAMES[@]} -gt 0 ]]; then
@@ -133,7 +140,8 @@ _dash_build_model() {
       _DASH_ITEM_MODS["$key"]="$mods"
       names=""
       for m in $mods; do
-        names+="${names:+ → }$(get_module_field "$m" "name" "$m" 2>/dev/null || echo "$m")"
+        get_module_field_var mname "$m" "name" "$m" || mname="$m"
+        names+="${names:+ → }${mname}"
       done
       _DASH_ITEM_DESC["$key"]="依次执行：${names:-（空方案）}"
       _DASH_KEYS_ALL+=("$key")
@@ -155,8 +163,10 @@ _dash_build_model() {
     for m in "${modules[@]}"; do
       [[ -n "$m" ]] || continue
       key="m:${m}"
-      _DASH_ITEM_NAME["$key"]=$(get_module_field "$m" "name" "$m" 2>/dev/null || echo "$m")
-      _DASH_ITEM_DESC["$key"]=$(_dash_module_desc "$m")
+      get_module_field_var mname "$m" "name" "$m" || mname="$m"
+      _DASH_ITEM_NAME["$key"]="$mname"
+      _dash_module_desc_get "$m"
+      _DASH_ITEM_DESC["$key"]="$_DASH_DESC"
       _DASH_KEYS_ALL+=("$key")
     done
     _DASH_CAT_NAME+=("$category")
@@ -254,11 +264,9 @@ _dash_cat_count() {
   if (( total > 0 && done_n == total )); then _DASH_CNT_COLOR="$_DC_OK"; else _DASH_CNT_COLOR="$_DC_DIM"; fi
 }
 
-# 已选条目数
+# 已选条目数（stdout 版本；渲染热路径直接用 ${#_DASH_SEL[@]}，_DASH_SEL 只存已选键）
 _dash_sel_count() {
-  local k n=0
-  for k in "${!_DASH_SEL[@]}"; do n=$(( n + 1 )); done
-  printf '%s' "$n"
+  printf '%s' "${#_DASH_SEL[@]}"
 }
 
 # 已选条目（按显示顺序）
@@ -266,6 +274,17 @@ _dash_selected_keys() {
   local key
   for key in "${_DASH_KEYS_ALL[@]}"; do
     [[ -n "${_DASH_SEL[$key]:-}" ]] && printf '%s\n' "$key"
+  done
+  return 0
+}
+
+# 已选条目签名（按显示顺序、每个键后跟一个空格，与预演签名 _DASH_PLAN_SIG 比较）写入 _DASH_SIG
+# 替代 $(_dash_selected_keys | tr '\n' ' ')：每帧省去一个子 shell 与一个 tr 进程
+_dash_sel_sig() {
+  local key
+  _DASH_SIG=""
+  for key in "${_DASH_KEYS_ALL[@]}"; do
+    [[ -n "${_DASH_SEL[$key]:-}" ]] && _DASH_SIG+="${key} "
   done
   return 0
 }
@@ -514,10 +533,10 @@ _dash_detail_lines() {
   local extra=""
   _dash_item_status "$key"
   if [[ "$key" == m:* ]]; then
-    local m="${key#m:}" dep inter
+    local m="${key#m:}" dep="" inter=""
     extra="状态：${_DASH_ST_DESC}"
-    dep=$(get_module_field "$m" "depend_modules" "" 2>/dev/null) || dep=""
-    inter=$(get_module_field "$m" "interactive" "false" 2>/dev/null) || inter="false"
+    get_module_field_var dep "$m" "depend_modules" || dep=""
+    get_module_field_var inter "$m" "interactive" "false" || inter="false"
     [[ -n "$dep" ]] && extra+=" · 依赖模块：${dep}"
     [[ "$inter" == "true" ]] && extra+=" · 交互式（执行时进入模块菜单）"
     extra+=" · ${m}"
@@ -561,16 +580,17 @@ _dash_right_title() {
 _dash_plan_view() {
   local inner="$1" max="$2"
   _DASH_PLAN_VIEW=()
-  local nsel
-  nsel=$(_dash_sel_count)
-  local sig
-  sig=$(_dash_selected_keys | tr '\n' ' ')
+  local nsel=${#_DASH_SEL[@]}
+  _dash_sel_sig
+  local sig="$_DASH_SIG"
   if (( nsel == 0 )); then
     ui_str_fit "未勾选任何功能：空格 勾选，d 生成预演；直接回车执行当前项。" "$inner"
     _DASH_PLAN_VIEW+=("${_DC_DIM}${_UI_FIT}${_DC_RESET}")
   elif [[ "$sig" != "$_DASH_PLAN_SIG" ]]; then
     local names="" k
-    while IFS= read -r k; do [[ -n "$k" ]] && names+="${names:+、}${_DASH_ITEM_NAME[$k]}"; done < <(_dash_selected_keys)
+    for k in "${_DASH_KEYS_ALL[@]}"; do
+      [[ -n "${_DASH_SEL[$k]:-}" ]] && names+="${names:+、}${_DASH_ITEM_NAME[$k]}"
+    done
     ui_str_fit "已选 ${nsel} 项：${names}" "$inner"
     _DASH_PLAN_VIEW+=("$_UI_FIT")
     ui_str_fit "按 d 生成预演（只读检测将安装的包、修改的文件与风险），回车执行" "$inner"
@@ -720,8 +740,7 @@ _dash_compose_wide() {
   local PH=$(( need + 2 ))
   (( PH > maxph )) && PH=$maxph
   # 预演已生成且条目较多时，用剩余行扩展预演框（保留 1 行空白 + 快捷键行）
-  if [[ $(_dash_sel_count) -gt 0 && ${#_DASH_PLAN[@]} -gt P ]] \
-    && [[ "$(_dash_selected_keys | tr '\n' ' ')" == "$_DASH_PLAN_SIG" ]]; then
+  if (( ${#_DASH_SEL[@]} > 0 && ${#_DASH_PLAN[@]} > P )) && _dash_sel_sig && [[ "$_DASH_SIG" == "$_DASH_PLAN_SIG" ]]; then
     local pmax=$(( rows - 3 - PH - 2 - 2 ))
     P=${#_DASH_PLAN[@]}
     (( P > pmax )) && P=$pmax
@@ -762,7 +781,7 @@ _dash_compose_wide() {
 
   # 右栏
   local -a right=()
-  local nsel; nsel=$(_dash_sel_count)
+  local nsel=${#_DASH_SEL[@]}
   _dash_right_title
   _dash_box_top "$RW" "$_DASH_T" "已选 ${nsel} 项"; right+=("$_DASH_L")
   local win=$(( C - 4 )) n=${#_DASH_LIST[@]}
@@ -831,7 +850,7 @@ _dash_compose_narrow() {
   fi
 
   local C=$(( boxh - 2 )) r
-  local nsel; nsel=$(_dash_sel_count)
+  local nsel=${#_DASH_SEL[@]}
   if (( _DASH_PANE == 0 )); then
     local ncat=${#_DASH_CAT_NAME[@]} ci
     _dash_box_top "$w" "分类" "已选 ${nsel} 项"; _DASH_FRAME+=("$_DASH_L")
@@ -1070,7 +1089,7 @@ _dash_build_plan() {
   for m in "${mods[@]}"; do
     [[ -n "$m" ]] || continue
     # 依赖模块未完成且未一起勾选 → 风险提示
-    dep=$(get_module_field "$m" "depend_modules" "" 2>/dev/null) || dep=""
+    get_module_field_var dep "$m" "depend_modules" || dep=""
     if [[ -n "$dep" ]]; then
       local -a deps=()
       IFS=' ,' read -ra deps <<< "$dep"
@@ -1108,7 +1127,8 @@ _dash_build_plan() {
   fi
   _DASH_PLAN+=("${others[@]+"${others[@]}"}" "${risks[@]+"${risks[@]}"}")
   _DASH_PLAN_RISKS=${#risks[@]}
-  _DASH_PLAN_SIG=$(_dash_selected_keys | tr '\n' ' ')
+  _dash_sel_sig
+  _DASH_PLAN_SIG="$_DASH_SIG"
   return 0
 }
 
@@ -1228,7 +1248,7 @@ _dash_execute() {
   for i in "${!mods[@]}"; do
     m="${mods[$i]}"
     skip=""
-    dep=$(get_module_field "$m" "depend_modules" "" 2>/dev/null) || dep=""
+    get_module_field_var dep "$m" "depend_modules" || dep=""
     if [[ -n "$dep" ]]; then
       local -a deps=()
       IFS=' ,' read -ra deps <<< "$dep"
@@ -1364,7 +1384,7 @@ ui_dashboard_handle_key() {
     SPACE)       _dash_action_space ;;
     ENTER)       _dash_execute ;;
     CHAR:d|CHAR:D)
-      if [[ "$(_dash_sel_count)" -eq 0 ]]; then
+      if (( ${#_DASH_SEL[@]} == 0 )); then
         _DASH_MSG="请先用空格勾选要执行的功能"
       else
         _DASH_MSG="正在生成预演…"; ui_dashboard_render; _DASH_MSG=""
