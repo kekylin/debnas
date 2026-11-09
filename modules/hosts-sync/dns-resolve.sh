@@ -27,6 +27,34 @@ get_ip_type() {
   fi
 }
 
+# 判断 IP 是否可作为 hosts 条目（排除 DNS 污染常见的 0.0.0.0/回环/私网/保留地址）
+# 参数：$1 - IP 地址
+# 返回：0 可用，1 不可用
+is_usable_public_ip() {
+  local ip="$1"
+  local a b c d
+  if [[ "$ip" =~ ^([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})$ ]]; then
+    a=$((10#${BASH_REMATCH[1]})); b=$((10#${BASH_REMATCH[2]}))
+    c=$((10#${BASH_REMATCH[3]})); d=$((10#${BASH_REMATCH[4]}))
+    (( a > 255 || b > 255 || c > 255 || d > 255 )) && return 1
+    (( a == 0 || a == 10 || a == 127 || a >= 224 )) && return 1
+    (( a == 100 && b >= 64 && b <= 127 )) && return 1
+    (( a == 169 && b == 254 )) && return 1
+    (( a == 172 && b >= 16 && b <= 31 )) && return 1
+    (( a == 192 && b == 168 )) && return 1
+    (( a == 192 && b == 0 && (c == 0 || c == 2) )) && return 1
+    (( a == 198 && (b == 18 || b == 19) )) && return 1
+    (( a == 198 && b == 51 && c == 100 )) && return 1
+    (( a == 203 && b == 0 && c == 113 )) && return 1
+    return 0
+  fi
+  local lower="${ip,,}"
+  case "$lower" in
+    ::|::1|::ffff:*|fe8*|fe9*|fea*|feb*|fc*|fd*|ff*|2001:db8:*|64:ff9b:*) return 1 ;;
+  esac
+  [[ "$lower" == *:* ]]
+}
+
 # 解析单个 DNS 服务器的 A/AAAA 记录
 # 参数：$1 - 域名，$2 - DNS 服务器地址
 # 返回：IP 地址列表（每行一个）
@@ -39,7 +67,7 @@ resolve_from_dns() {
     local ipv4_ips
     ipv4_ips=$(timeout 5 dig +short "@$dns" A "$domain" 2>/dev/null | grep -Eo '([0-9]{1,3}\.){3}[0-9]{1,3}' || true)
     for ip in $ipv4_ips; do
-      if [[ -n "$ip" ]]; then
+      if [[ -n "$ip" ]] && is_usable_public_ip "$ip"; then
         ips+=("$ip")
       fi
     done
@@ -49,7 +77,7 @@ resolve_from_dns() {
     local ipv6_ips
     ipv6_ips=$(timeout 5 dig +short "@$dns" AAAA "$domain" 2>/dev/null | grep -Eo '([0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}' || true)
     for ip in $ipv6_ips; do
-      if [[ -n "$ip" ]]; then
+      if [[ -n "$ip" ]] && is_usable_public_ip "$ip"; then
         ips+=("$ip")
       fi
     done
@@ -148,10 +176,12 @@ resolve_domain_ips() {
   printf '%s\n' "${all_ips[@]}"
 }
 
-# HTTPS 连通性检测（携带 Host 头，跳过证书验证）
+# HTTPS 连通性检测见 connectivity.sh（--resolve 钉 IP + 证书校验）
 # 参数：$1 - IP 地址，$2 - 域名
 
 resolve_domain() {
+  # local - 使 set +e 仅在本函数内生效，返回时恢复调用方的 errexit
+  local -
   set +e
   
   local domain_group="$1"

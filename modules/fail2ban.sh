@@ -56,14 +56,72 @@ configure_email() {
   log_info "告警邮件发件人邮箱：$sender_email"
 }
 
+# jail.local 由 DebNAS 管理的标识（首行）；无此标识且非旧版 DebNAS 生成的文件视为用户自定义，不覆盖
+readonly JAIL_LOCAL_MARKER="# DebNAS managed: 本文件由 DebNAS 生成，自定义配置请放 /etc/fail2ban/jail.d/*.local"
+
+# 检测 sshd 实际监听端口（逗号分隔）；自定义 SSH 端口时 port=ssh 只封 22，封禁形同虚设
+get_sshd_ports_csv() {
+  local ports="" cfg
+  local -a cfgs=()
+  if command -v sshd &>/dev/null; then
+    ports=$(sshd -T 2>/dev/null | awk '$1 == "port" && $2 ~ /^[0-9]+$/ {print $2}') || ports=""
+  fi
+  if [[ -z "$ports" ]]; then
+    for cfg in /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf; do
+      [[ -f "$cfg" ]] && cfgs+=("$cfg")
+    done
+    if [[ ${#cfgs[@]} -gt 0 ]]; then
+      ports=$(awk 'tolower($1) == "port" && $2 ~ /^[0-9]+$/ {print $2}' "${cfgs[@]}" 2>/dev/null) || ports=""
+    fi
+  fi
+  [[ -z "$ports" ]] && ports="22"
+  printf '%s\n' "$ports" | awk 'NF' | sort -un | paste -sd, -
+}
+
+# 本机直连的私有网段（RFC1918），加入 ignoreip 防止管理员在局域网内被误封
+# 排除 Docker 网桥（docker0 / br-xxxx），容器网段不应免封
+get_local_private_subnets() {
+  command -v ip &>/dev/null || return 0
+  ip -o -4 route show scope link 2>/dev/null \
+    | awk '{dev = ""; for (i = 2; i < NF; i++) if ($i == "dev") dev = $(i + 1)}
+           dev ~ /^(docker[0-9]*|br-)/ {next}
+           $1 ~ /^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.)/ && $1 ~ /\// {print $1}' \
+    | sort -u | paste -sd' ' - || true
+}
+
+# 判断 jail.local 是否可由 DebNAS 覆盖：不存在 / 带 DebNAS 标识 / 旧版 DebNAS 生成
+jail_local_is_managed() {
+  local config_file="$1"
+  [[ ! -e "$config_file" ]] && return 0
+  local first_line
+  first_line=$(head -n 1 "$config_file" 2>/dev/null) || first_line=""
+  [[ "$first_line" == "$JAIL_LOCAL_MARKER" ]] && return 0
+  grep -qF '# 忽略本机流量，防止自身被封禁' "$config_file" 2>/dev/null \
+    && grep -qF '# 使用 firewallcmd-ipset 作为封禁后端（适配 firewalld）' "$config_file" 2>/dev/null
+}
+
 # 配置 jail.local，定制 fail2ban 行为
 configure_jail_local() {
   local config_file="/etc/fail2ban/jail.local"
-  local content
-  content="[DEFAULT]
+  if ! jail_local_is_managed "$config_file"; then
+    log_warning "检测到用户自定义的 ${config_file}，保留不覆盖（如需 DebNAS 默认配置请先备份并删除该文件）"
+    return 0
+  fi
 
-# 忽略本机流量，防止自身被封禁
-ignoreip = 127.0.0.1/8 ::1
+  local ssh_ports lan_subnets
+  ssh_ports=$(get_sshd_ports_csv)
+  lan_subnets=$(get_local_private_subnets)
+  log_info "SSH 封禁端口：${ssh_ports}"
+  if [[ -n "$lan_subnets" ]]; then
+    log_info "局域网白名单（ignoreip）：${lan_subnets}"
+  fi
+
+  local content
+  content="${JAIL_LOCAL_MARKER}
+[DEFAULT]
+
+# 忽略本机及本机直连局域网流量，防止自身被封禁
+ignoreip = 127.0.0.1/8 ::1${lan_subnets:+ ${lan_subnets}}
 
 # 封禁时长（-1 表示永久封禁）
 bantime  = 1h
@@ -96,7 +154,7 @@ banaction = firewallcmd-ipset
 [sshd]
 
 enabled  = true
-port     = ssh
+port     = ${ssh_ports}
 filter   = sshd
 backend  = systemd
 logpath  = %(sshd_log)s"

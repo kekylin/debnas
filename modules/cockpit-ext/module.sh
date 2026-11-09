@@ -36,8 +36,8 @@ main() {
     choice=$(cat "$menu_result")
     rm -f "$menu_result"
     case "$choice" in
-      0) enable_cockpit_ext ;;
-      1) disable_cockpit_ext ;;
+      0) enable_cockpit_ext || true ;;    # 失败只提示，不让 set -e 退出菜单
+      1) disable_cockpit_ext || true ;;
     esac
   done
 }

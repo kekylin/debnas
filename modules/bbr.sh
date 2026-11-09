@@ -28,26 +28,21 @@ comment_out_sysctl_conf_key() {
   local conf="/etc/sysctl.conf"
   [ -f "$conf" ] || return 0
 
-  # 使用固定正则，严格匹配“带等号”的完整配置行
-  local key_regex='^[[:space:]]*net\.ipv4\.tcp_congestion_control[[:space:]]*=[[:space:]]*.*$'
-  local commented_regex='^[[:space:]]*#[[:space:]]*net\.ipv4\.tcp_congestion_control[[:space:]]*='
+  # 按传入的 key 构造正则（转义 .），严格匹配“带等号”的未注释配置行
+  local key_re="${key//./\\.}"
+  local key_regex="^[[:space:]]*${key_re}[[:space:]]*="
 
-  # 已注释则跳过
-  if LC_ALL=C grep -nE "$commented_regex" "$conf" >/dev/null 2>&1; then
+  # 不存在未注释的同名键则无需处理（已注释的行不影响判断）
+  if ! LC_ALL=C grep -qE "$key_regex" "$conf" 2>/dev/null; then
     return 0
   fi
 
-  # 未注释的同名键则注释
-  if LC_ALL=C grep -nE "$key_regex" "$conf" >/dev/null 2>&1; then
-    sed -i -E 's|^([[:space:]]*)net\.ipv4\.tcp_congestion_control([[:space:]]*=[[:space:]]*.*)?$|\1# net.ipv4.tcp_congestion_control\2|' "$conf" 2>/dev/null || true
-    if LC_ALL=C grep -nE "$commented_regex" "$conf" >/dev/null 2>&1; then
-      log_success "已注释 ${conf} 中的重复配置项：${key}"
-      return 0
-    else
-      log_warning "尝试注释 ${conf} 中的 ${key} 失败"
-      return 1
-    fi
+  sed -i -E "s|^([[:space:]]*)(${key_re}[[:space:]]*=.*)$|\\1# \\2|" "$conf" 2>/dev/null || true
+  if LC_ALL=C grep -qE "$key_regex" "$conf" 2>/dev/null; then
+    log_warning "尝试注释 ${conf} 中的 ${key} 失败"
+    return 1
   fi
+  log_success "已注释 ${conf} 中的重复配置项：${key}"
   return 0
 }
 
@@ -107,8 +102,8 @@ perm_enable_bbr() {
   # 同步设置队列规则为 fq
   sysctl -w net.core.default_qdisc="$QDISC_FQ" >/dev/null 2>&1 || true
   # 注释掉 /etc/sysctl.conf 中的同名键，避免重复配置
-  comment_out_sysctl_conf_key "$SYSCONF_KEY"
-  comment_out_sysctl_conf_key "$SYSCONF_QDISC_KEY"
+  comment_out_sysctl_conf_key "$SYSCONF_KEY" || true
+  comment_out_sysctl_conf_key "$SYSCONF_QDISC_KEY" || true
   # 持久化到 /etc/sysctl.d/
   sysctl_persist "$SYSCONF_KEY" "$BBR_ALGO" "${SYSCONF_FILE##*/}"
   sysctl_persist "$SYSCONF_QDISC_KEY" "$QDISC_FQ" "${SYSCONF_FILE##*/}"
@@ -139,8 +134,8 @@ perm_disable_bbr() {
   # 恢复默认队列规则
   sysctl -w net.core.default_qdisc="$DEFAULT_QDISC" >/dev/null 2>&1 || true
   # 注释掉 /etc/sysctl.conf 中的同名键，避免旧方式残留导致关闭不彻底
-  comment_out_sysctl_conf_key "$SYSCONF_KEY"
-  comment_out_sysctl_conf_key "$SYSCONF_QDISC_KEY"
+  comment_out_sysctl_conf_key "$SYSCONF_KEY" || true
+  comment_out_sysctl_conf_key "$SYSCONF_QDISC_KEY" || true
   # 移除 BBR 专用配置文件
   if [[ -f "$SYSCONF_FILE" ]]; then
     rm -f "$SYSCONF_FILE"
@@ -196,7 +191,8 @@ main() {
     choice=$(cat "$menu_result")
     rm -f "$menu_result"
     # ui_menu 返回 0-based 索引，handle_choice 使用 1-based
-    handle_choice "$((choice + 1))"
+    # 单项操作失败只提示，不让 set -e 退出整个菜单
+    handle_choice "$((choice + 1))" || true
     echo
   done
 }

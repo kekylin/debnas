@@ -91,10 +91,11 @@ process_ipv4_range() {
       log_warning "无效 IPv4 范围地址：${range}"
       return 1
     fi
+    # 10# 强制十进制：前导 0 的段（如 08）否则会被当八进制报错并中断整个脚本
     IFS='.' read -r a b c d <<< "${start_ip}"
-    start_num=$(( (a * 16777216) + (b * 65536) + (c * 256) + d ))
+    start_num=$(( (10#$a * 16777216) + (10#$b * 65536) + (10#$c * 256) + 10#$d ))
     IFS='.' read -r a b c d <<< "${end_ip}"
-    end_num=$(( (a * 16777216) + (b * 65536) + (c * 256) + d ))
+    end_num=$(( (10#$a * 16777216) + (10#$b * 65536) + (10#$c * 256) + 10#$d ))
     if [[ ${start_num} -gt ${end_num} ]]; then
       log_warning "无效 IPv4 范围：${range}（起始地址大于结束地址）"
       return 1
@@ -342,7 +343,8 @@ main() {
       }
       choice=$(cat "$menu_result")
       rm -f "$menu_result"
-      _handle_threat_action "$choice"
+      # 单项操作失败（如依赖/服务检查未通过）只提示，不让 set -e 退出整个工具
+      _handle_threat_action "$choice" || true
       sleep 1
     done
   else

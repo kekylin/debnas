@@ -37,7 +37,7 @@ source "${MODULE_DIR}/connectivity.sh"
 source "${MODULE_DIR}/hosts-manager.sh"
 
 # 导出函数供并行子 shell 使用（所有子模块加载完毕后统一导出）
-export -f resolve_domain get_ip_type test_https_connectivity test_tcp_connectivity test_ping_connectivity test_ip_connectivity 2>/dev/null || true
+export -f resolve_domain get_ip_type is_usable_public_ip test_https_connectivity test_tcp_connectivity test_ping_connectivity test_ip_connectivity 2>/dev/null || true
 
 declare -Ar DNS_IP_BY_NAME=(
   ["AliDNS"]="223.5.5.5"
@@ -56,9 +56,9 @@ done
 
 
 setup_temp_environment() {
-  # 复用 lib/system/tempfile.sh 的 init_temp_dir，创建并初始化 /tmp/debnas
+  # 复用 lib/system/tempfile.sh 的 init_temp_dir；放进本进程 PID 子目录（700，退出时随目录清理）
   init_temp_dir || return 1
-  export TMP_DIR="${DEBNAS_TMP_BASE}"
+  export TMP_DIR="${_DEBNAS_PID_DIR}"
 }
 
 # 生成域名哈希值用于临时文件名
@@ -71,7 +71,9 @@ module_enable_feature() {
   init_domains_config
   install_missing_dependencies dig ping curl || true
   log_info "更新 Hosts..."
-  update_hosts
+  if ! update_hosts; then
+    log_warning "本次未能更新 Hosts（原 hosts 保持不变），将在下次定时任务时重试"
+  fi
   feature_enable "hosts-sync"
   log_success "Hosts 同步已启用"
   module_mark_action
@@ -81,6 +83,12 @@ module_enable_feature() {
 module_disable_feature() {
   feature_disable "hosts-sync"
   cron_unregister "hosts-sync" || true
+  # 同时清除 /etc/hosts 中的 DebNAS 区块，避免禁用后仍沿用过期 IP
+  if remove_hosts_block; then
+    log_info "已移除 ${HOSTS_FILE} 中的 DebNAS Hosts 区块"
+  else
+    log_warning "移除 ${HOSTS_FILE} 中的 DebNAS Hosts 区块失败，请手动检查"
+  fi
   log_success "Hosts 同步已禁用"
   module_mark_action
   return 0
@@ -103,8 +111,8 @@ menu() {
     choice=$(cat "$menu_result")
     rm -f "$menu_result"
     case "$choice" in
-      0) module_enable_feature ;;
-      1) module_disable_feature ;;
+      0) module_enable_feature || true ;;   # 失败只提示，不让 set -e 退出菜单
+      1) module_disable_feature || true ;;
       2) cron_settings_menu "hosts-sync" ;;
     esac
   done

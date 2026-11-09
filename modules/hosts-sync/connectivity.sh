@@ -8,10 +8,11 @@ test_https_connectivity() {
   local ip_type
   ip_type=$(get_ip_type "$ip")
   
+  # 用 --resolve 把域名钉到待测 IP：带正确 SNI 并校验证书，劫持/污染 IP 无法通过
   if [[ "$ip_type" == "ipv6" ]]; then
-    timeout 4 curl -s -k --connect-timeout 2 -m 2 -H "Host: $domain" "https://[$ip]" >/dev/null 2>&1
+    timeout 4 curl -s --connect-timeout 2 -m 3 --resolve "${domain}:443:[${ip}]" "https://${domain}/" -o /dev/null >/dev/null 2>&1
   else
-    timeout 4 curl -s -k --connect-timeout 2 -m 2 -H "Host: $domain" "https://$ip" >/dev/null 2>&1
+    timeout 4 curl -s --connect-timeout 2 -m 3 --resolve "${domain}:443:${ip}" "https://${domain}/" -o /dev/null >/dev/null 2>&1
   fi
 }
 

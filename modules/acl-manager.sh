@@ -48,6 +48,58 @@ validate_permissions() {
   fi
 }
 
+# 系统目录（含子路径）禁止设置 ACL：误操作（尤其递归）会破坏系统权限
+readonly -a ACL_PROTECTED_DIRS=(/bin /boot /dev /etc /lib /lib32 /lib64 /libx32 /proc /root /run /sbin /sys /usr /var)
+
+# 校验目标路径不是根目录或系统目录（按 realpath 解析符号链接后判断）
+validate_acl_path() {
+  local path="$1" real dir
+  real=$(realpath -m -- "$path" 2>/dev/null) || real="$path"
+  if [[ "$real" == "/" ]]; then
+    log_error "拒绝对根目录 / 设置 ACL"
+    return 1
+  fi
+  for dir in "${ACL_PROTECTED_DIRS[@]}"; do
+    if [[ "$real" == "$dir" || "$real" == "$dir"/* ]]; then
+      log_error "拒绝对系统目录设置 ACL：$path（解析为 $real）"
+      return 1
+    fi
+  done
+  return 0
+}
+
+# 校验用户名/组名：只允许合法名称字符且必须存在，防止注入 ","、":" 追加额外 ACL 条目
+# 参数：$1 - user|group，$2 - 名称
+validate_acl_principal() {
+  local kind="$1" name="$2" db="passwd" label="用户"
+  if [[ "$kind" == "group" ]]; then
+    db="group"
+    label="组"
+  fi
+  if [[ ! "$name" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]*\$?$ ]]; then
+    log_error "无效的${label}名：$name"
+    return 1
+  fi
+  if ! getent "$db" "$name" >/dev/null 2>&1; then
+    log_error "${label} $name 不存在"
+    return 1
+  fi
+  return 0
+}
+
+# 校验 u:name / g:name 形式的 ACL 条目
+validate_acl_entry() {
+  local entry="$1"
+  if [[ "$entry" =~ ^u:(.+)$ ]]; then
+    validate_acl_principal user "${BASH_REMATCH[1]}"
+  elif [[ "$entry" =~ ^g:(.+)$ ]]; then
+    validate_acl_principal group "${BASH_REMATCH[1]}"
+  else
+    log_error "无效的 ACL 条目：$entry（格式应为 u:用户名 或 g:组名）"
+    return 1
+  fi
+}
+
 # 查看ACL权限，输出到临时文件
 view_acl() {
   local path
@@ -57,7 +109,7 @@ view_acl() {
     log_error "$path 不存在"
     return
   fi
-  getfacl "$path" 2>&1 | tee "$ACL_OUTPUT"
+  getfacl "$path" 2>&1 | tee "$ACL_OUTPUT" || log_error "读取 $path 的 ACL 失败"
   log_acl_action "查看ACL: $path"
   module_mark_action
 }
@@ -71,8 +123,10 @@ set_user_acl() {
     log_error "$path 不存在"
     return
   fi
+  if ! validate_acl_path "$path"; then return; fi
   username=$(ui_input "请输入用户名")
   [[ -z "$username" ]] && { log_info "已取消"; return; }
+  if ! validate_acl_principal user "$username"; then return; fi
   permissions=$(ui_input "请输入权限 (如 rwx)" "rwx")
   [[ -z "$permissions" ]] && { log_info "已取消"; return; }
   if ! validate_permissions "$permissions"; then return; fi
@@ -110,8 +164,10 @@ set_group_acl() {
     log_error "$path 不存在"
     return
   fi
+  if ! validate_acl_path "$path"; then return; fi
   groupname=$(ui_input "请输入组名")
   [[ -z "$groupname" ]] && { log_info "已取消"; return; }
+  if ! validate_acl_principal group "$groupname"; then return; fi
   permissions=$(ui_input "请输入权限 (如 rwx)" "rwx")
   [[ -z "$permissions" ]] && { log_info "已取消"; return; }
   if ! validate_permissions "$permissions"; then return; fi
@@ -149,8 +205,10 @@ set_default_acl() {
     log_error "目录 $path 不存在，请检查路径。"
     return
   fi
+  if ! validate_acl_path "$path"; then return; fi
   entry=$(ui_input "请输入用户或组 (u:username 或 g:groupname)")
   [[ -z "$entry" ]] && { log_info "已取消"; return; }
+  if ! validate_acl_entry "$entry"; then return; fi
   permissions=$(ui_input "请输入权限 (如 rwx)" "rwx")
   [[ -z "$permissions" ]] && { log_info "已取消"; return; }
   if ! validate_permissions "$permissions"; then return; fi
@@ -177,6 +235,7 @@ remove_default_acl() {
     log_error "目录 $path 不存在，请检查路径。"
     return
   fi
+  if ! validate_acl_path "$path"; then return; fi
 
   [[ "$(ui_confirm "取消默认ACL权限？" "将取消目录 $path 的默认ACL")" == "0" ]] || {
     log_info "已取消"
@@ -200,8 +259,10 @@ remove_acl() {
     log_error "$path 不存在"
     return
   fi
+  if ! validate_acl_path "$path"; then return; fi
   entry=$(ui_input "请输入要删除的ACL条目 (u:username 或 g:groupname)")
   [[ -z "$entry" ]] && { log_info "已取消"; return; }
+  if ! validate_acl_entry "$entry"; then return; fi
   recursive=$(ui_input "是否递归删除？(y/n)" "n")
 
   [[ "$(ui_confirm "删除ACL权限？" "路径: $path\n条目: $entry\n递归: $recursive")" == "0" ]] || {
@@ -234,6 +295,7 @@ batch_set_acl() {
   [[ -z "$pattern" ]] && { log_info "已取消"; return; }
   entry=$(ui_input "请输入用户或组 (u:username 或 g:groupname)")
   [[ -z "$entry" ]] && { log_info "已取消"; return; }
+  if ! validate_acl_entry "$entry"; then return; fi
   permissions=$(ui_input "请输入权限 (如 rwx)" "rwx")
   [[ -z "$permissions" ]] && { log_info "已取消"; return; }
   if ! validate_permissions "$permissions"; then return; fi
@@ -247,6 +309,9 @@ batch_set_acl() {
   for path in $pattern; do
     if [ ! -e "$path" ]; then
       log_warning "$path 不存在，已跳过。"
+      continue
+    fi
+    if ! validate_acl_path "$path"; then
       continue
     fi
     if [[ "$recursive" == "y" ]]; then

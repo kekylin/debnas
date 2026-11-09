@@ -31,6 +31,34 @@ config_changed=0
 
 log_info "配置 Cockpit 网络..."
 
+# 先确认 NetworkManager 已安装：否则注释掉 interfaces 后无人接管网络，重启即失联
+if ! command -v nmcli &>/dev/null && ! systemctl list-unit-files NetworkManager.service &>/dev/null; then
+  log_warning "NetworkManager 未安装，未做任何网络配置变更"
+  exit 0
+fi
+
+# 检测 ifupdown 中的静态/手动网卡配置（lo、DHCP、SLAAC 除外）
+# 这类配置被注释后 NetworkManager 只会按 DHCP 接管，静态 IP 丢失导致远程失联，因此拒绝自动切换
+ifupdown_files=("$interfaces_file")
+for f in /etc/network/interfaces.d/*; do
+  [[ -f "$f" ]] && ifupdown_files+=("$f")
+done
+static_ifaces=""
+if [[ -f "$interfaces_file" ]]; then
+  static_ifaces=$(awk '$1 == "iface" && $2 != "lo" && ($3 == "inet" || $3 == "inet6") \
+    && $4 != "dhcp" && $4 != "auto" && $4 != "loopback" {print FILENAME ": " $0}' \
+    "${ifupdown_files[@]}" 2>/dev/null) || static_ifaces=""
+fi
+if [[ -n "$static_ifaces" ]]; then
+  log_error "检测到 ifupdown 静态/手动网卡配置，自动切换到 NetworkManager 会丢失静态 IP 并导致失联，已中止："
+  while IFS= read -r line; do
+    log_error "  ${line}"
+  done <<< "$static_ifaces"
+  log_info "请先用 nmcli（如 nmcli con add type ethernet ifname <网卡> ipv4.method manual ipv4.addresses <IP/掩码> ipv4.gateway <网关> ipv4.dns <DNS>）"
+  log_info "或在 Cockpit 中建立等价连接，再移除上述 ifupdown 配置后重新运行本模块。"
+  exit "${ERROR_GENERAL}"
+fi
+
 # 注释 /etc/network/interfaces 中的内容，避免与 NetworkManager 冲突
 if [[ -f "$interfaces_file" ]]; then
   current_interfaces=$(cat "$interfaces_file")
@@ -63,12 +91,6 @@ managed=true"
   fi
 else
   log_warning "文件 '$nm_conf_file' 不存在，跳过操作。"
-fi
-
-# 检查 NetworkManager 是否安装
-if ! command -v nmcli &>/dev/null && ! systemctl list-unit-files NetworkManager.service &>/dev/null; then
-  log_warning "NetworkManager 未安装"
-  exit 0
 fi
 
 # 仅在配置变更时重启服务

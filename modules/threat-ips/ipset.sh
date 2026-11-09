@@ -132,31 +132,3 @@ validate_zone() {
     exit "${ERROR_GENERAL}"
   fi
 }
-
-
-# ==================== IP 过滤和添加模块 ====================
-clear_single_ipset_entries() {
-  local ipset_name="$1" ip_type="$2"
-  local existing_entries temp_file
-  if ! check_ipset_exists "${ipset_name}"; then
-    return 0
-  fi
-  existing_entries=$(firewall-cmd --permanent \
-    --ipset="${ipset_name}" --get-entries 2>/dev/null || printf "")
-  if [[ -z "${existing_entries}" ]]; then
-    return 0
-  fi
-  temp_file=$(create_temp_file "clear_${ip_type}" ".txt")
-  printf "%s" "${existing_entries}" | tr ' ' '\n' > "${temp_file}" 2>/dev/null
-  if [[ -s "${temp_file}" ]]; then
-    apply_ip_changes "${temp_file}" "${ipset_name}" "remove" || {
-      log_warning "清空 ${ip_type} IPSet 时出现警告，继续执行"
-    }
-  fi
-}
-
-clear_all_ipsets() {
-  clear_single_ipset_entries "${IPSET_NAME_IPV4}" "IPv4"
-  clear_single_ipset_entries "${IPSET_NAME_IPV6}" "IPv6"
-}
-

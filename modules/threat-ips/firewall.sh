@@ -13,54 +13,75 @@ reload_firewalld() {
       return 1
     fi
     log_success "Firewalld 规则重载成功"
+    # --reload 会清空 fail2ban（firewallcmd-ipset）写入的运行时规则，重启 fail2ban 让封禁恢复
+    if service_is_active fail2ban; then
+      service_ensure fail2ban restarted \
+        || log_warning "Fail2ban 重启失败，其封禁规则可能未恢复，请手动重启 fail2ban"
+    fi
   fi
 }
 
 
-apply_ips_to_single_ipset() {
-  local ip_file="$1" ipset_name="$2" ip_type="$3" mode="$4"
-  local count
-  count=$(wc -l < "${ip_file}" 2>/dev/null || printf "0")
-  if [[ ${count} -eq 0 ]]; then
-    return 0
-  fi
-  if ! apply_ip_changes "${ip_file}" "${ipset_name}" "${mode}"; then
-    log_error "应用 ${ip_type} IP 变更失败"
-    return 1
-  fi
-  printf "%s" "${count}"
+# 将单个 IPSet 增量同步为目标列表（只删多余、只加缺失），永久与运行时配置分别处理
+# 不使用 --reload：重载会清空 fail2ban 等组件写入的运行时规则；失败时旧条目保持不动
+sync_ipset_entries() {
+  local ipset_name="$1" new_file="$2" ip_type="$3"
+  local old_file add_file del_file scope add_count=0 del_count=0
+  old_file=$(create_temp_file "ipset_old" ".txt") || return 1
+  add_file=$(create_temp_file "ipset_add" ".txt") || return 1
+  del_file=$(create_temp_file "ipset_del" ".txt") || return 1
+  LC_ALL=C sort -u "${new_file}" -o "${new_file}"
+
+  for scope in permanent runtime; do
+    local -a scope_args=()
+    if [[ "${scope}" == "permanent" ]]; then
+      scope_args=(--permanent)
+    fi
+    if ! firewall-cmd "${scope_args[@]}" --ipset="${ipset_name}" --get-entries \
+      > "${old_file}" 2>/dev/null; then
+      log_error "读取 ${ip_type} IPSet（${scope}）失败：${ipset_name}"
+      return 1
+    fi
+    tr ' ' '\n' < "${old_file}" | awk 'NF' | LC_ALL=C sort -u > "${old_file}.sorted"
+    mv "${old_file}.sorted" "${old_file}"
+    LC_ALL=C comm -23 "${old_file}" "${new_file}" > "${del_file}"
+    LC_ALL=C comm -13 "${old_file}" "${new_file}" > "${add_file}"
+
+    if [[ -s "${del_file}" ]] && ! firewall-cmd "${scope_args[@]}" --ipset="${ipset_name}" \
+      --remove-entries-from-file="${del_file}" &>/dev/null; then
+      log_error "从 ${ip_type} IPSet（${scope}）移除过期条目失败：${ipset_name}"
+      return 1
+    fi
+    if [[ -s "${add_file}" ]] && ! firewall-cmd "${scope_args[@]}" --ipset="${ipset_name}" \
+      --add-entries-from-file="${add_file}" &>/dev/null; then
+      log_error "向 ${ip_type} IPSet（${scope}）添加条目失败：${ipset_name}"
+      return 1
+    fi
+    if [[ "${scope}" == "permanent" ]]; then
+      add_count=$(wc -l < "${add_file}")
+      del_count=$(wc -l < "${del_file}")
+    fi
+  done
+  rm -f "${old_file}" "${add_file}" "${del_file}"
+  log_info "${ip_type} IPSet 已同步：共 $(wc -l < "${new_file}") 条（新增 ${add_count}，移除 ${del_count}）"
 }
 
-apply_ips_to_ipsets() {
-  local output_file_ipv4="$1" output_file_ipv6="$2" mode="$3"
-  local ipv4_count ipv6_count
-
-  ipv4_count=$(apply_ips_to_single_ipset \
-    "${output_file_ipv4}" "${IPSET_NAME_IPV4}" "IPv4" "${mode}") || return 1
-  ipv6_count=$(apply_ips_to_single_ipset \
-    "${output_file_ipv6}" "${IPSET_NAME_IPV6}" "IPv6" "${mode}") || return 1
-
-  if [[ -z "${ipv4_count}" ]] && [[ -z "${ipv6_count}" ]]; then
-    log_info "无 IP 需要处理"
-    return 0
-  fi
-  log_success \
-    "已处理 IPv4: ${ipv4_count:-0} 条 IPv6: ${ipv6_count:-0} 条"
-}
-
-# 去重排序单个 IP 类型文件
+# 剔除受保护地址后去重排序单个 IP 类型文件
 _process_single_ip_file() {
   local temp_file="$1" output_file="$2" ip_type="$3"
+  if ! filter_protected_entries "${temp_file}" "${ip_type}"; then
+    return 1
+  fi
   if ! deduplicate_and_sort_ips "${temp_file}" "${output_file}"; then
     return 1
   fi
   check_and_limit_ip_count "${output_file}" "${ip_type}" >/dev/null
 }
 
-# 处理 IP 列表：解析、去重、排序、限制数量并应用到 IPSet
+# 处理 IP 列表：解析、剔除受保护地址、去重、排序、限制数量（只生成文件，不改防火墙）
+# 返回：0 得到非空的有效列表；1 列表为空/全部无效（调用方应保留现有封禁）
 process_ip_list() {
   local input_file="$1" output_file_ipv4="$2" output_file_ipv6="$3"
-  local mode="$4"
   local temp_file_ipv4 temp_file_ipv6 temp_input
 
   temp_file_ipv4=$(create_temp_file "expanded_ips_ipv4" ".txt")
@@ -68,10 +89,10 @@ process_ip_list() {
   : > "${temp_file_ipv4}"
   : > "${temp_file_ipv6}"
 
-  temp_input=$(prepare_input_file "${input_file}") || return 0
+  temp_input=$(prepare_input_file "${input_file}") || return 1
 
   if ! parse_ip_entries "${temp_input}" "${temp_file_ipv4}" "${temp_file_ipv6}"; then
-    return 0
+    return 1
   fi
 
   if [[ ! -s "${temp_file_ipv4}" && ! -s "${temp_file_ipv6}" ]]; then
@@ -84,7 +105,10 @@ process_ip_list() {
   _process_single_ip_file "${temp_file_ipv6}" "${output_file_ipv6}" "IPv6" \
     || return 1
 
-  apply_ips_to_ipsets "${output_file_ipv4}" "${output_file_ipv6}" "${mode}"
+  if [[ ! -s "${output_file_ipv4}" && ! -s "${output_file_ipv6}" ]]; then
+    log_error "过滤后无可封禁的 IP"
+    return 1
+  fi
 }
 
 apply_ip_changes() {
@@ -296,22 +320,29 @@ filter_and_add_ips() {
     return 1
   }
 
-  if configure_ipset; then
-    need_reload=1
-  fi
-  clear_all_ipsets
-
-  if ! process_ip_list "${temp_txt}" "${temp_file_ipv4}" "${temp_file_ipv6}" "add"; then
-    log_error "处理 IP 列表失败"
+  # 先解析出新列表；为空或失败时直接返回，绝不先清空现有封禁
+  if ! process_ip_list "${temp_txt}" "${temp_file_ipv4}" "${temp_file_ipv6}"; then
+    log_error "处理 IP 列表失败，保留现有封禁列表"
     return 1
   fi
 
-  # 使用 --permanent 修改 IPSet 后必须重载防火墙才能生效
-  need_reload=1
-
+  # 仅在新建/绑定 IPSet 或运行时缺失 IPSet 时重载（结构变更只能经重载进入运行时）
+  if configure_ipset; then
+    need_reload=1
+  fi
+  local runtime_ipsets
+  runtime_ipsets=$(firewall-cmd --get-ipsets 2>/dev/null) || runtime_ipsets=""
+  if ! grep -qw "${IPSET_NAME_IPV4}" <<< "${runtime_ipsets}" \
+    || ! grep -qw "${IPSET_NAME_IPV6}" <<< "${runtime_ipsets}"; then
+    need_reload=1
+  fi
   if ! reload_firewalld ${need_reload}; then
     log_error "Firewalld 重载失败"
     return 1
   fi
+
+  sync_ipset_entries "${IPSET_NAME_IPV4}" "${temp_file_ipv4}" "IPv4" || return 1
+  sync_ipset_entries "${IPSET_NAME_IPV6}" "${temp_file_ipv6}" "IPv6" || return 1
+  log_success "威胁 IP 列表已更新（未重载防火墙）"
 }
 

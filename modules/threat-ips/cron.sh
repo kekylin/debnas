@@ -4,6 +4,25 @@
 set -euo pipefail
 IFS=$'\n\t'
 
+# ==================== 并发控制 ====================
+# 定时任务与手动操作互斥，避免两个进程同时增删 IPSet
+# 参数：$1 - 等待秒数（0 表示不等待）
+acquire_update_lock() {
+  local wait_seconds="${1:-0}"
+  local lock_dir="/run/lock"
+  [[ -d "${lock_dir}" && -w "${lock_dir}" ]] || lock_dir="/tmp"
+  exec 9>"${lock_dir}/debnas-threat-ips.lock" || return 1
+  if [[ "${wait_seconds}" -gt 0 ]]; then
+    flock -w "${wait_seconds}" 9
+  else
+    flock -n 9
+  fi
+}
+
+release_update_lock() {
+  exec 9>&-
+}
+
 # ==================== 自动更新管理 ====================
 enable_auto_update() {
   local threat_level input
@@ -53,11 +72,16 @@ enable_auto_update() {
     log_warning \
       "首次更新失败，但自动更新已启用（将在下次定时任务时重试）"
   fi
+  release_update_lock
   log_success "威胁封禁已启用：威胁等级 ${threat_level}"
   module_mark_action
 }
 
 disable_auto_update() {
+  if ! acquire_update_lock 300; then
+    log_error "另一个威胁 IP 更新任务仍在运行，请稍后重试"
+    return 1
+  fi
   feature_disable "threat-ips"
   cron_unregister "threat-ips" || true
 
@@ -86,6 +110,7 @@ disable_auto_update() {
     fi
   fi
 
+  release_update_lock
   log_success "威胁 IP 已禁用"
   module_mark_action
 }
@@ -108,6 +133,11 @@ update_threat_ips() {
     log_warning \
       "无效威胁等级：${threat_level}，使用默认：${DEFAULT_THREAT_LEVEL}"
     threat_level=${DEFAULT_THREAT_LEVEL}
+  fi
+
+  if ! acquire_update_lock 0; then
+    log_warning "另一个威胁 IP 更新任务正在运行，跳过本次更新"
+    return 1
   fi
 
   temp_gz=$(create_temp_file "threat" ".gz")

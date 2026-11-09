@@ -244,18 +244,55 @@ select_best_ips() {
 # 解析域名并选择最优 IP 地址
 # 参数：$1 - 域名（格式：域名|组名），$2 - 输出文件路径
 
-cleanup_old_hosts() {
-  if grep -q "$START_MARK" "${HOSTS_FILE}" && grep -q "$END_MARK" "${HOSTS_FILE}"; then
-    sed -i "/$START_MARK/,/$END_MARK/d" "${HOSTS_FILE}"
+# 输出移除 DebNAS 区块并去掉末尾空行后的 hosts 内容（不修改文件本身）
+# 仅删除成对的 START/END 区块；缺少 END 的残缺区块原样保留，避免误删用户条目
+# 用户 hosts 中间的空行保持不变
+render_hosts_without_block() {
+  awk -v start="$START_MARK" -v end="$END_MARK" '
+    function emit(line) {
+      if (line ~ /^[[:space:]]*$/) { blanks = blanks line "\n"; return }
+      printf "%s%s\n", blanks, line; blanks = ""
+    }
+    !inblock && $0 == start { inblock = 1; held = $0 "\n"; next }
+    inblock {
+      if ($0 == end) { inblock = 0; held = ""; next }
+      held = held $0 "\n"; next
+    }
+    { emit($0) }
+    END {
+      if (inblock) { n = split(held, arr, "\n"); for (i = 1; i < n; i++) emit(arr[i]) }
+    }
+  ' "${HOSTS_FILE}"
+}
+
+# 将内容写回 /etc/hosts：原地覆盖，保留原文件的权限/属主/inode（兼容 bind mount）
+# 参数：$1 - 包含完整新内容的文件
+write_hosts_file() {
+  local src="$1"
+  [[ -s "$src" ]] || return 1
+  cat "$src" > "${HOSTS_FILE}"
+}
+
+# 从 /etc/hosts 移除 DebNAS 区块（禁用同步时调用）
+remove_hosts_block() {
+  [[ -f "${HOSTS_FILE}" ]] || return 0
+  if ! grep -qxF "$START_MARK" "${HOSTS_FILE}"; then
+    return 0
   fi
-  
   local temp_hosts
   temp_hosts=$(create_temp_file "hosts-cleanup") || {
     echo "无法创建临时文件" >&2
     return 1
   }
-  tac "${HOSTS_FILE}" 2>/dev/null | sed '/^[[:space:]]*$/d' | tac > "${temp_hosts}" || cat "${HOSTS_FILE}" > "${temp_hosts}"
-  mv "${temp_hosts}" "${HOSTS_FILE}"
+  render_hosts_without_block > "${temp_hosts}" || {
+    rm -f "${temp_hosts}"
+    return 1
+  }
+  write_hosts_file "${temp_hosts}" || {
+    rm -f "${temp_hosts}"
+    return 1
+  }
+  rm -f "${temp_hosts}"
 }
 
 generate_hosts_header() {
@@ -367,6 +404,7 @@ process_all_domains() {
 }
 
 # 更新 /etc/hosts 文件
+# 先完成全部解析，再一次性写回；无任何成功解析时保留原 hosts 不动
 # 返回：0 成功，非 0 失败
 update_hosts() {
   if [[ $CRON_MODE -eq 0 ]]; then
@@ -375,17 +413,8 @@ update_hosts() {
   
   export TMP_DIR START_MARK END_MARK HOSTS_FILE
   
-  cleanup_old_hosts
-  
-  local last_line
-  last_line=$(tail -n 1 "${HOSTS_FILE}" 2>/dev/null | sed 's/[[:space:]]*$//' || echo "")
-  local need_blank_line=0
-  if [[ -n "$last_line" ]]; then
-    need_blank_line=1
-  fi
-  
-  local hosts_content
-  hosts_content=$(create_temp_file "hosts-content") || {
+  local block_content
+  block_content=$(create_temp_file "hosts-block") || {
     if [[ $CRON_MODE -eq 0 ]]; then
       log_error "无法创建临时文件"
     else
@@ -393,12 +422,46 @@ update_hosts() {
     fi
     return 1
   }
-  generate_hosts_header "${hosts_content}" "$need_blank_line"
-  
-  process_all_domains "${hosts_content}"
-  
+  process_all_domains "${block_content}"
+
+  if [[ $SUCCESS_DOMAINS -eq 0 ]]; then
+    rm -f "${block_content}"
+    if [[ $CRON_MODE -eq 0 ]]; then
+      log_warning "没有任何域名解析成功，保留现有 Hosts 不变"
+    else
+      echo "没有任何域名解析成功，保留现有 Hosts 不变" >&2
+    fi
+    return 1
+  fi
+
+  local hosts_content
+  hosts_content=$(create_temp_file "hosts-content") || {
+    rm -f "${block_content}"
+    echo "无法创建临时文件" >&2
+    return 1
+  }
+  render_hosts_without_block > "${hosts_content}"
+
+  local need_blank_line=0
+  if [[ -s "${hosts_content}" ]]; then
+    need_blank_line=1
+  fi
+  local block_header
+  block_header=$(create_temp_file "hosts-header") || {
+    rm -f "${block_content}" "${hosts_content}"
+    echo "无法创建临时文件" >&2
+    return 1
+  }
+  generate_hosts_header "${block_header}" "$need_blank_line"
+  cat "${block_header}" "${block_content}" >> "${hosts_content}"
   generate_hosts_footer "${hosts_content}"
-  cat "${hosts_content}" >> "${HOSTS_FILE}"
+  rm -f "${block_header}" "${block_content}"
+
+  if ! write_hosts_file "${hosts_content}"; then
+    rm -f "${hosts_content}"
+    echo "写入 ${HOSTS_FILE} 失败" >&2
+    return 1
+  fi
   rm -f "${hosts_content}"
   
   if [[ $CRON_MODE -eq 0 ]]; then
