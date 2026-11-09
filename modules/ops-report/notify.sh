@@ -7,7 +7,10 @@ ops_get_notify_email() {
   if [[ ! -f "$OPS_EMAIL_CONFIG" ]] || [[ ! -s "$OPS_EMAIL_CONFIG" ]]; then
     return 1
   fi
-  head -1 "$OPS_EMAIL_CONFIG" 2>/dev/null | tr -d '[:space:]'
+  local email
+  email=$(head -1 "$OPS_EMAIL_CONFIG" 2>/dev/null | tr -d '[:space:]' || true)
+  [[ -n "$email" ]] || return 1
+  printf '%s' "$email"
 }
 
 ops_build_markdown_report() {
@@ -58,8 +61,13 @@ ops_send_report_email() {
   }
 
   local hostname subject
-  hostname=$(hostname 2>/dev/null || echo "DebNAS")
+  # 主机名去掉控制字符，防止邮件头注入；中文主题按 RFC 2047 编码
+  hostname=$(hostname 2>/dev/null | tr -d '\000-\037\177' || true)
+  [[ -n "$hostname" ]] || hostname="DebNAS"
   subject="DebNAS 运维报告：${hostname}（最近 ${days} 天）"
+  if command -v base64 >/dev/null 2>&1; then
+    subject="=?UTF-8?B?$(printf '%s' "$subject" | base64 -w0)?="
+  fi
 
   local attach="" attach_name=""
   if [[ "${OPS_EMAIL_ATTACH_HTML:-1}" -eq 1 ]] \
@@ -77,6 +85,7 @@ ops_send_report_email() {
 
   local boundary send_rc
   boundary="----=_DebNAS_$(date +%s)_$$"
+  # exim4 -oi：正文中单独一行 "." 不会被当作消息结束而截断邮件
   log_info "发送运维报告邮件 → ${notify_email}"
   if [[ -n "$attach" ]]; then
     {
@@ -99,7 +108,7 @@ ops_send_report_email() {
       base64 "$attach"
       echo
       echo "--${boundary}--"
-    } | timeout 30 /usr/sbin/exim4 -t 2>/dev/null && send_rc=0 || send_rc=1
+    } | timeout 30 /usr/sbin/exim4 -oi -t 2>/dev/null && send_rc=0 || send_rc=1
   else
     {
       echo "Subject: ${subject}"
@@ -108,7 +117,7 @@ ops_send_report_email() {
       echo "Content-Transfer-Encoding: 8bit"
       echo
       ops_build_markdown_report
-    } | timeout 30 /usr/sbin/exim4 -t 2>/dev/null && send_rc=0 || send_rc=1
+    } | timeout 30 /usr/sbin/exim4 -oi -t 2>/dev/null && send_rc=0 || send_rc=1
   fi
 
   if [[ "$send_rc" -eq 0 ]]; then

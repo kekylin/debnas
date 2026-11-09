@@ -168,19 +168,21 @@ ops_collect_security() {
       for (ip in last_ts) print ip, last_ts[ip]
     }' | sort -k1,1 || true)
 
-  local raw_fail=""
+  # 失败登录只读 auth(4)/authpriv(10) 两个 syslog facility（sshd 与 pam_unix 写入处），
+  # 走 journal 字段索引；不再全量扫描周期内整个 journal（年报在 2 核机器上会被 timeout 截断）
+  local raw_fail="" journal_scanned=0
+  local fail_pattern='Failed password|Invalid user|authentication failure|Connection closed by authenticating user'
   if (command -v wtmpdb >/dev/null 2>&1 || [[ "$(get_system_version 2>/dev/null || true)" == 13* ]]) \
     && command -v journalctl >/dev/null 2>&1; then
-    raw_fail=$(timeout 30 journalctl --since "${since}" --no-pager 2>/dev/null \
-      | grep -Ei 'Failed password|Invalid user|authentication failure|Connection closed by authenticating user' \
-      || true)
+    raw_fail=$(timeout 30 journalctl SYSLOG_FACILITY=4 SYSLOG_FACILITY=10 --since "${since}" --no-pager 2>/dev/null \
+      | grep -Ei "$fail_pattern" || true)
+    journal_scanned=1
   elif command -v lastb >/dev/null 2>&1; then
     raw_fail=$(timeout 20 lastb -F -s "${since}" 2>/dev/null || true)
   fi
-  if [[ -z "$raw_fail" ]] && command -v journalctl >/dev/null 2>&1; then
-    raw_fail=$(timeout 30 journalctl --since "${since}" --no-pager 2>/dev/null \
-      | grep -Ei 'Failed password|Invalid user|authentication failure|Connection closed by authenticating user' \
-      || true)
+  if [[ -z "$raw_fail" && "$journal_scanned" -eq 0 ]] && command -v journalctl >/dev/null 2>&1; then
+    raw_fail=$(timeout 30 journalctl SYSLOG_FACILITY=4 SYSLOG_FACILITY=10 --since "${since}" --no-pager 2>/dev/null \
+      | grep -Ei "$fail_pattern" || true)
   fi
   OPS_LOGIN_FAIL_COUNT=$(printf '%s\n' "$raw_fail" | grep -v '^$' | wc -l || true)
   OPS_FAIL_IP_STATS=$(printf '%s\n' "$raw_fail" \
@@ -198,9 +200,12 @@ ops_collect_security() {
 
   if command -v fail2ban-client >/dev/null 2>&1; then
     local jails jail banned total=0
+    local -a jail_list=()
     jails=$(timeout 10 fail2ban-client status 2>/dev/null \
       | grep 'Jail list:' | cut -d: -f2- || true)
-    for jail in $jails; do
+    # Jail list 形如 "sshd, recidive"；全局 IFS=$'\n\t' 下 $jails 不会按逗号/空格分词
+    IFS=', ' read -r -a jail_list <<< "$jails"
+    for jail in "${jail_list[@]}"; do
       jail=$(printf '%s' "$jail" | tr -d '[:space:]')
       [[ -n "$jail" ]] || continue
       banned=$(timeout 10 fail2ban-client status "$jail" 2>/dev/null \
@@ -308,8 +313,12 @@ ops_collect_suspicious_processes() {
     p="${pid##*/}"
     exe=$(readlink "$pid/exe" 2>/dev/null || true)
     cwd=$(readlink "$pid/cwd" 2>/dev/null || true)
-    cmdline=$(tr '\0' ' ' < "$pid/cmdline" 2>/dev/null || true)
-    comm=$(cat "$pid/comm" 2>/dev/null || true)
+    # comm/cmdline 可被任意本地用户控制：换行/制表等控制字符替换为空格，
+    # 防止伪造多行记录；cmdline 截断避免报告被超长参数撑大（HTML 转义在渲染层完成）
+    cmdline=$(tr '\000-\037\177' ' ' < "$pid/cmdline" 2>/dev/null || true)
+    cmdline="${cmdline:0:300}"
+    comm=$(tr '\000-\037\177' ' ' < "$pid/comm" 2>/dev/null || true)
+    comm="${comm% }"
     reason=""
     # 1) 二进制已删除（运行中被替换/卸载）
     if [[ "$exe" == *" (deleted)" ]]; then
@@ -326,7 +335,8 @@ ops_collect_suspicious_processes() {
     # 3) 隐藏进程名（argv[0] 或 comm 以 . 开头）
     if [[ -z "$reason" ]]; then
       argv0="${cmdline%% *}"
-      if [[ "$comm" == .* || "$argv0" == .* ]]; then
+      # 排除 ./prog、../prog 这类相对路径启动的正常写法
+      if [[ "$comm" == .* || ( "$argv0" == .* && "$argv0" != ./* && "$argv0" != ../* ) ]]; then
         reason="隐藏进程名：${argv0:-$comm}"
       fi
     fi
@@ -361,7 +371,7 @@ ops_collect_security_drift() {
   ssh_content=$( {
       awk 'NF && $1 !~ /^#/' /etc/ssh/sshd_config 2>/dev/null
       find /root /home -maxdepth 4 -type f -name authorized_keys -print0 2>/dev/null \
-        | xargs -0 -r -n1 sh -c 'printf "%s: " "$1"; sha256sum "$1" | awk "{print \$1}"' sh
+        | xargs -0 -r -n1 sh -c 'printf "%s: " "$1"; timeout 5 sha256sum "$1" | awk "{print \$1}"' sh
     } 2>/dev/null || true)
   fw_content=$( { iptables-save 2>/dev/null || nft list ruleset 2>/dev/null; } \
     | grep -v '^#' | sed -E 's/\[[0-9]+:[0-9]+\]//g; s/^[[:space:]]+//; s/[[:space:]]+$//' \
@@ -369,7 +379,7 @@ ops_collect_security_drift() {
   cron_content=$( {
       awk 'NF && $1 !~ /^#/' /etc/crontab 2>/dev/null
       find /etc/cron.d /etc/cron.daily /etc/cron.hourly /etc/cron.weekly /etc/cron.monthly -type f -print0 2>/dev/null \
-        | xargs -0 -r -n1 sh -c 'printf "%s: " "$1"; sha256sum "$1" | awk "{print \$1}"' sh
+        | xargs -0 -r -n1 sh -c 'printf "%s: " "$1"; timeout 5 sha256sum "$1" | awk "{print \$1}"' sh
     } 2>/dev/null || true)
   user_content=$( {
       getent passwd 2>/dev/null
@@ -463,15 +473,21 @@ ops_collect_security_drift() {
       OPS_LISTEN_PORT_BASELINE_STATE="未发现"
       OPS_LISTEN_PORT_BASELINE_NOTE="周期内无新增监听端口"
     else
-      new_ports=$(comm -13 <(printf '%s\n' "$old_ports") <(printf '%s\n' "$port_lines") | grep -v '^$')
+      # 只减少端口时 comm 无输出，grep 返回 1，pipefail 下会让 set -e 终止整个报告
+      new_ports=$(comm -13 <(printf '%s\n' "$old_ports") <(printf '%s\n' "$port_lines") | grep -v '^$' || true)
       new_count=$(printf '%s\n' "$new_ports" | grep -v '^$' | wc -l || true)
       new_note=$(printf '%s\n' "$new_ports" | head -10 | paste -sd ',' -)
       if [[ "$new_count" -gt 10 ]]; then
         new_note="${new_note} 等 ${new_count} 项"
       fi
-      OPS_NEW_LISTEN_PORT_COUNT="$new_count"
-      OPS_LISTEN_PORT_BASELINE_STATE="发现 ${new_count} 个"
-      OPS_LISTEN_PORT_BASELINE_NOTE="新增监听端口：${new_note}"
+      if [[ "$new_count" -gt 0 ]]; then
+        OPS_NEW_LISTEN_PORT_COUNT="$new_count"
+        OPS_LISTEN_PORT_BASELINE_STATE="发现 ${new_count} 个"
+        OPS_LISTEN_PORT_BASELINE_NOTE="新增监听端口：${new_note}"
+      else
+        OPS_LISTEN_PORT_BASELINE_STATE="未发现"
+        OPS_LISTEN_PORT_BASELINE_NOTE="周期内无新增监听端口（部分端口已关闭）"
+      fi
       printf '%s\n' "$port_lines" > "$port_file"
     fi
   else

@@ -30,14 +30,18 @@ ops_collect_health() {
 
       local smart_output health_line temp_line
       smart_output=$(timeout 15 smartctl -H -A -d auto "$disk" 2>/dev/null || true)
-      health_line=$(printf '%s\n' "$smart_output" | grep -i "overall-health" \
+      # ATA 为 overall-health，SAS/SCSI 为 SMART Health Status
+      health_line=$(printf '%s\n' "$smart_output" | grep -Ei "overall-health|SMART Health Status" \
         | head -1 | sed 's/^[[:space:]]*//' || true)
-      temp_line=$(printf '%s\n' "$smart_output" \
-        | grep -E 'Temperature_Celsius|Current_Temperature' | head -1 \
-        | awk '{print $(NF-1)}' || true)
+      # 温度：ATA 属性表 RAW_VALUE 在第 10 列（$(NF-1) 在带 "(Min/Max ..)" 时会取错）；
+      # NVMe 为 "Temperature: 36 Celsius"；SCSI 为 "Current Drive Temperature: 36 C"
+      temp_line=$(printf '%s\n' "$smart_output" | awk '
+        ($2 == "Temperature_Celsius" || $2 == "Airflow_Temperature_Cel") && $10 ~ /^[0-9]+$/ { print $10; exit }
+        /^Temperature:/ && $2 ~ /^[0-9]+$/ { print $2; exit }
+        /^Current Drive Temperature:/ && $4 ~ /^[0-9]+$/ { print $4; exit }' || true)
 
-      smart_rows="${smart_rows:+${smart_rows}\n}${disk}: ${health_line:-状态不可读}${temp_line:+, ${temp_line}C}"
-      if [[ -n "$health_line" ]] && ! grep -qi "passed" <<< "$health_line"; then
+      smart_rows="${smart_rows:+${smart_rows}；}${disk}: ${health_line:-状态不可读}${temp_line:+, ${temp_line}C}"
+      if [[ -n "$health_line" ]] && ! grep -Eqi "passed|: OK$" <<< "$health_line"; then
         OPS_HEALTH_SMART_ALERT=1
       fi
     done < <(lsblk -dnbo NAME,SIZE,TYPE 2>/dev/null || true)

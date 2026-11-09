@@ -53,7 +53,7 @@ ops_period_reports_dir() {
 }
 
 ops_html_escape() {
-  printf '%s' "$1" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g; s/"/\&quot;/g'
+  printf '%s' "$1" | sed "s/&/\\&amp;/g; s/</\\&lt;/g; s/>/\\&gt;/g; s/\"/\\&quot;/g; s/'/\\&#39;/g"
 }
 
 ops_normalize_date() {
@@ -237,24 +237,45 @@ ops_collect_resources() {
     local f cpu_day mem_day net_day_rx net_day_tx day_label file_s
     local full_day cpu_day_max mem_day_max disk_day_peak
     local -a sysstat_files=()
+    # 只取报告周期内有写入的二进制数据文件（sa[0-9]*，排除 sa2 生成的 sarDD 文本报告），
+    # 否则周报会把 HISTORY=400 天的全部历史算进平均值，且每次全量跑 sar
+    local sysstat_since="${OPS_REPORT_SINCE:-$(date -d "${OPS_REPORT_DAYS:-7} days ago" '+%Y-%m-%d %H:%M:%S')}"
     while IFS= read -r f; do
       [[ -n "$f" ]] && sysstat_files+=("$f")
-    done < <(find /var/log/sysstat -maxdepth 1 -type f -name 'sa*' \
-      -printf '%T@ %p\n' 2>/dev/null | sort -n | awk '{print $2}')
+    done < <(find /var/log/sysstat -maxdepth 1 -type f -name 'sa[0-9]*' \
+      -newermt "$sysstat_since" -printf '%T@ %p\n' 2>/dev/null | sort -n | awk '{print $2}')
 
+    # COMPRESSAFTER=14 后历史文件被压缩，sar 无法直接读取，需先解压到临时文件
+    local sysstat_tmp="" sar_src sar_nl=$'\n'
     for f in "${sysstat_files[@]}"; do
       [[ -f "$f" ]] || continue
+      sar_src="$f"
+      case "$f" in
+        *.xz|*.gz|*.bz2|*.zst)
+          if [[ -z "$sysstat_tmp" ]]; then
+            sysstat_tmp=$(create_temp_file "ops-sysstat" ".sa" 2>/dev/null || true)
+          fi
+          [[ -n "$sysstat_tmp" ]] || continue
+          case "$f" in
+            *.xz) timeout 30 xz -dc -- "$f" > "$sysstat_tmp" 2>/dev/null || continue ;;
+            *.gz) timeout 30 gzip -dc -- "$f" > "$sysstat_tmp" 2>/dev/null || continue ;;
+            *.bz2) timeout 30 bzip2 -dc -- "$f" > "$sysstat_tmp" 2>/dev/null || continue ;;
+            *.zst) timeout 30 zstd -qdc -- "$f" > "$sysstat_tmp" 2>/dev/null || continue ;;
+          esac
+          sar_src="$sysstat_tmp"
+          ;;
+      esac
       local file_u file_r file_n file_d
-      file_u=$(timeout 10 sar -u -f "$f" 2>/dev/null || true)
-      file_r=$(timeout 10 sar -r -f "$f" 2>/dev/null || true)
-      file_s=$(timeout 10 sar -S -f "$f" 2>/dev/null || true)
-      file_n=$(timeout 10 sar -n DEV -f "$f" 2>/dev/null || true)
-      file_d=$(timeout 10 sar -d -f "$f" 2>/dev/null || true)
-      OPS_SAR_CPU_LINES="${OPS_SAR_CPU_LINES:+${OPS_SAR_CPU_LINES}\n}${file_u}"
-      OPS_SAR_MEM_LINES="${OPS_SAR_MEM_LINES:+${OPS_SAR_MEM_LINES}\n}${file_r}"
-      OPS_SAR_SWAP_LINES="${OPS_SAR_SWAP_LINES:+${OPS_SAR_SWAP_LINES}\n}${file_s}"
-      OPS_SAR_NET_LINES="${OPS_SAR_NET_LINES:+${OPS_SAR_NET_LINES}\n}${file_n}"
-      OPS_SAR_DISK_LINES="${OPS_SAR_DISK_LINES:+${OPS_SAR_DISK_LINES}\n}${file_d}"
+      file_u=$(timeout 10 sar -u -f "$sar_src" 2>/dev/null || true)
+      file_r=$(timeout 10 sar -r -f "$sar_src" 2>/dev/null || true)
+      file_s=$(timeout 10 sar -S -f "$sar_src" 2>/dev/null || true)
+      file_n=$(timeout 10 sar -n DEV -f "$sar_src" 2>/dev/null || true)
+      file_d=$(timeout 10 sar -d -f "$sar_src" 2>/dev/null || true)
+      OPS_SAR_CPU_LINES="${OPS_SAR_CPU_LINES:+${OPS_SAR_CPU_LINES}${sar_nl}}${file_u}"
+      OPS_SAR_MEM_LINES="${OPS_SAR_MEM_LINES:+${OPS_SAR_MEM_LINES}${sar_nl}}${file_r}"
+      OPS_SAR_SWAP_LINES="${OPS_SAR_SWAP_LINES:+${OPS_SAR_SWAP_LINES}${sar_nl}}${file_s}"
+      OPS_SAR_NET_LINES="${OPS_SAR_NET_LINES:+${OPS_SAR_NET_LINES}${sar_nl}}${file_n}"
+      OPS_SAR_DISK_LINES="${OPS_SAR_DISK_LINES:+${OPS_SAR_DISK_LINES}${sar_nl}}${file_d}"
 
       cpu_day=$(printf '%s\n' "$file_u" | awk '
         function is_num(x) { return x ~ /^[0-9]+([.][0-9]+)?$/ }
@@ -345,6 +366,9 @@ ops_collect_resources() {
         OPS_NET_DAILY_LIST="${OPS_NET_DAILY_LIST:+${OPS_NET_DAILY_LIST}, }$(awk -v r="$net_day_rx" -v t="$net_day_tx" 'BEGIN { printf "%.2f", r + t }')"
       fi
     done
+    if [[ -n "$sysstat_tmp" ]]; then
+      rm -f "$sysstat_tmp"
+    fi
 
     local cpu_stats mem_stats net_stats
     cpu_stats=$(printf '%s\n' "${OPS_SAR_CPU_LINES}" | awk '
@@ -508,9 +532,19 @@ ops_collect_availability() {
   local -a boot_fields=()
   local boot_id sd st stz ed et etz start_epoch end_epoch
   local overlap_start overlap_end reboot_count=0 planned_count=0 unplanned_count=0
-  local boot_output
+  local boot_output boot_line boot_token
+  local -a boot_raw=()
   boot_output=$(journalctl --list-boots --no-pager 2>/dev/null || true)
-  while IFS=' ' read -r -a boot_fields; do
+  while IFS= read -r boot_line; do
+    # systemd 252（Debian 12）格式为 "... CST—Mon ..."（em dash 无空格），
+    # 253+ 为表格格式；统一把 em dash 换成空格并去掉星期字段后按 8 字段解析
+    boot_line="${boot_line//—/ }"
+    IFS=' ' read -r -a boot_raw <<< "$boot_line"
+    boot_fields=()
+    for boot_token in "${boot_raw[@]}"; do
+      [[ "$boot_token" =~ ^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)$ ]] && continue
+      boot_fields+=("$boot_token")
+    done
     [[ ${#boot_fields[@]} -ge 8 ]] || continue
     boot_id="${boot_fields[1]}"
     [[ "$boot_id" =~ ^[0-9a-f]{8,}$ ]] || continue
@@ -523,8 +557,10 @@ ops_collect_availability() {
     else
       continue
     fi
-    start_epoch=$(date -d "$sd $st $stz" '+%s' 2>/dev/null || true)
-    end_epoch=$(date -d "$ed $et $etz" '+%s' 2>/dev/null || true)
+    # journalctl 按本地时区输出；不把时区缩写交给 date 解析（GNU date 把 CST 当作 UTC-6，
+    # 在 Asia/Shanghai 下会偏 14 小时）
+    start_epoch=$(date -d "$sd $st" '+%s' 2>/dev/null || true)
+    end_epoch=$(date -d "$ed $et" '+%s' 2>/dev/null || true)
     [[ "$start_epoch" =~ ^[0-9]+$ ]] || continue
     [[ "$end_epoch" =~ ^[0-9]+$ ]] || end_epoch="$until_epoch"
     overlap_start=$(( start_epoch > since_epoch ? start_epoch : since_epoch ))
@@ -1339,6 +1375,7 @@ ops_render_update_table() {
   local key total sec_count reg_count show_count rowspan first idx
   local item pkg type old new shown_sec shown_reg rem_sec rem_reg
   for key in "${keys[@]:-}"; do
+    [[ -n "$key" ]] || continue
     session_count=$((session_count + 1))
     if [[ "$session_count" -gt "$max_sessions" ]]; then
       hidden_sessions=$((hidden_sessions + 1))
@@ -1524,7 +1561,7 @@ ops_render_abnormal_login_row() {
     source_label="$source"
     case "$source" in
       local|localhost) source_label="${source}（本地）" ;;
-      192.168.*|10.*|172.*) source_label="${source}（局域网）" ;;
+      192.168.*|10.*|172.1[6-9].*|172.2[0-9].*|172.3[01].*) source_label="${source}（局域网）" ;;
       *) source_label="${source}（公网）" ;;
     esac
     out="${out}
@@ -1775,6 +1812,7 @@ ops_render_event_pulse() {
 
   printf '<g>'
   for node in "${nodes[@]:-}"; do
+    [[ -n "$node" ]] || continue
     IFS='|' read -r x y cat cls label <<< "$node"
     r=6
     [[ "$cls" == "critical" ]] && r=7
@@ -2009,6 +2047,7 @@ ops_render_source_ip_table() {
   local out="" ip_type s f fail_cls last_label
   local -i total_success=0 total_failed=0
   for ip in "${ips[@]:-}"; do
+    [[ -n "$ip" ]] || continue
     ip=$(ops_normalize_ip "$ip")
     s="${success["$ip"]:-0}"
     f="${failed["$ip"]:-0}"
@@ -2215,14 +2254,14 @@ ops_render_anomaly_table() {
       "$service_badge" "$service_state" "$service_note")
   fi
   cat <<EOF
-<tr><td>${login_label}</td><td>${login_badge}</td><td class="${login_cls}">${login_state}</td><td>${login_note}</td></tr>
-<tr><td>${disk_label}</td><td>${disk_badge}</td><td class="${disk_cls}">${disk_state}</td><td>${disk_note}</td></tr>
+<tr><td>${login_label}</td><td>${login_badge}</td><td class="${login_cls}">${login_state}</td><td>$(ops_html_escape "$login_note")</td></tr>
+<tr><td>$(ops_html_escape "$disk_label")</td><td>${disk_badge}</td><td class="${disk_cls}">${disk_state}</td><td>$(ops_html_escape "$disk_note")</td></tr>
 <tr><td>安全更新</td><td><span class="badge $([ "$security_state" == "待装" ] && echo badge-low || echo badge-clear)">$([ "$security_state" == "待装" ] && echo 低风险 || echo 正常)</span></td><td class="$([ "$security_state" == "待装" ] && echo warn || echo good)">${security_state}</td><td>${security_note}</td></tr>
 ${service_row}
 <tr><td>CPU 持续高占用</td><td>${cpu_badge}</td><td class="good">${cpu_state}</td><td>${cpu_note}</td></tr>
 <tr><td>内存持续高占用</td><td>${mem_badge}</td><td class="good">${mem_state}</td><td>${mem_note}</td></tr>
 <tr><td>网络异常出站流量</td><td><span class="badge badge-clear">正常</span></td><td class="good">${net_state}</td><td>${net_note}</td></tr>
-<tr><td>可疑程序</td><td>${proc_badge}</td><td class="${proc_cls}">${proc_state}</td><td>${proc_note}</td></tr>
+<tr><td>可疑程序</td><td>${proc_badge}</td><td class="${proc_cls}">${proc_state}</td><td>$(ops_html_escape "$proc_note")</td></tr>
 <tr><td>新监听端口</td><td>${port_badge}</td><td class="${port_cls}">${port_state}</td><td>${port_note}</td></tr>
 EOF
 }
@@ -2320,7 +2359,7 @@ ${report_css}
           <div><span>报告周期</span><strong>$(date -d "${OPS_REPORT_SINCE}" '+%Y-%m-%d' 2>/dev/null || echo "${OPS_REPORT_SINCE%% *}") ~ $(date '+%Y-%m-%d')</strong></div>
         </div>
       </div>
-      <div class="header-sub">$(hostname 2>/dev/null || echo "debnas") · ${host_ip}</div>
+      <div class="header-sub">$(ops_html_escape "$(hostname 2>/dev/null || echo "debnas")") · $(ops_html_escape "$host_ip")</div>
     </div>
 
     <div class="content">
@@ -2375,7 +2414,7 @@ ${report_css}
       </div>
 
       <h2>2. 登录与身份审计</h2>
-      <p class="section-lead">成功登录 ${OPS_LOGIN_SUCCESS_COUNT} 次，失败 ${OPS_LOGIN_FAIL_COUNT} 次，封禁 $(ops_ban_label "${OPS_FAIL_BAN_COUNT:-未启用}")；${OPS_ABNORMAL_LOGIN_COUNT:-0} 项异常登录待确认${fail_source_summary}。</p>
+      <p class="section-lead">成功登录 ${OPS_LOGIN_SUCCESS_COUNT} 次，失败 ${OPS_LOGIN_FAIL_COUNT} 次，封禁 $(ops_ban_label "${OPS_FAIL_BAN_COUNT:-未启用}")；${OPS_ABNORMAL_LOGIN_COUNT:-0} 项异常登录待确认$(ops_html_escape "$fail_source_summary")。</p>
       <h3>按用户统计</h3>
       <div class="wide-table-wrap">
         <table class="wide-table">
@@ -2492,7 +2531,7 @@ ${report_css}
       </div>
 
       <h2>7. 存储与数据安全</h2>
-      <p class="section-lead">${OPS_HEALTH_RAID_STATE}；${OPS_HEALTH_SMART_SUMMARY}</p>
+      <p class="section-lead">${OPS_HEALTH_RAID_STATE}；$(ops_html_escape "$OPS_HEALTH_SMART_SUMMARY")</p>
       <h3>阵列与文件系统</h3>
       <table>
         <tr><th>项目</th><th>状态</th></tr>
@@ -2544,7 +2583,7 @@ ${report_css}
         <tr><td>最近更新检查</td><td>${OPS_LAST_UPDATE_CHECK}</td></tr>
         <tr><td>重启需求</td><td class="$([[ "$OPS_REBOOT_REQUIRED" == "无" ]] && echo good || echo warn)">${OPS_REBOOT_REQUIRED}</td></tr>
         <tr><td>Journal 错误摘要</td><td>${OPS_JOURNAL_ERROR_COUNT:-0} 条</td></tr>
-        <tr><td>SSL 证书</td><td>${OPS_SSL_SUMMARY}</td></tr>
+        <tr><td>SSL 证书</td><td>$(ops_html_escape "$OPS_SSL_SUMMARY")</td></tr>
         <tr><td>定时任务</td><td>${OPS_TIMER_TASKS:-0} 个 systemd 定时器</td></tr>
       </table>
 
@@ -2585,7 +2624,31 @@ ops_print_terminal_summary() {
   printf '────────────────────────────────────────────\n'
 }
 
+# 并发保护：cron 周报/年报与手动生成可能同时运行，共用快照 .tmp 与基线文件，
+# 用 flock 串行化；锁文件放在 root 700 的报告目录中，不使用 /tmp 固定路径
 ops_generate_report() {
+  ops_ensure_report_dirs || return 1
+  local lock_fd rc=0
+  if ! exec {lock_fd}>"${OPS_REPORT_DIR}/.generate.lock"; then
+    log_error "无法创建报告生成锁：${OPS_REPORT_DIR}/.generate.lock"
+    return 1
+  fi
+  if ! flock -n "$lock_fd"; then
+    exec {lock_fd}>&-
+    log_warning "已有运维报告生成任务正在运行，本次跳过"
+    if [[ "${DEBNAS_CRON_MODE:-0}" -eq 1 ]]; then
+      return 0
+    fi
+    return 1
+  fi
+  # 直接调用以保留 set -e 语义；异常退出时进程结束会自动释放锁
+  _ops_generate_report_locked "$@"
+  rc=$?
+  exec {lock_fd}>&-
+  return "$rc"
+}
+
+_ops_generate_report_locked() {
   local days="${1:-${OPS_DEFAULT_PERIOD}}"
   local email="${2:-0}"
   case "$days" in
@@ -2639,6 +2702,8 @@ ops_generate_report() {
       OPS_PREVIOUS_REPORT_DATE="${BASH_REMATCH[1]:0:4}-${BASH_REMATCH[1]:4:2}-${BASH_REMATCH[1]:6:2} ${BASH_REMATCH[2]:0:2}:${BASH_REMATCH[2]:2:2}"
     fi
   done < <(find "$period_reports_dir" -maxdepth 1 -name 'ops-report-*.html' -printf '%f\n' 2>/dev/null | sort)
+  # 先以 600 创建再写入，避免写入期间按 umask 以 644 暴露登录 IP 等敏感内容
+  install -m 600 /dev/null "$report_path"
   ops_render_html_report > "$report_path"
   chmod 600 "$report_path"
 

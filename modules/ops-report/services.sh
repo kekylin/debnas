@@ -52,12 +52,15 @@ ops_collect_services() {
       fi
     done
     for service_name in "${service_names[@]}"; do
-      service_errors=$(timeout 20 journalctl -u "${service_name}" --since "${OPS_REPORT_SINCE:-$(date '+%Y-%m-%d %H:%M:%S')}" \
-        --no-pager 2>/dev/null | grep -cEi 'fail|error|panic|oom' || true)
-      service_restarts=$(timeout 20 journalctl -u "${service_name}" \
-        --since "${OPS_REPORT_SINCE:-$(date '+%Y-%m-%d %H:%M:%S')}" \
-        --no-pager 2>/dev/null \
+      # 每个服务只读一次 journal，错误/重启计数复用同一份输出（2 核小机器上避免重复扫描）
+      local service_log
+      service_log=$(timeout 20 journalctl -u "${service_name}" --since "${OPS_REPORT_SINCE:-$(date '+%Y-%m-%d %H:%M:%S')}" \
+        --no-pager 2>/dev/null || true)
+      service_errors=$(printf '%s\n' "$service_log" | grep -cEi 'fail|error|panic|oom' || true)
+      service_restarts=$(printf '%s\n' "$service_log" \
         | grep -cEi 'Starting|Started|Stopped|Failed to start' || true)
+      service_log=""
+      [[ "$service_errors" =~ ^[0-9]+$ ]] || service_errors=0
       [[ "$service_restarts" =~ ^[0-9]+$ ]] || service_restarts=0
       service_start=$(systemctl show "${service_name}" -p ExecMainStartTimestamp --value 2>/dev/null || true)
       [[ -n "$service_start" ]] || service_start="-"
