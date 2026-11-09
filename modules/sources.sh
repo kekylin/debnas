@@ -66,30 +66,59 @@ detect_best_mirror() {
   echo "${selected_mirror}"
 }
 
-# 备份旧配置文件（原子操作，防止多次运行产生 .bak.bak）
+# 备份配置文件：首次备份为 <file>.bak（保留最初的原始配置），之后的备份带时间戳，
+# 避免重复运行覆盖原始备份。后缀以 .bak 结尾，APT 会静默忽略。
+# 参数：$1 - 文件路径；$2 - mv（移走）或 cp（保留原文件，默认）
+_backup_file() {
+  local file="$1"
+  local op="${2:-cp}"
+  local dest
+
+  [[ -n "${file}" && -f "${file}" ]] || return 0
+  dest="${file}.bak"
+  if [[ -e "${dest}" ]]; then
+    dest="${file}.$(date +%Y%m%d%H%M%S).bak"
+  fi
+  if [[ "${op}" == "mv" ]]; then
+    mv "${file}" "${dest}"
+  else
+    cp -p "${file}" "${dest}"
+  fi
+  log_info "已备份 ${file} → ${dest}"
+}
+
+# 备份旧配置文件（不覆盖已有的原始 .bak）
 backup_config_files() {
-  if [[ -f "${TRADITIONAL_PATH}" ]]; then
-    mv "${TRADITIONAL_PATH}" "${TRADITIONAL_PATH}.bak"
-  fi
-  
-  if [[ -f "${DEB822_PATH}" ]]; then
-    mv "${DEB822_PATH}" "${DEB822_PATH}.bak"
-  fi
+  _backup_file "${TRADITIONAL_PATH}" mv
+  _backup_file "${DEB822_PATH}" mv
 }
 
 # 构建 DEB822 格式的软件源配置内容
 # 参数：mirror_url - 镜像站 URL
 # 输出：DEB822 配置内容（stdout）
+# 说明：sid 不存在 -updates/-backports/-security；testing 不存在 -backports
 build_deb822_content() {
   local mirror_url="$1"
+  local suites="${CODENAME} ${CODENAME}-updates ${CODENAME}-backports"
+
+  case "${CODENAME}" in
+    sid) suites="${CODENAME}" ;;
+    testing) suites="${CODENAME} ${CODENAME}-updates" ;;
+  esac
 
   cat <<EOF
 # Standard Repository
 Types: deb
 URIs: ${mirror_url}/debian
-Suites: ${CODENAME} ${CODENAME}-updates ${CODENAME}-backports
+Suites: ${suites}
 Components: main contrib non-free non-free-firmware
 Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+EOF
+
+  # sid 无安全更新仓库
+  [[ "${CODENAME}" != "sid" ]] || return 0
+
+  cat <<EOF
 
 # Security Repository
 Types: deb
@@ -143,11 +172,13 @@ main() {
 
   # 构建 DEB822 内容，使用 write_file_if_changed 实现幂等写入
   new_content=$(build_deb822_content "${selected_mirror}")
+  # 内容将变更时先备份现有 debian.sources（首次保留原始 .bak，之后带时间戳）
+  if [[ -f "${DEB822_PATH}" ]] && [[ "$(cat "${DEB822_PATH}" 2>/dev/null)" != "${new_content}" ]]; then
+    _backup_file "${DEB822_PATH}" cp
+  fi
   if write_file_if_changed "$DEB822_PATH" "$new_content"; then
-    # 内容变更：备份旧配置（传统 sources.list）
-    if [[ -f "${TRADITIONAL_PATH}" ]]; then
-      mv "${TRADITIONAL_PATH}" "${TRADITIONAL_PATH}.bak"
-    fi
+    # 内容变更：备份旧配置（传统 sources.list，不覆盖已有原始备份）
+    _backup_file "${TRADITIONAL_PATH}" mv
     log_success "源已写入"
     if ! update_package_lists "${selected_mirror}"; then
       log_warning "apt update 失败，源已写入"

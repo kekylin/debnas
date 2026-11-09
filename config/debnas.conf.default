@@ -10,3 +10,13 @@ lang=zh
 
 # 是否启用文件日志（0=禁用，1=启用）
 file_logging=1
+
+# ---- 安全相关开关（可选，取消注释后生效）----
+# 是否把首个普通用户加入 sudo 组（basic-tools，1=加入[默认]，0=不加入）
+#add_user_to_sudo=1
+# 是否把首个普通用户加入 docker 组（docker-ce，docker 组等同 root；1=加入[默认]，0=不加入）
+#add_user_to_docker=1
+# Cockpit 是否位于反向代理之后（1=信任 X-Forwarded-For/Proto 头；直连时请保持 0）
+#cockpit_behind_proxy=0
+# 登录邮件是否通过 ip-api.com（明文 HTTP，第三方）查询来源 IP 地理位置（1=启用，默认关闭）
+#login_mail_geoip=0

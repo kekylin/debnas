@@ -44,60 +44,48 @@ array_to_json_array() {
 }
 
 # 合并并去重 registry-mirrors，优先保留已有配置，返回最终 JSON 内容
-# shellcheck disable=SC2005
+# 说明：
+#   - 只合并 daemon.json 中 "registry-mirrors" 键，不再把 proxies 等其他 URL 误当镜像源
+#   - 已有 daemon.json 一律用 jq 解析合并，保留 data-root 等其他配置项；
+#     JSON 不合法或无法解析时返回失败，绝不整体覆盖用户配置
 build_merged_daemon_json() {
   local new_mirrors=("$@")
-  local existing_mirrors=()
-  if [[ -f "$DAEMON_JSON" ]]; then
-    while IFS= read -r line; do
-      existing_mirrors+=("${line//\"/}")
-    done < <(grep -oP '"https?://[^\"]+"' "$DAEMON_JSON")
-  else
-    log_warning "配置文件 $DAEMON_JSON 不存在，将创建新文件。"
-  fi
-  local all_mirrors=("${existing_mirrors[@]}")
-  for mirror in "${new_mirrors[@]}"; do
-    local found=0
-    for exist in "${existing_mirrors[@]}"; do
-      [[ "$mirror" == "$exist" ]] && found=1 && break
-    done
-    [[ $found -eq 0 ]] && all_mirrors+=("$mirror")
-  done
-  local unique_mirrors=()
-  for m in "${all_mirrors[@]}"; do
-    local seen=0
-    for u in "${unique_mirrors[@]}"; do
-      [[ "$m" == "$u" ]] && seen=1 && break
-    done
-    [[ $seen -eq 0 ]] && unique_mirrors+=("$m")
-  done
+
   log_info "构建 Docker 镜像加速配置..."
-  # 使用 python3 合并 JSON，保留 daemon.json 中已有的其他配置项
-  if command -v python3 >/dev/null 2>&1 && [[ -f "$DAEMON_JSON" ]]; then
-    python3 -c "
-import json, sys
-try:
-    with open(sys.argv[1], 'r') as f:
-        data = json.load(f)
-except (json.JSONDecodeError, FileNotFoundError):
-    data = {}
-mirrors = [m for m in sys.argv[2:] if m]
-data['registry-mirrors'] = mirrors
-print(json.dumps(data, indent=2, ensure_ascii=False))
-" "$DAEMON_JSON" "${unique_mirrors[@]}"
-  else
-    local updated_mirrors_json
-    updated_mirrors_json=$(array_to_json_array "${unique_mirrors[@]}")
-    printf '{\n  "registry-mirrors": %s\n}\n' "$updated_mirrors_json"
+
+  if [[ ! -s "$DAEMON_JSON" ]]; then
+    log_warning "配置文件 $DAEMON_JSON 不存在或为空，将创建新文件。"
+    local mirrors_json
+    mirrors_json=$(array_to_json_array "${new_mirrors[@]}")
+    printf '{\n  "registry-mirrors": %s\n}\n' "$mirrors_json"
+    return 0
+  fi
+
+  if ! command -v jq >/dev/null 2>&1 && ! apt_install_packages jq >&2; then
+    log_error "缺少 jq，无法安全合并已有的 $DAEMON_JSON，已跳过（未修改）"
+    return 1
+  fi
+
+  # 已有镜像在前、新镜像追加在后，按首次出现去重（不排序）
+  if ! jq --indent 2 '
+    if type != "object" then error("daemon.json 顶层不是对象") else . end
+    | .["registry-mirrors"] = (((.["registry-mirrors"] // []) + $ARGS.positional)
+        | reduce .[] as $m ([]; if index([$m]) != null then . else . + [$m] end))
+  ' "$DAEMON_JSON" --args "${new_mirrors[@]}"; then
+    log_error "$DAEMON_JSON 不是合法 JSON，已跳过（未修改），请手动修正后重试"
+    return 1
   fi
 }
 
 # 主流程：构建配置、智能写入、按需重启
-new_content=$(build_merged_daemon_json "${DOCKER_MIRRORS[@]}")
+log_warning "镜像加速地址为第三方服务（$(printf "%s " "${DOCKER_MIRRORS[@]}")），拉取的镜像内容由其提供，请按需评估"
+if ! new_content=$(build_merged_daemon_json "${DOCKER_MIRRORS[@]}"); then
+  exit "${ERROR_GENERAL}"
+fi
 
+# daemon.json 变更只需重启 docker，无需 systemctl daemon-reload（未修改 unit 文件）
 if write_file_if_changed "$DAEMON_JSON" "$new_content"; then
   log_info "重启 Docker 服务以应用配置..."
-  systemctl daemon-reload
   if ! service_ensure docker restarted; then
     log_error "重启 Docker 服务失败，请检查 systemctl 状态或日志。"
     exit "${ERROR_GENERAL}"

@@ -37,7 +37,8 @@ configure_cockpit_runtime_files() {
 	local system_name="$1"
 	local config_changed=0
 
-	local cockpit_conf="[Session]
+	# 旧版本写入的内容（用于识别可安全迁移的 DebNAS 生成文件）
+	local legacy_conf="[Session]
 IdleTimeout=15
 Banner=/etc/cockpit/issue.cockpit
 
@@ -46,8 +47,37 @@ ProtocolHeader = X-Forwarded-Proto
 ForwardedForHeader = X-Forwarded-For
 LoginTo = false
 LoginTitle = DebNAS"
-	if write_file_if_changed "/etc/cockpit/cockpit.conf" "$cockpit_conf"; then
-		config_changed=1
+	local marker="# 由 DebNAS 管理：如需自定义请删除本行，DebNAS 将不再覆盖此文件"
+
+	# 信任 X-Forwarded-* 头只在 Cockpit 位于反向代理之后才安全；直连时客户端可伪造
+	# 来源 IP/协议。默认不写，需要时在 /etc/debnas/debnas.conf 设置 cockpit_behind_proxy=1
+	local proxy_headers=""
+	if [[ "$(config_read "global" "cockpit_behind_proxy" "0" 2>/dev/null || echo 0)" == "1" ]]; then
+		proxy_headers="ProtocolHeader = X-Forwarded-Proto
+ForwardedForHeader = X-Forwarded-For
+"
+	fi
+
+	local cockpit_conf="${marker}
+[Session]
+IdleTimeout=15
+Banner=/etc/cockpit/issue.cockpit
+
+[WebService]
+${proxy_headers}LoginTo = false
+LoginTitle = DebNAS"
+
+	# 仅在文件不存在、由 DebNAS 管理或为旧版生成内容时写入，避免冲掉用户自定义配置
+	local conf_path="/etc/cockpit/cockpit.conf"
+	local current_conf=""
+	[[ -f "$conf_path" ]] && current_conf=$(cat "$conf_path" 2>/dev/null || true)
+	if [[ ! -f "$conf_path" ]] || [[ "$current_conf" == "$legacy_conf" ]] \
+		|| grep -qxF "$marker" "$conf_path" 2>/dev/null; then
+		if write_file_if_changed "$conf_path" "$cockpit_conf"; then
+			config_changed=1
+		fi
+	else
+		log_warning "${conf_path} 已被用户自定义，跳过覆盖（如需恢复默认请删除该文件后重新运行）"
 	fi
 
 	local motd_content="我们信任您已经从系统管理员那里了解了日常注意事项。

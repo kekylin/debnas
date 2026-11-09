@@ -30,11 +30,15 @@ detect_major_version_update() {
 }
 
 # 解析 Inst 行并格式化为"包名  旧版 → 新版"
+# 行格式：Inst <pkg> [<旧版>] (<新版> <来源> [<架构>])
+# 注：只用 POSIX awk 语法（Debian 默认 mawk 不支持 gawk 的三参数 match 函数）
 format_inst_lines() {
   awk '
   /^Inst / {
-    if (match($0, /^Inst[[:space:]]+([^[:space:]]+)[[:space:]]+\[([^\]]+)\][[:space:]]+\(([^[:space:]]+)/, m)) {
-      n++; pkg[n]=m[1]; oldv[n]=m[2]; newv[n]=m[3];
+    if ($3 ~ /^\[[^]]+\]$/ && $4 ~ /^\(/) {
+      n++; pkg[n]=$2
+      oldv[n]=substr($3, 2, length($3) - 2)
+      newv[n]=substr($4, 2)
     }
     next
   }
@@ -53,6 +57,9 @@ build_report_content() {
   printf "总更新：%s\t|\t🔒 安全：%s\t|\t⚙️ 常规：%s\n\n" "${total}" "${security_update_count}" "${regular_update_count}"
 
   printf "🔒 安全更新 (%s)\n" "${security_update_count}"
+  if [[ "${apt_index_stale:-0}" -eq 1 ]]; then
+    printf "⚠️ 软件包索引刷新失败（apt update），以下结果可能已过期\n\n"
+  fi
   if [[ ${security_update_count} -gt 0 ]]; then
     echo -e "${security_update_list}" | format_inst_lines
   fi
@@ -70,8 +77,12 @@ build_report_content() {
 # 执行更新检测并生成报告
 run_update_check() {
   log_info "检测系统更新..."
-  # 刷新索引（使用跨进程去重，若失败则记录警告但不中止）
-  apt_update_safe || log_warning "apt update 失败，跳过"
+  # 刷新索引（使用跨进程去重）；失败时不中止，但明确标记结果可能过期并写入报告
+  declare -g apt_index_stale=0
+  if ! apt_update_safe; then
+    apt_index_stale=1
+    log_warning "apt update 失败，检测结果基于旧索引，可能已过期"
+  fi
   full_update_list=$(apt-get upgrade -s)
   
   declare -g security_update_list=$(echo "$full_update_list" | grep -E '^Inst' | grep -i 'Debian-Security\|security')

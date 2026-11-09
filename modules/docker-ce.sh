@@ -17,6 +17,10 @@ source "${SCRIPT_DIR}/lib/bootstrap.sh"
 DOCKER_KEYRINGS_DIR="${DOCKER_KEYRINGS_DIR:-/etc/apt/keyrings}"
 DOCKER_SOURCES_DIR="${DOCKER_SOURCES_DIR:-/etc/apt/sources.list.d}"
 
+# Docker 官方 APT 签名公钥指纹（https://docs.docker.com/engine/install/debian/）
+# 无论从哪个镜像站下载 gpg 文件，都必须与此指纹一致才会被信任
+DOCKER_GPG_FINGERPRINT="9DC858229FC7DD38854AE2D88D81803C0EBFCD88"
+
 # ==================== 函数定义 ====================
 
 # 检测镜像站连通性（基于 urls.sh 的 probe_url）
@@ -24,13 +28,33 @@ probe_mirror() {
   probe_url "$1"
 }
 
-# 从 debian.sources 文件中提取镜像源基础 URL
+# 从传统 sources.list 提取镜像源基础 URL（deb [opts] URI suite ...）
+# 返回：镜像源基础 URL（不含路径），失败返回非 0
+extract_mirror_from_legacy_list() {
+  local legacy_file="${DOCKER_SOURCES_DIR%/*}/sources.list"
+  local legacy_uri
+
+  [[ -f "$legacy_file" && -r "$legacy_file" ]] || return 1
+  legacy_uri=$(awk '
+    /^[[:space:]]*deb[[:space:]]/ && !/^[[:space:]]*#/ {
+      for (i = 2; i <= NF; i++) if ($i ~ /^https?:\/\//) { print $i; exit }
+    }
+  ' "$legacy_file" 2>/dev/null)
+  if [[ "$legacy_uri" =~ ^(https?://[^/]+) ]]; then
+    echo "${BASH_REMATCH[1]}"
+    return 0
+  fi
+  return 1
+}
+
+# 从 debian.sources（DEB822）中提取镜像源基础 URL，不存在时回退传统 sources.list
 # 返回：镜像源基础 URL（不含路径），失败返回非 0
 extract_mirror_from_sources() {
   local sources_file="${DOCKER_SOURCES_DIR}/debian.sources"
 
   if [[ ! -f "$sources_file" ]] || [[ ! -r "$sources_file" ]]; then
-    return 1
+    extract_mirror_from_legacy_list
+    return
   fi
 
   local first_uri
@@ -121,6 +145,27 @@ install_docker_prerequisites() {
   log_info "安装依赖..."
   apt_install_packages ca-certificates curl
   install -m 0755 -d "$DOCKER_KEYRINGS_DIR"
+  # gpg 用于校验 Docker 公钥指纹
+  command -v gpg &>/dev/null || apt_install_packages gnupg
+}
+
+# 校验公钥文件：只允许包含一个主密钥，且指纹等于 Docker 官方指纹
+# 参数：$1 - 公钥文件路径
+# 返回：0 校验通过，1 失败
+verify_docker_gpg_fingerprint() {
+  local key_file="$1"
+  local gpg_home fprs
+
+  gpg_home=$(create_temp_dir "docker-gpg") || return 1
+  # --with-colons 输出中 pub 行之后的第一条 fpr 为主密钥指纹（跳过子密钥）
+  fprs=$(gpg --homedir "$gpg_home" --batch --quiet --show-keys --with-colons "$key_file" 2>/dev/null \
+    | awk -F: '$1 == "pub" { want = 1; next } $1 == "fpr" && want { print $10; want = 0 }') || return 1
+
+  if [[ "$fprs" != "$DOCKER_GPG_FINGERPRINT" ]]; then
+    log_error "Docker GPG 公钥指纹不匹配（期望 ${DOCKER_GPG_FINGERPRINT}，实际 ${fprs:-无}）"
+    return 1
+  fi
+  return 0
 }
 
 # 下载 Docker GPG 签名密钥（含 3 次重试）
@@ -133,14 +178,17 @@ download_docker_gpg_key() {
   local gpg_downloaded=0
   local max_retries=3
   local retry_count=0
+  local tmp_key
+  tmp_key=$(create_temp_file "docker-gpg" ".asc") || exit "${ERROR_DEPENDENCY}"
 
+  # 先下载到临时文件，校验指纹后再原子替换，失败时不破坏已有 keyring
   while [[ $retry_count -lt $max_retries ]]; do
-    if curl -fsSL --max-time 30 --connect-timeout 10 "${docker_mirror}/gpg" -o "${DOCKER_KEYRINGS_DIR}/docker.asc" 2>/dev/null; then
-      if [[ -s "${DOCKER_KEYRINGS_DIR}/docker.asc" ]] && grep -q "BEGIN PGP PUBLIC KEY BLOCK" "${DOCKER_KEYRINGS_DIR}/docker.asc" 2>/dev/null; then
+    if curl -fsSL --max-time 30 --connect-timeout 10 "${docker_mirror}/gpg" -o "$tmp_key" 2>/dev/null; then
+      if [[ -s "$tmp_key" ]] && grep -q "BEGIN PGP PUBLIC KEY BLOCK" "$tmp_key" 2>/dev/null \
+        && verify_docker_gpg_fingerprint "$tmp_key"; then
+        install -m 0644 "$tmp_key" "${DOCKER_KEYRINGS_DIR}/docker.asc"
         gpg_downloaded=1
         break
-      else
-        rm -f "${DOCKER_KEYRINGS_DIR}/docker.asc"
       fi
     fi
     ((retry_count++)) || true
@@ -200,9 +248,14 @@ install_docker_packages() {
 add_user_to_docker_group() {
   local first_user="$1"
 
-  if [[ -n "$first_user" ]]; then
-    log_info "添加用户到 docker 组..."
+  # 可在 /etc/debnas/debnas.conf 设置 add_user_to_docker=0 关闭（默认 1，保持原有用法）
+  if [[ "$(config_read "global" "add_user_to_docker" "1" 2>/dev/null || echo 1)" == "0" ]]; then
+    log_info "已配置 add_user_to_docker=0，跳过 docker 组"
+    log_success "Docker CE 就绪"
+  elif [[ -n "$first_user" ]]; then
     usermod -aG docker "$first_user"
+    log_warning "已将用户 ${first_user} 加入 docker 组：docker 组成员等同于 root 权限（可挂载宿主机任意目录）"
+    log_warning "如不需要请执行：gpasswd -d ${first_user} docker；并在 /etc/debnas/debnas.conf 设置 add_user_to_docker=0"
     log_success "Docker CE 就绪"
   else
     log_info "无普通用户，跳过 docker 组"

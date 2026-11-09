@@ -69,6 +69,10 @@ fi
 # 获取主机名
 HOSTNAME=$(hostname -s)
 
+# 以下地理位置查询与邮件发送放到后台执行：pam_exec 会同步等待本脚本退出，
+# 同步执行会让每次登录多等数秒（网络查询 + exim 投递）。
+send_login_notify() {
+
 # 生成地理位置信息（处理 IPv6 映射 IPv4 情况）
 if [[ "${PAM_RHOST:-}" =~ ^::ffff:([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
   IPV4_ADDR="${BASH_REMATCH[1]}"
@@ -77,12 +81,18 @@ else
 fi
 
 # 统一的地理位置识别逻辑（无 curl 时降级）
+# 隐私：ip-api.com 免费接口仅支持明文 HTTP，会把登录来源 IP 发给第三方。
+# 默认不查询，需在 /etc/debnas/debnas.conf 中设置 login_mail_geoip=1 才启用。
+GEOIP_ENABLED=0
+if grep -qE '^[[:space:]]*login_mail_geoip[[:space:]]*=[[:space:]]*1[[:space:]]*$' /etc/debnas/debnas.conf 2>/dev/null; then
+  GEOIP_ENABLED=1
+fi
 if [[ -z "${IPV4_ADDR}" || "${IPV4_ADDR}" == "localhost" || "${IPV4_ADDR}" == "::1" || "${IPV4_ADDR}" == "127.0.0.1" ]]; then
   LOCATION_INFO="本地登录"
 elif [[ "${IPV4_ADDR}" =~ ^192\.168\. ]] || [[ "${IPV4_ADDR}" =~ ^10\. ]] || [[ "${IPV4_ADDR}" =~ ^172\.(1[6-9]|2[0-9]|3[01])\. ]]; then
   LOCATION_INFO="${IPV4_ADDR} (局域网)"
 else
-  if command -v curl >/dev/null 2>&1; then
+  if [[ "${GEOIP_ENABLED}" -eq 1 ]] && command -v curl >/dev/null 2>&1; then
     GEO_RESPONSE=$(curl -s --connect-timeout 3 --max-time 5 "http://ip-api.com/json/${IPV4_ADDR}" 2>/dev/null)
     COUNTRY=$(echo "${GEO_RESPONSE}" | grep -o '"country":"[^"]*"' | cut -d '"' -f4)
     CITY=$(echo "${GEO_RESPONSE}" | grep -o '"city":"[^"]*"' | cut -d '"' -f4)
@@ -128,6 +138,11 @@ fi
   echo "📧 系统通知 · Trace ID ${TRACE_ID}"
   echo "此邮件由系统自动生成，请勿直接回复。"
 } | /usr/sbin/exim4 -t || true
+}
+
+# 脱离 PAM 会话后台发送，关闭标准输入输出，脚本立即返回不阻塞登录
+send_login_notify </dev/null >/dev/null 2>&1 &
+exit 0
 EOF
 
   if [[ ! -f "$NOTIFY_SCRIPT" ]] || ! cmp -s "$NOTIFY_SCRIPT_TMP" "$NOTIFY_SCRIPT"; then

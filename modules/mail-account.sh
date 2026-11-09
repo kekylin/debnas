@@ -96,9 +96,58 @@ validate_sender_email() {
   fi
 }
 
+# 将 host:port 转换为 Exim 的 dc_smarthost 写法 host::port
+# 说明：Exim 中单冒号是主机列表分隔符，smtp.qq.com:587 会被当成两台主机
+#      （smtp.qq.com 走 25 端口 + 名为 587 的主机），端口必须写成双冒号。
+# 465 为 SMTPS（连接即 TLS），需模板支持 REMOTE_SMTP_SMARTHOST_PROTOCOL 宏，
+# 不支持时回退为不带端口（25 端口 STARTTLS，与旧版实际生效的行为一致）。
+# 参数：$1 - host:port
+# 输出：Exim smarthost 字符串
+to_exim_smarthost() {
+  local smarthost="$1" host port
+  host="${smarthost%:*}"
+  port="${smarthost##*:}"
+  if [[ "$host" == "$smarthost" || -z "$port" ]]; then
+    printf '%s' "$smarthost"
+    return 0
+  fi
+  if [[ "$port" == "465" ]] \
+    && ! grep -q 'REMOTE_SMTP_SMARTHOST_PROTOCOL' /etc/exim4/exim4.conf.template 2>/dev/null; then
+    log_warning "当前 Exim4 模板不支持 SMTPS(465)，回退为 ${host} 默认端口（25，STARTTLS）"
+    printf '%s' "$host"
+    return 0
+  fi
+  printf '%s::%s' "$host" "$port"
+}
+
+# 维护 exim4.conf.localmacros 中的 REMOTE_SMTP_SMARTHOST_PROTOCOL（保留用户其他宏）
+# 参数：$1 - exim smarthost（host::465 时启用 smtps，否则移除该宏）
+configure_smarthost_protocol() {
+  local exim_smarthost="$1"
+  local macros_file="/etc/exim4/exim4.conf.localmacros"
+  local others="" new_content=""
+
+  if [[ -f "$macros_file" ]]; then
+    others=$(grep -v '^[[:space:]]*REMOTE_SMTP_SMARTHOST_PROTOCOL[[:space:]]*=' "$macros_file" 2>/dev/null || true)
+  fi
+  new_content="$others"
+  if [[ "$exim_smarthost" == *"::465" ]]; then
+    [[ -n "$others" ]] && new_content="${others}"$'\n'
+    new_content+="REMOTE_SMTP_SMARTHOST_PROTOCOL = smtps"
+  fi
+  if [[ -z "$new_content" ]]; then
+    [[ -f "$macros_file" ]] || return 0
+    new_content="# DebNAS: no local macros"
+  fi
+  write_file_if_changed "$macros_file" "$new_content" || true
+}
+
 # 生成 Exim4 邮件服务器配置文件
 generate_exim_config() {
   local email_domain="$1" smarthost="$2"
+  local exim_smarthost
+  exim_smarthost=$(to_exim_smarthost "$smarthost")
+  configure_smarthost_protocol "$exim_smarthost"
   local exim_config="dc_eximconfig_configtype='satellite'
 dc_other_hostnames=''
 dc_local_interfaces='127.0.0.1 ; ::1'
@@ -106,7 +155,7 @@ dc_readhost='$email_domain'
 dc_relay_domains=''
 dc_minimaldns='false'
 dc_relay_nets=''
-dc_smarthost='$smarthost'
+dc_smarthost='$exim_smarthost'
 CFILEMODE='644'
 dc_use_split_config='false'
 dc_hide_mailname='true'
@@ -123,8 +172,14 @@ dc_localdelivery='mail_spool'"
 # 配置 SMTP 认证参数
 configure_smtp_auth() {
   local email_domain="$1" email="$2" password="$3" notify_email="$4"
-  write_file_if_changed "/etc/exim4/passwd.client" "*.$email_domain:${email}:${password}" 640 || true
-  chown root:Debian-exim "/etc/exim4/passwd.client" 2>/dev/null || true
+  # 先以 0640 创建/收紧权限再写入，避免密码文件以默认 0644 落盘后再 chmod 的窗口期
+  local passwd_file="/etc/exim4/passwd.client"
+  if [[ ! -f "$passwd_file" ]]; then
+    install -m 0640 /dev/null "$passwd_file"
+  fi
+  chmod 640 "$passwd_file"
+  chown root:Debian-exim "$passwd_file" 2>/dev/null || true
+  write_file_if_changed "$passwd_file" "*.$email_domain:${email}:${password}" 640 || true
   write_file_if_changed "/etc/email-addresses" "root: $email" || true
   write_file_if_changed "/etc/exim4/notify_email" "$notify_email" || true
 }

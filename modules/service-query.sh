@@ -20,7 +20,8 @@ source "${SCRIPT_DIR}/lib/system/state.sh"
 
 # 检查指定服务是否处于激活状态，便于后续判断
 is_service_active() {
-  local svc="$1.service"
+  local svc="$1"
+  [[ "$svc" == *.* ]] || svc="${svc}.service"
   if systemctl is-active --quiet "$svc"; then
     return 0
   else
@@ -34,14 +35,16 @@ print_service_status() {
   log_info "请通过浏览器访问：$2"
 }
 
-# 检查系统服务模块，仅处理 cockpit 服务，如未运行则尝试启动
+# 检查系统服务模块，仅查询 cockpit 状态（查询工具不改变系统状态，不自动启动服务）
+# 说明：cockpit 为 socket 激活，空闲时 cockpit.service 未运行而 cockpit.socket 监听属正常
 check_system_services() {
   local host_ip="$1"
-  if ! is_service_active cockpit; then
-    service_ensure cockpit started
-  fi
-  if is_service_active cockpit; then
+  if is_service_active cockpit || is_service_active cockpit.socket; then
     print_service_status "cockpit" "https://${host_ip}:9090"
+  elif is_package_installed cockpit; then
+    log_warning "cockpit 已安装但未运行，可执行：systemctl enable --now cockpit.socket"
+  else
+    log_info "cockpit 未安装"
   fi
 }
 

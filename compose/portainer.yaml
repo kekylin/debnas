@@ -5,8 +5,9 @@
 services:
   portainer-ce:
     ports:
-      - 8000:8000
+      # 8000 (Edge Agent 隧道) 已移除：本机管理不需要，减少暴露面
       # 9000 (HTTP) 已移除，仅保留 HTTPS 端口 9443
+      # 注意：首次访问者设置管理员密码，部署后请立即登录初始化（超时未初始化 Portainer 会自动锁定，需重启容器）
       - 9443:9443
     container_name: portainer
     restart: always

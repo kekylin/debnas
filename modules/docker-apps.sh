@@ -99,7 +99,7 @@ deploy_container() {
   fi
 
   local yaml_file="$COMPOSE_DIR/${CONTAINER_FILES[$key]}"
-  if ! docker ps -a --format '{{.Names}}' | grep -qw "$key"; then
+  if ! docker ps -a --format '{{.Names}}' | grep -qxF "$key"; then
     local desc="${CONTAINER_DESCRIPTIONS[$key]:-}"
     if [[ -n "$desc" ]]; then
       log_info "${CONTAINER_NAMES[$key]}: ${desc}"

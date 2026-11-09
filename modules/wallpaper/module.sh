@@ -110,9 +110,12 @@ update_wallpaper() {
 }
 
 # ==================== CSS 生成 ====================
+# 样式内容变化时置 _CSS_CHANGED=1（内容未变不重写文件）
+_CSS_CHANGED=0
 generate_css() {
   check_cockpit_version || return 1
-  cat > "$BRANDING_CSS" <<CSSEOF
+  local css_content
+  css_content=$(cat <<CSSEOF
 /* Cockpit 登录页样式（自动生成） */
 body.login, body.login-pf {
   background: url("login-bg.png") no-repeat center center fixed !important;
@@ -201,6 +204,11 @@ body.login-pf .pf-v6-c-alert__icon {
   }
 }
 CSSEOF
+)
+  if write_file_if_changed "$BRANDING_CSS" "$css_content" 644 1; then
+    _CSS_CHANGED=1
+  fi
+  return 0
 }
 
 # ==================== Cockpit 服务管理 ====================
@@ -252,10 +260,15 @@ disable_bing_wallpaper() {
 }
 
 # ==================== 自动更新模式（cron 调用） ====================
+# 说明：Cockpit 每次请求都从磁盘读取 branding 文件与 issue.cockpit，壁纸/横幅更新
+# 无需重启；仅当样式文件变化时才重启，避免每天定时重启断开已登录的用户会话。
 auto_update_mode() {
   update_wallpaper || return 1
+  _CSS_CHANGED=0
   generate_css
-  restart_cockpit
+  if [[ "$_CSS_CHANGED" -eq 1 ]]; then
+    restart_cockpit
+  fi
 }
 
 # ==================== 交互菜单 ====================

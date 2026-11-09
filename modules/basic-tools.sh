@@ -34,16 +34,22 @@ else
 fi
 
 # 自动将首个普通用户（UID>=1000，排除 nobody）加入 sudo 组，便于后续管理
+# 安全提示：sudo 组成员可通过 sudo 获得完整 root 权限。
+# 可在 /etc/debnas/debnas.conf 设置 add_user_to_sudo=0 关闭此行为（默认 1，保持原有用法）
 first_user=$(get_first_regular_user)
+add_sudo=$(config_read "global" "add_user_to_sudo" "1" 2>/dev/null || echo "1")
 
-if [[ -n "${first_user:-}" ]]; then
+if [[ "${add_sudo}" == "0" ]]; then
+  log_info "已配置 add_user_to_sudo=0，跳过 sudo 组"
+elif [[ -n "${first_user:-}" ]]; then
   # 验证用户是否真实存在
   if id "$first_user" &>/dev/null; then
     # 检查用户是否已在 sudo 组中
     if id -nG "$first_user" 2>/dev/null | grep -qw "sudo"; then
       log_info "$first_user 已在 sudo 组"
     elif usermod -aG sudo "$first_user" 2>/dev/null; then
-      log_info "$first_user → sudo 组"
+      log_warning "已将用户 $first_user 加入 sudo 组（该用户可通过 sudo 获得完整 root 权限）"
+      log_warning "如不需要请执行：gpasswd -d $first_user sudo；并在 /etc/debnas/debnas.conf 设置 add_user_to_sudo=0"
     else
       log_warning "$first_user sudo 组添加失败"
     fi
