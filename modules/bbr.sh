@@ -17,7 +17,10 @@ source "${SCRIPT_DIR}/lib/bootstrap.sh"
 readonly BBR_MODULE="tcp_bbr"
 readonly BBR_ALGO="bbr"
 readonly DEFAULT_ALGO="cubic"
-readonly SYSCONF_FILE="/etc/sysctl.d/11-debnas-bbr.conf"
+# 文件名须排在 /usr/lib/sysctl.d/50-default.conf 之后：后者设 net.core.default_qdisc=fq_codel，
+# systemd-sysctl 按文件名顺序应用、后者覆盖前者，旧名 11-debnas-bbr.conf 的 fq 每次开机都被改回 fq_codel
+readonly SYSCONF_FILE="/etc/sysctl.d/99-debnas-bbr.conf"
+readonly LEGACY_SYSCONF_FILE="/etc/sysctl.d/11-debnas-bbr.conf"
 readonly SYSCONF_KEY="net.ipv4.tcp_congestion_control"
 readonly SYSCONF_QDISC_KEY="net.core.default_qdisc"
 readonly QDISC_FQ="fq"
@@ -102,6 +105,11 @@ perm_enable_bbr() {
   # 持久化到 /etc/sysctl.d/
   sysctl_persist "$SYSCONF_KEY" "$BBR_ALGO" "${SYSCONF_FILE##*/}"
   sysctl_persist "$SYSCONF_QDISC_KEY" "$QDISC_FQ" "${SYSCONF_FILE##*/}"
+  # 迁移：新文件写好后删除旧名配置
+  if [[ -f "$LEGACY_SYSCONF_FILE" ]]; then
+    rm -f "$LEGACY_SYSCONF_FILE"
+    log_info "已迁移旧配置 ${LEGACY_SYSCONF_FILE} → ${SYSCONF_FILE}"
+  fi
   if service_ensure systemd-sysctl restarted; then
     log_success "BBR (永久)"
   else
@@ -131,11 +139,14 @@ perm_disable_bbr() {
   # 注释掉 /etc/sysctl.conf 中的同名键，避免旧方式残留导致关闭不彻底
   comment_out_sysctl_conf_key "$SYSCONF_KEY" || true
   comment_out_sysctl_conf_key "$SYSCONF_QDISC_KEY" || true
-  # 移除 BBR 专用配置文件
-  if [[ -f "$SYSCONF_FILE" ]]; then
-    rm -f "$SYSCONF_FILE"
-    log_info "已移除 ${SYSCONF_FILE}"
-  fi
+  # 移除 BBR 专用配置文件（含旧名文件）
+  local f
+  for f in "$SYSCONF_FILE" "$LEGACY_SYSCONF_FILE"; do
+    if [[ -f "$f" ]]; then
+      rm -f "$f"
+      log_info "已移除 ${f}"
+    fi
+  done
   if service_ensure systemd-sysctl restarted; then
     log_success "BBR 已关闭"
   else
@@ -175,8 +186,10 @@ _bbr_available() {
 }
 
 # 持久化配置中是否已写入 bbr
+# 参数：$1 - 配置文件（可选，默认新文件名）
 _bbr_persisted() {
-  [[ -r "$SYSCONF_FILE" ]] && grep -qE "^[[:space:]]*${SYSCONF_KEY//./\\.}[[:space:]]*=[[:space:]]*${BBR_ALGO}[[:space:]]*$" "$SYSCONF_FILE" 2>/dev/null
+  local f="${1:-$SYSCONF_FILE}"
+  [[ -r "$f" ]] && grep -qE "^[[:space:]]*${SYSCONF_KEY//./\\.}[[:space:]]*=[[:space:]]*${BBR_ALGO}[[:space:]]*$" "$f" 2>/dev/null
 }
 
 # 当前状态：一行 "状态码|说明"
@@ -191,6 +204,8 @@ module_status() {
   if [[ "$algo" == "$BBR_ALGO" ]]; then
     if _bbr_persisted; then
       echo "applied|BBR 已启用（队列 ${qdisc:-未知}）· 已持久化"
+    elif _bbr_persisted "$LEGACY_SYSCONF_FILE"; then
+      echo "partial|BBR 已启用（队列 ${qdisc:-未知}），持久化在旧文件 ${LEGACY_SYSCONF_FILE}（fq 开机会被 50-default.conf 覆盖），重新永久启用即可迁移"
     else
       echo "partial|BBR 临时启用（队列 ${qdisc:-未知}），重启后失效"
     fi
@@ -220,7 +235,10 @@ module_plan() {
   if _bbr_persisted; then
     echo "info|${SYSCONF_FILE}|已持久化 BBR（永久启用时已满足）；永久停用时删除该文件（不另做备份）"
   else
-    echo "write|${SYSCONF_FILE}|永久启用时写入 ${SYSCONF_KEY}/${SYSCONF_QDISC_KEY}（原地修改，不另做备份）；永久停用时删除"
+    echo "write|${SYSCONF_FILE}|永久启用时写入 ${SYSCONF_KEY}/${SYSCONF_QDISC_KEY}（旧文件备份到 /var/backups/debnas/）；永久停用时删除"
+  fi
+  if [[ -f "$LEGACY_SYSCONF_FILE" ]]; then
+    echo "write|${LEGACY_SYSCONF_FILE}|旧名配置（排在 50-default.conf 之前，fq 会被覆盖）：永久启/停时删除，改用 ${SYSCONF_FILE}"
   fi
   for key in "$SYSCONF_KEY" "$SYSCONF_QDISC_KEY"; do
     if [[ -r /etc/sysctl.conf ]] && LC_ALL=C grep -qE "^[[:space:]]*${key//./\\.}[[:space:]]*=" /etc/sysctl.conf 2>/dev/null; then

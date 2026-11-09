@@ -45,35 +45,42 @@ is_usable_public_ip() {
   [[ "$lower" == *:* ]]
 }
 
+# 从 dig +short 输出中筛选 IP：整行必须就是一个地址
+# dig 的报错（如 ";; communications error to 223.5.5.5#53: timed out"）也写在 stdout，
+# 旧实现用 grep -o 抠 IP 会把 DNS 服务器自己的地址当成解析结果
+# 参数：$1 - 类型 A/AAAA，$2 - DNS 服务器地址；stdin 为 dig +short 输出
+# 输出：可用的 IP（每行一个）
+filter_dig_answers() {
+  local rtype="$1" dns="$2" line
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line%$'\r'}"
+    [[ -z "$line" || "$line" == ';'* ]] && continue
+    if [[ "$rtype" == "A" ]]; then
+      [[ "$line" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || continue
+    else
+      [[ "$line" =~ ^[0-9a-fA-F:]+$ && "$line" == *:*:* ]] || continue
+    fi
+    [[ "$line" == "$dns" ]] && continue
+    is_usable_public_ip "$line" && printf '%s\n' "$line"
+  done
+  return 0
+}
+
 # 解析单个 DNS 服务器的 A/AAAA 记录
 # 参数：$1 - 域名，$2 - DNS 服务器地址
 # 返回：IP 地址列表（每行一个）
 resolve_from_dns() {
   local domain="$1"
   local dns="$2"
-  local -a ips=()
-  
+
   if [[ "$IP_MODE" == "True" ]] || [[ "$IP_MODE" == "IPv4" ]]; then
-    local ipv4_ips
-    ipv4_ips=$(timeout 5 dig +short "@$dns" A "$domain" 2>/dev/null | grep -Eo '([0-9]{1,3}\.){3}[0-9]{1,3}' || true)
-    for ip in $ipv4_ips; do
-      if [[ -n "$ip" ]] && is_usable_public_ip "$ip"; then
-        ips+=("$ip")
-      fi
-    done
+    timeout 5 dig +short "@$dns" A "$domain" 2>/dev/null | filter_dig_answers A "$dns" || true
   fi
-  
+
   if [[ "$IP_MODE" == "True" ]] || [[ "$IP_MODE" == "IPv6" ]]; then
-    local ipv6_ips
-    ipv6_ips=$(timeout 5 dig +short "@$dns" AAAA "$domain" 2>/dev/null | grep -Eo '([0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}' || true)
-    for ip in $ipv6_ips; do
-      if [[ -n "$ip" ]] && is_usable_public_ip "$ip"; then
-        ips+=("$ip")
-      fi
-    done
+    timeout 5 dig +short "@$dns" AAAA "$domain" 2>/dev/null | filter_dig_answers AAAA "$dns" || true
   fi
-  
-  printf '%s\n' "${ips[@]}"
+  return 0
 }
 
 # 从多个 DNS 服务器并行解析域名获取 IP 地址

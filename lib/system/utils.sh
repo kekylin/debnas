@@ -349,15 +349,21 @@ get_first_regular_user() {
 #       $2 - 新内容
 #       $3 - 文件权限（可选；新文件默认 644，已存在文件未指定时保留原权限）
 #       $4 - 静默模式（可选，1=不输出"未变更"日志）
-# 返回：0 表示已写入（内容变更），1 表示未变更（跳过写入），2 表示写入失败（已记录 error 日志）
+# 返回：0 表示已写入（内容变更），1 表示未变更（跳过写入），2 表示写入失败或缺少参数（已记录 error 日志）
+# 空内容：合法，写入 0 字节空文件（已是空文件/只有空白换行时视为未变更）；非空内容末尾补一个换行
 # 说明：比较现有文件内容，相同则跳过（避免无意义的文件写入和服务重启）
 #       写入采用"同目录临时文件 + mv"原子替换，避免写到一半（磁盘满/中断）留下截断的 /etc 配置；
 #       已存在文件的属主/属组会被保留；目标为符号链接时写入其指向的真实文件（不破坏链接）。
 #       内容变化且原文件存在时，先经 debnas_backup_file 备份到 /var/backups/debnas（失败只告警）；
 #       写入成功后经 manifest_add 登记到文件清单（/var/lib/debnas/manifest）。
 write_file_if_changed() {
-  local file="${1:?write_file_if_changed: 缺少文件路径}"
-  local new_content="${2:?write_file_if_changed: 缺少文件内容}"
+  # 参数缺失按"写入失败"返回 2（${2:?} 在内容为空时会直接结束整个进程）
+  if [[ $# -lt 2 || -z "${1:-}" ]]; then
+    log_error "write_file_if_changed: 缺少文件路径或内容参数"
+    return 2
+  fi
+  local file="$1"
+  local new_content="$2"
   local file_perm="${3:-}"
   local quiet="${4:-0}"
 
@@ -416,7 +422,14 @@ write_file_if_changed() {
     log_error "写入失败（无法创建临时文件）：$file"
     return 2
   fi
-  if ! printf '%s\n' "$new_content" > "$tmp_file"; then
+  # 空内容写成 0 字节空文件；非空内容末尾补一个换行
+  local write_ok=0
+  if [[ -z "$new_content" ]]; then
+    : > "$tmp_file" && write_ok=1
+  else
+    printf '%s\n' "$new_content" > "$tmp_file" && write_ok=1
+  fi
+  if (( write_ok == 0 )); then
     rm -f -- "$tmp_file"
     log_error "写入失败：$file"
     return 2
@@ -452,5 +465,31 @@ write_file_if_changed() {
   if declare -F manifest_add >/dev/null 2>&1; then
     manifest_add "$file" || true
   fi
+  return 0
+}
+
+# ==================== 后台任务进程组 ====================
+
+# 后台探测（模块状态、可更新包统计等）的子 shell 里还会起 systemctl/apt-get 等命令；
+# 只 kill 子 shell 时这些命令会变成孤儿持续累积。启动后台任务时临时打开 job control（set -m），
+# bash 会让 & 启动的任务自成进程组（pgid = pid）；终止时 kill 整个进程组。
+# 子 shell 内 job control 自动关闭，其中的命令仍留在该进程组内。
+# 用法：bg_group_begin; ( ... ) & pid=$!; bg_group_end; …; bg_group_kill "$pid"
+bg_group_begin() {
+  _DEBNAS_BG_OLDFLAGS="$-"
+  set -m 2>/dev/null || true
+}
+
+bg_group_end() {
+  [[ "${_DEBNAS_BG_OLDFLAGS:-}" == *m* ]] || set +m 2>/dev/null || true
+}
+
+# 终止后台任务及其进程组（进程组不存在时回退为只终止该进程）
+# 参数：$1 - bg_group_begin/end 之间启动的后台任务 pid
+# 返回：始终 0
+bg_group_kill() {
+  local pid="${1:-}"
+  [[ "$pid" =~ ^[0-9]+$ ]] && (( pid > 1 )) || return 0
+  kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
   return 0
 }

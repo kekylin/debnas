@@ -61,6 +61,17 @@ fi
 # 获取主机名
 HOSTNAME=$(hostname -s)
 
+# 邮件主题按 RFC 2047 编码（UTF-8 Base64）：每 10 个字符一个 encoded-word（≤ 40 字节，
+# 编码后不超过 75 字符），多段之间折行续写；按字符切分，不会把多字节字符截断
+mime_subject() {
+  local s="${1-}" out="" i=0 LC_ALL=C.UTF-8
+  while (( i < ${#s} )); do
+    out+="${out:+$'\n '}=?UTF-8?B?$(printf '%s' "${s:i:10}" | base64 -w0)?="
+    i=$((i + 10))
+  done
+  printf '%s' "$out"
+}
+
 # 以下地理位置查询与邮件发送放到后台执行：pam_exec 会同步等待本脚本退出，
 # 同步执行会让每次登录多等数秒（网络查询 + exim 投递）。
 send_login_notify() {
@@ -104,7 +115,8 @@ fi
 
 {
   echo "To: ${NOTIFY_TO}"
-  echo "Subject: 登录通知 · ${PAM_USER} @ ${HOSTNAME}"
+  echo "Subject: $(mime_subject "登录通知 · ${PAM_USER} @ ${HOSTNAME}")"
+  echo "MIME-Version: 1.0"
   echo "Content-Type: text/plain; charset=UTF-8"
   echo "Content-Transfer-Encoding: 8bit"
   echo
@@ -129,11 +141,19 @@ fi
   echo
   echo "📧 系统通知 · Trace ID ${TRACE_ID}"
   echo "此邮件由系统自动生成，请勿直接回复。"
-} | /usr/sbin/exim4 -t || true
+} | /usr/sbin/exim4 -oi -t || true
 }
 
-# 脱离 PAM 会话后台发送，关闭标准输入输出，脚本立即返回不阻塞登录
-send_login_notify </dev/null >/dev/null 2>&1 &
+# PAM 同步调用时：用 setsid -f 在新会话中重新执行本脚本（--send）后立即返回，不阻塞登录；
+# 发送进程完全脱离登录会话与控制终端，会话结束的 SIGHUP 不会把它连带杀掉。
+# exim4 -oi：正文中单独一行 "." 不会被当作消息结束
+if [[ "${1:-}" == "--send" ]]; then
+  send_login_notify </dev/null >/dev/null 2>&1
+elif command -v setsid >/dev/null 2>&1; then
+  setsid -f /bin/bash "$0" --send </dev/null >/dev/null 2>&1 || true
+else
+  send_login_notify </dev/null >/dev/null 2>&1 &
+fi
 exit 0
 EOF
 
@@ -141,7 +161,8 @@ EOF
   script_content="${script_content//__DEBNAS_NOTIFY_EMAIL_FILE__/${DEBNAS_NOTIFY_EMAIL_FILE}}"
   script_content="${script_content//__DEBNAS_LEGACY_NOTIFY_EMAIL_FILE__/${DEBNAS_LEGACY_NOTIFY_EMAIL_FILE}}"
 
-  # 目录 755 root，脚本 750 root（pam_exec 以 root 身份通过 /bin/bash 调用）
+  # 目录 755 root，脚本 750 root（PAM 行带 seteuid，pam_exec 以 root 身份通过 /bin/bash 调用；
+  # 普通用户 su / pkexec 提权时同样以 root 运行，读得到本脚本和 640 的通知邮箱）
   local script_dir rc=0
   script_dir="${NOTIFY_SCRIPT%/*}"
   if ! mkdir -p -- "$script_dir"; then

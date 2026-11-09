@@ -201,12 +201,41 @@ render_hosts_without_block() {
   ' "${HOSTS_FILE}"
 }
 
-# 将内容写回 /etc/hosts：原地覆盖，保留原文件的权限/属主/inode（兼容 bind mount）
+# 检查 /etc/hosts 中 DebNAS 区块是否完整
+# 输出：none（无区块）/ ok（START/END 成对）/ broken（有 START 缺 END）
+# 残缺区块不能再追加新区块：下次运行时旧 START 会与新 END 配对，把中间的用户条目一并删掉
+hosts_block_state() {
+  [[ -f "${HOSTS_FILE}" ]] || { echo none; return 0; }
+  awk -v start="$START_MARK" -v end="$END_MARK" '
+    !inb && $0 == start { inb = 1; seen = 1; next }
+    inb && $0 == end { inb = 0; next }
+    END { print (inb ? "broken" : (seen ? "ok" : "none")) }
+  ' "${HOSTS_FILE}"
+}
+
+# hosts 读改写互斥（定时任务与手动操作可能同时运行）；fd 8 持有锁，进程退出自动释放
+_hosts_lock() {
+  local lock_dir="/run/lock"
+  [[ -d "${lock_dir}" && -w "${lock_dir}" ]] || lock_dir="${TMP_DIR:-/tmp}"
+  exec 8>>"${lock_dir}/debnas-hosts-sync.lock" || return 1
+  flock -w 60 8
+}
+
+_hosts_unlock() {
+  exec 8>&-
+}
+
+# 将内容写回 /etc/hosts：经 write_file_if_changed 原子替换（保留权限/属主，旧文件备份到 /var/backups/debnas；
+# bind mount 等无法 rename 时自动回退为原地覆写）
 # 参数：$1 - 包含完整新内容的文件
+# 返回：0 已写入或内容未变，1 失败
 write_hosts_file() {
-  local src="$1"
+  local src="$1" content rc=0
   [[ -s "$src" ]] || return 1
-  cat "$src" > "${HOSTS_FILE}"
+  content=$(< "$src")
+  [[ -n "$content" ]] || return 1
+  write_file_if_changed "${HOSTS_FILE}" "$content" "" 1 || rc=$?
+  [[ "$rc" -ne 2 ]]
 }
 
 # 从 /etc/hosts 移除 DebNAS 区块（禁用同步时调用）
@@ -215,20 +244,24 @@ remove_hosts_block() {
   if ! grep -qxF "$START_MARK" "${HOSTS_FILE}"; then
     return 0
   fi
-  local temp_hosts
+  local temp_hosts rc=0
+  _hosts_lock || { echo "等待 hosts 文件锁超时" >&2; return 1; }
+  if [[ "$(hosts_block_state)" == "broken" ]]; then
+    echo "${HOSTS_FILE} 中 DebNAS 区块缺少结束标记「${END_MARK}」，为免误删用户条目未做修改，请手动检查" >&2
+    _hosts_unlock
+    return 1
+  fi
   temp_hosts=$(create_temp_file "hosts-cleanup") || {
+    _hosts_unlock
     echo "无法创建临时文件" >&2
     return 1
   }
-  render_hosts_without_block > "${temp_hosts}" || {
-    rm -f "${temp_hosts}"
-    return 1
-  }
-  write_hosts_file "${temp_hosts}" || {
-    rm -f "${temp_hosts}"
-    return 1
-  }
+  if ! render_hosts_without_block > "${temp_hosts}" || ! write_hosts_file "${temp_hosts}"; then
+    rc=1
+  fi
   rm -f "${temp_hosts}"
+  _hosts_unlock
+  return "$rc"
 }
 
 generate_hosts_header() {
@@ -370,8 +403,27 @@ update_hosts() {
     return 1
   fi
 
+  # 解析耗时较长，只在读改写阶段持锁
+  if ! _hosts_lock; then
+    rm -f "${block_content}"
+    echo "等待 hosts 文件锁超时，本次未更新" >&2
+    return 1
+  fi
+  # 残缺区块（有 START 缺 END）：拒绝写入，不再追加新区块
+  if [[ "$(hosts_block_state)" == "broken" ]]; then
+    _hosts_unlock
+    rm -f "${block_content}"
+    if [[ $CRON_MODE -eq 0 ]]; then
+      log_error "${HOSTS_FILE} 中 DebNAS 区块缺少结束标记「${END_MARK}」，为免误删用户条目拒绝写入；请手动补上结束标记或删除残缺区块后重试"
+    else
+      echo "${HOSTS_FILE} 中 DebNAS 区块缺少结束标记，拒绝写入" >&2
+    fi
+    return 1
+  fi
+
   local hosts_content
   hosts_content=$(create_temp_file "hosts-content") || {
+    _hosts_unlock
     rm -f "${block_content}"
     echo "无法创建临时文件" >&2
     return 1
@@ -384,6 +436,7 @@ update_hosts() {
   fi
   local block_header
   block_header=$(create_temp_file "hosts-header") || {
+    _hosts_unlock
     rm -f "${block_content}" "${hosts_content}"
     echo "无法创建临时文件" >&2
     return 1
@@ -394,10 +447,12 @@ update_hosts() {
   rm -f "${block_header}" "${block_content}"
 
   if ! write_hosts_file "${hosts_content}"; then
+    _hosts_unlock
     rm -f "${hosts_content}"
     echo "写入 ${HOSTS_FILE} 失败" >&2
     return 1
   fi
+  _hosts_unlock
   rm -f "${hosts_content}"
   
   if [[ $CRON_MODE -eq 0 ]]; then

@@ -24,9 +24,14 @@ _timer_list_all() {
   local module_name display status schedule
   for module_name in "${TIMER_MODULES[@]}"; do
     get_module_field_var display "$module_name" "name" "$module_name" || true
+    # cron_is_registered 对变体条目（如 ops-report 年报 "run ops-report 365"）也返回真，
+    # 而 cron_get_schedule 只认主条目：只剩变体时取不到调度，不能让 set -e 中止整个概览
     if cron_is_registered "$module_name"; then
-      schedule=$(cron_get_schedule "$module_name")
-      printf "  %-20s %-8s %s（%s）\n" "$display" "已启用" "$schedule" "$(cron_describe "$schedule")"
+      if schedule=$(cron_get_schedule "$module_name"); then
+        printf "  %-20s %-8s %s（%s）\n" "$display" "已启用" "$schedule" "$(cron_describe "$schedule")"
+      else
+        printf "  %-20s %-8s %s\n" "$display" "未启用" "-（仅有附加周期条目）"
+      fi
     else
       printf "  %-20s %-8s %s\n" "$display" "未启用" "-"
     fi

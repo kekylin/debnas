@@ -20,6 +20,9 @@ file_logging=1
 #cockpit_behind_proxy=0
 # 登录邮件是否通过 ip-api.com（明文 HTTP，第三方）查询来源 IP 地理位置（1=启用，默认关闭）
 #login_mail_geoip=0
+# fail2ban 白名单（ignoreip）是否加入本机直连的私有网段（1=加入，默认 0=仅 127.0.0.1/8 与 ::1）
+# 加入后局域网内的设备爆破 SSH/Cockpit 不会被封；docker0、br-*、virbr*、lxcbr*、podman*、wg* 等虚拟/VPN 接口网段始终不加入
+#fail2ban_ignore_lan=0
 
 # ---- 文件共享管理界面（cockpit-shares 模块，一键方案默认包含）----
 # 二选一：debnas=DebNAS 自研「共享管理」插件[默认]；45drives=45Drives cockpit-file-sharing + cockpit-identities

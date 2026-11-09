@@ -317,6 +317,18 @@ restart_exim_service() {
 }
 
 # 发送测试邮件
+# 邮件主题按 RFC 2047 编码（UTF-8 Base64）
+# 参数：$1 - 主题原文
+# 输出：每 10 个字符一个 encoded-word（≤ 40 字节，编码后不超过 75 字符），多段折行续写
+_mail_mime_subject() {
+  local s="${1-}" out="" i=0 LC_ALL=C.UTF-8
+  while (( i < ${#s} )); do
+    out+="${out:+$'\n '}=?UTF-8?B?$(printf '%s' "${s:i:10}" | base64 -w0)?="
+    i=$((i + 10))
+  done
+  printf '%s' "$out"
+}
+
 send_validation_email() {
   local notify_email="$1" sender_email="$2" smtp_server="$3"
   local os_name version_id codename sys_desc
@@ -340,9 +352,12 @@ send_validation_email() {
   local app_name="DebNAS"
   local email_content
   email_content=$(cat <<EOF
-Subject: 来自 [${app_name}] 的测试邮件
+Subject: $(_mail_mime_subject "来自 [${app_name}] 的测试邮件")
 To: ${notify_email}
 From: ${sender_email}
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
 
 恭喜！您已成功配置 [${app_name}] 的邮件通知功能。
 • 系统版本: ${sys_desc}
@@ -357,7 +372,8 @@ From: ${sender_email}
 EOF
   )
   log_info "发送测试邮件..."
-  printf '%s\n' "$email_content" | exim4 -bm "$notify_email" && \
+  # exim4 -oi：正文中单独一行 "." 不会被当作消息结束
+  printf '%s\n' "$email_content" | exim4 -oi -bm "$notify_email" && \
     log_success "测试邮件已发送" || \
     { log_error "测试邮件发送失败，请查看 /var/log/exim4/mainlog。"; exit "${ERROR_GENERAL}"; }
 }

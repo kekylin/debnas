@@ -19,27 +19,89 @@ source "${SCRIPT_DIR}/lib/bootstrap.sh"
 
 _CNET_IFACES_FILE="/etc/network/interfaces"
 _CNET_NM_CONF="/etc/NetworkManager/NetworkManager.conf"
+_CNET_NETWORKD_DIR="/etc/systemd/network"
+_CNET_NETPLAN_DIR="/etc/netplan"
 
-# 与 main 相同的静态/手动网卡检测（lo、DHCP、SLAAC 除外）；输出 "文件: iface 行"，每行一条
-_cnet_static_ifaces() {
-  local -a files=("$_CNET_IFACES_FILE")
-  local f
-  [[ -f "$_CNET_IFACES_FILE" ]] || return 0
-  for f in /etc/network/interfaces.d/*; do
-    [[ -f "$f" ]] && files+=("$f")
+# 递归列出 ifupdown 配置文件：/etc/network/interfaces 及其 source / source-directory 引入的文件（去重、防循环）
+# 相对路径按所在文件的目录解析；source-directory 只取文件名匹配 ^[a-zA-Z0-9_-]+$ 的文件（与 ifupdown 一致）
+# 输出：文件路径，每行一个
+_cnet_ifupdown_files() {
+  local start="$_CNET_IFACES_FILE"
+  local -a queue=() out=()
+  local -A seen=()
+  local f kw arg base dir sub line i=0
+  [[ -f "$start" ]] || return 0
+  queue=("$start")
+  while (( i < ${#queue[@]} && i < 256 )); do
+    f="${queue[i]}"
+    ((i++)) || true
+    [[ -f "$f" && -r "$f" && -z "${seen[$f]:-}" ]] || continue
+    seen["$f"]=1
+    out+=("$f")
+    base="${f%/*}"
+    while IFS=$' \t' read -r kw arg _ || [[ -n "$kw" ]]; do
+      [[ "$kw" == "source" || "$kw" == "source-directory" ]] || continue
+      [[ -n "$arg" ]] || continue
+      [[ "$arg" == /* ]] || arg="${base}/${arg}"
+      if [[ "$kw" == "source" ]]; then
+        # source 支持 shell 通配
+        for sub in $arg; do
+          [[ -f "$sub" ]] && queue+=("$sub")
+        done
+      else
+        for dir in $arg; do
+          [[ -d "$dir" ]] || continue
+          for sub in "$dir"/*; do
+            line="${sub##*/}"
+            [[ -f "$sub" && "$line" =~ ^[a-zA-Z0-9_-]+$ ]] && queue+=("$sub")
+          done
+        done
+      fi
+    done < "$f"
   done
-  awk '$1 == "iface" && $2 != "lo" && ($3 == "inet" || $3 == "inet6") \
-    && $4 != "dhcp" && $4 != "auto" && $4 != "loopback" {print FILENAME ": " $0}' \
-    "${files[@]}" 2>/dev/null || true
+  [[ ${#out[@]} -gt 0 ]] && printf '%s\n' "${out[@]}"
+  return 0
+}
+
+# 与 main 相同的阻断检测（ifupdown 部分）：输出 "文件: 行"，每行一条
+# - 静态/手动网卡（lo、DHCP、SLAAC 除外）：注释后 NM 只会按 DHCP 接管，静态 IP 丢失
+# - 网桥/绑定/VLAN/无线认证/钩子脚本指令（bridge_ports、bond-*、vlan-raw-device、wpa-*、pre-up、up 等）：NM 无法等价接管
+_cnet_static_ifaces() {
+  local -a files=()
+  mapfile -t files < <(_cnet_ifupdown_files)
+  [[ ${#files[@]} -gt 0 ]] || return 0
+  awk '
+    { line = $0; sub(/^[[:space:]]+/, "", line) }
+    line == "" || line ~ /^#/ { next }
+    $1 == "iface" && $2 != "lo" && ($3 == "inet" || $3 == "inet6") \
+      && $4 != "dhcp" && $4 != "auto" && $4 != "loopback" { print FILENAME ": " line; next }
+    $1 ~ /^(bridge[-_]ports|bond[-_].+|vlan[-_]raw[-_]device|wpa[-_].+|pre-up|up|post-up|down|pre-down|post-down)$/ { print FILENAME ": " line }
+  ' "${files[@]}" 2>/dev/null || true
+}
+
+# 由其他网络管理器（systemd-networkd / netplan）负责的配置：输出 "路径: 说明"，每行一条
+# 这类系统（如云镜像）切换后 NM 与 networkd 会同时管理同一网卡，出现双 DHCP/地址冲突
+_cnet_other_managers() {
+  local f
+  for f in "${_CNET_NETPLAN_DIR}"/*.yaml "${_CNET_NETPLAN_DIR}"/*.yml; do
+    [[ -e "$f" ]] && echo "${f}: netplan 配置"
+  done
+  for f in "${_CNET_NETWORKD_DIR}"/*.network; do
+    [[ -e "$f" ]] && echo "${f}: systemd-networkd 配置"
+  done
+  return 0
+}
+
+# 全部阻断项（ifupdown 静态/特殊指令 + netplan/networkd）
+_cnet_blockers() {
+  _cnet_static_ifaces
+  _cnet_other_managers
 }
 
 # ifupdown 中仍配置的非 lo 网卡（逗号分隔，去重）
 _cnet_ifupdown_ifaces() {
   local -a files=()
-  local f
-  for f in "$_CNET_IFACES_FILE" /etc/network/interfaces.d/*; do
-    [[ -f "$f" && -r "$f" ]] && files+=("$f")
-  done
+  mapfile -t files < <(_cnet_ifupdown_files)
   [[ ${#files[@]} -gt 0 ]] || return 0
   awk '$1 == "iface" && $2 != "lo" && !seen[$2]++ {printf "%s%s", sep, $2; sep = ","}' "${files[@]}" 2>/dev/null || true
 }
@@ -69,10 +131,10 @@ module_status() {
     return 0
   fi
   local static active managed=0
-  static=$(_cnet_static_ifaces)
+  static=$(_cnet_blockers)
   if [[ -n "$static" ]]; then
     local first="${static%%$'\n'*}"
-    echo "warn|ifupdown 有静态/手动网卡配置（${first##*: }），执行会拒绝切换"
+    echo "warn|存在 NetworkManager 无法安全接管的网络配置（${first}），执行会拒绝切换"
     return 0
   fi
   local ifaces
@@ -123,12 +185,12 @@ module_plan() {
     return 0
   fi
   local static line
-  static=$(_cnet_static_ifaces)
+  static=$(_cnet_blockers)
   if [[ -n "$static" ]]; then
     while IFS= read -r line; do
-      [[ -n "$line" ]] && echo "risk|${line%%: *}|静态/手动配置 ${line#*: }：执行将拒绝切换并报错退出，不做任何变更"
+      [[ -n "$line" ]] && echo "risk|${line%%: *}|${line#*: }：执行将拒绝切换并报错退出，不做任何变更"
     done <<< "$static"
-    echo "info|处理方法|先用 nmcli 或 Cockpit 建立等价静态连接，移除 ifupdown 配置后再运行"
+    echo "info|处理方法|ifupdown 静态/特殊配置：先用 nmcli 或 Cockpit 建立等价连接并移除原配置；netplan/networkd 管理的系统（如云镜像）请勿切换，Cockpit 可直接只读查看网络"
     return 0
   fi
   local changed=0 active
@@ -179,11 +241,23 @@ main() {
     exit 0
   fi
 
-  # 检测 ifupdown 中的静态/手动网卡配置（lo、DHCP、SLAAC 除外）
-  # 这类配置被注释后 NetworkManager 只会按 DHCP 接管，静态 IP 丢失导致远程失联，因此拒绝自动切换
+  # 由 netplan / systemd-networkd 管理网络的系统（如云镜像）：切换后 NM 与 networkd 争抢同一网卡，拒绝执行
+  local other_managers
+  other_managers=$(_cnet_other_managers)
+  if [[ -n "$other_managers" ]]; then
+    log_error "检测到本机网络由 netplan / systemd-networkd 管理，切换到 NetworkManager 会与其争抢网卡（双 DHCP、地址冲突甚至失联），已中止，未做任何变更："
+    while IFS= read -r line; do
+      log_error "  ${line}"
+    done <<< "$other_managers"
+    log_info "此类系统无需执行本模块；如确需由 NetworkManager 接管，请先把 netplan 的 renderer 改为 NetworkManager 并 netplan apply，确认网络正常后再运行。"
+    exit "${ERROR_GENERAL}"
+  fi
+
+  # 检测 ifupdown（含 source / source-directory 引入的文件）中的静态/手动网卡配置（lo、DHCP、SLAAC 除外），
+  # 以及网桥/绑定/VLAN/无线认证/钩子脚本等 NM 无法等价接管的指令；注释后 NM 只会按 DHCP 接管，导致远程失联，因此拒绝自动切换
   static_ifaces=$(_cnet_static_ifaces)
   if [[ -n "$static_ifaces" ]]; then
-    log_error "检测到 ifupdown 静态/手动网卡配置，自动切换到 NetworkManager 会丢失静态 IP 并导致失联，已中止："
+    log_error "检测到 ifupdown 静态/手动网卡或网桥/绑定/VLAN/钩子等配置，自动切换到 NetworkManager 会丢失这些配置并导致失联，已中止："
     while IFS= read -r line; do
       log_error "  ${line}"
     done <<< "$static_ifaces"

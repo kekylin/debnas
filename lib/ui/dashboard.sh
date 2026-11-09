@@ -986,6 +986,36 @@ _dash_install_traps() {
   fi
   trap '_DASH_QUIT=1' INT
   trap '_DASH_RESIZED=1' WINCH
+  trap '_dash_on_hup' HUP
+  trap '_dash_on_tstp' TSTP
+  trap '_dash_on_cont' CONT
+}
+
+# SIGHUP（终端断开/SSH 掉线）：终止后台探测（含其中的命令）、恢复终端后退出
+_dash_on_hup() {
+  module_status_collect_stop 2>/dev/null || true
+  ui_sysinfo_updates_stop 2>/dev/null || true
+  _dash_tui_leave 2>/dev/null || true
+  exit 129
+}
+
+# SIGTSTP（Ctrl-Z）：暂停前恢复终端（否则 shell 停留在备用屏幕、无回显），继续后重新进入并整屏重绘
+_dash_on_tstp() {
+  local was_on="$_DASH_TUI_ON"
+  _dash_tui_leave
+  kill -STOP "$BASHPID" 2>/dev/null || true
+  if [[ "$was_on" -eq 1 && "$_DASH_TUI_ON" -ne 1 ]]; then
+    _dash_tui_enter
+    _DASH_RESIZED=1
+  fi
+}
+
+# SIGCONT（含被外部 SIGSTOP 暂停后恢复）：终端模式可能已被 shell 改回，重新设置并整屏重绘
+_dash_on_cont() {
+  [[ "$_DASH_TUI_ON" -eq 1 ]] || return 0
+  stty -echo -icanon min 1 time 0 2>/dev/null || true
+  printf '\e[?1049h\e[?25l'
+  _DASH_RESIZED=1
 }
 
 # 读取按键：设置 _DASH_KEY
@@ -1512,7 +1542,7 @@ ui_dashboard_main() {
   _dash_tui_leave
   module_status_collect_stop
   ui_sysinfo_updates_stop
-  trap - WINCH
+  trap - WINCH HUP TSTP CONT
   trap ':' INT
   return 0
 }

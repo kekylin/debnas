@@ -184,7 +184,7 @@ module_plan() {
     echo "write|${DOMAINS_CONF_FILE}|首次创建默认域名列表（${domain_count:-0} 个，新文件）"
   fi
   echo "info|DNS 解析|联网经 AliDNS/TencentDNS/BaiduDNS/DNS114 解析 ${domain_count:-0} 个域名并测试连通性，执行时探测"
-  echo "write|${HOSTS_FILE}|启用/更新：重写 DebNAS 区块（区块外内容保留；原地覆盖保留 inode，不另做备份）；禁用：移除区块"
+  echo "write|${HOSTS_FILE}|启用/更新：重写 DebNAS 区块（区块外内容保留；原子替换，旧文件备份到 /var/backups/debnas/；区块缺结束标记时拒绝写入）；禁用：移除区块"
   if [[ "$(cron_state hosts-sync)" == "on" ]]; then
     echo "info|cron|定时更新已开启（$(cron_get_schedule hosts-sync 2>/dev/null || echo 已注册)）；禁用时移除"
   else

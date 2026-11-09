@@ -58,15 +58,24 @@ configure_email() {
 # jail.local 由 DebNAS 管理的标识（首行）；无此标识且非旧版 DebNAS 生成的文件视为用户自定义，不覆盖
 readonly JAIL_LOCAL_MARKER="# DebNAS managed: 本文件由 DebNAS 生成，自定义配置请放 /etc/fail2ban/jail.d/*.local"
 
-# 本机直连的私有网段（RFC1918），加入 ignoreip 防止管理员在局域网内被误封
-# 排除 Docker 网桥（docker0 / br-xxxx），容器网段不应免封
+# 本机直连的私有网段（RFC1918），仅在 debnas.conf 设 fail2ban_ignore_lan=1 时加入 ignoreip
+# 默认不加：局域网内被攻陷的设备（或经端口映射/反代进来、源地址显示为内网的流量）也应被封禁
+# 排除虚拟网桥与 VPN 接口（docker0、br-*、virbr*、lxcbr*、podman*、wg*、veth*、tun*/tap* 等），其网段不应免封
 get_local_private_subnets() {
   command -v ip &>/dev/null || return 0
   ip -o -4 route show scope link 2>/dev/null \
     | awk '{dev = ""; for (i = 2; i < NF; i++) if ($i == "dev") dev = $(i + 1)}
-           dev ~ /^(docker[0-9]*|br-)/ {next}
+           dev ~ /^(docker|br-|virbr|lxcbr|lxdbr|podman|cni|flannel|cali|veth|wg|tun|tap|tailscale|zt)/ {next}
            $1 ~ /^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.)/ && $1 ~ /\// {print $1}' \
     | sort -u | paste -sd' ' - || true
+}
+
+# 计算 ignoreip 中追加的局域网段：默认空；fail2ban_ignore_lan=1 时为本机直连私网段
+fail2ban_ignore_lan_subnets() {
+  if config_get_bool fail2ban_ignore_lan 0; then
+    get_local_private_subnets
+  fi
+  return 0
 }
 
 # 判断 jail.local 是否可由 DebNAS 覆盖：不存在 / 带 DebNAS 标识 / 旧版 DebNAS 生成
@@ -91,17 +100,19 @@ configure_jail_local() {
   local ssh_ports lan_subnets
   # 自定义 SSH 端口时 port=ssh 只封 22，封禁形同虚设；--no-session：只取 sshd 配置的端口
   ssh_ports=$(sshd_listen_ports_csv --no-session)
-  lan_subnets=$(get_local_private_subnets)
+  lan_subnets=$(fail2ban_ignore_lan_subnets)
   log_info "SSH 封禁端口：${ssh_ports}"
   if [[ -n "$lan_subnets" ]]; then
-    log_info "局域网白名单（ignoreip）：${lan_subnets}"
+    log_info "局域网白名单（ignoreip，fail2ban_ignore_lan=1）：${lan_subnets}"
+  else
+    log_info "白名单（ignoreip）仅本机回环；如需放行本机直连局域网，在 debnas.conf 设 fail2ban_ignore_lan=1 后重跑"
   fi
 
   local content
   content="${JAIL_LOCAL_MARKER}
 [DEFAULT]
 
-# 忽略本机及本机直连局域网流量，防止自身被封禁
+# 忽略本机流量，防止自身被封禁（debnas.conf 设 fail2ban_ignore_lan=1 时另加本机直连局域网）
 ignoreip = 127.0.0.1/8 ::1${lan_subnets:+ ${lan_subnets}}
 
 # 封禁时长（-1 表示永久封禁）
@@ -274,9 +285,10 @@ module_plan() {
     fi
   fi
   echo "service|fail2ban|设为开机自启；配置有变更时重启"
-  local lan=""
-  lan=$(get_local_private_subnets)
-  echo "risk|封禁|同一 IP 1 天内失败 5 次封禁 1 小时；白名单仅本机${lan:+及 ${lan}}，外网登录的管理员可能被误封"
+  local lan="" white="仅本机回环（局域网同样会被封，可在 debnas.conf 设 fail2ban_ignore_lan=1 放行直连网段）"
+  lan=$(fail2ban_ignore_lan_subnets)
+  [[ -n "$lan" ]] && white="本机及直连局域网 ${lan}（fail2ban_ignore_lan=1）"
+  echo "risk|封禁|同一 IP 1 天内失败 5 次封禁 1 小时；白名单${white}，管理员多次输错密码也会被封"
   echo "info|告警邮件|每次封禁发送邮件（需已配置邮件发送，见 mail-account 模块）"
   return 0
 }

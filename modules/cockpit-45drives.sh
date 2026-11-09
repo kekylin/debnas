@@ -104,9 +104,15 @@ remove_debnas_shares_plugin_dir() {
 }
 
 # 读取 file_sharing_ui（只读，小写；非法值按 debnas）
+# 未设置且已装 cockpit-file-sharing（老用户升级）按 45drives，与 cockpit-shares 的 shares_ui_choice 一致
 _fd45_ui_choice() {
 	local v
-	v=$(config_read "global" "file_sharing_ui" "debnas" 2>/dev/null) || v="debnas"
+	v=$(config_read "global" "file_sharing_ui" "" 2>/dev/null) || v=""
+	if [[ -z "$v" ]] && pkg_is_installed cockpit-file-sharing; then
+		echo "45drives"
+		return 0
+	fi
+	[[ -n "$v" ]] || v="debnas"
 	v="${v,,}"
 	case "$v" in
 	debnas | 45drives) echo "$v" ;;

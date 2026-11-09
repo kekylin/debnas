@@ -165,7 +165,8 @@ run_report() {
 
   if [[ "$exit_code" -eq 0 ]]; then
     # 交互式菜单仅浏览未执行动作：不记录状态、不输出完成日志
-    if [[ "${_DEBNAS_INTERACTIVE_TTY:-0}" -eq 1 && ! -f "${DEBNAS_ACTION_MARKER:-}" ]]; then
+    # 标记文件由 mktemp 预先创建（空文件），module_mark_action 写入内容后才算执行过，故用 -s 判断
+    if [[ "${_DEBNAS_INTERACTIVE_TTY:-0}" -eq 1 && ! -s "${DEBNAS_ACTION_MARKER:-}" ]]; then
       log_stop_file 2>/dev/null || true
       return 0
     fi

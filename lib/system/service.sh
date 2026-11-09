@@ -226,6 +226,10 @@ DEBNAS_SSHD_CONFIG="${DEBNAS_SSHD_CONFIG:-/etc/ssh/sshd_config}"
 # 说明：依次尝试 ① sshd -T（需 root，反映 Include/Match 合并后的生效值）
 #       ② sshd_config 与 sshd_config.d/*.conf 中的 Port 行 ③ 默认 22；
 #       另追加当前 SSH 会话所连的服务端端口（SSH_CONNECTION 第 4 字段），防止把自己锁在门外
+#       ListenAddress 自带端口（a.b.c.d:port、[v6]:port）时该端口同样计入（只用 ListenAddress
+#       改端口时只认 Port 会把真实端口挡在防火墙外）；端口须在 1..65535
+#       注意：sudo 默认 env_reset 不保留 SSH_CONNECTION，经 sudo 运行时会话端口这一兜底通常不生效，
+#       只能依赖 ①② 的解析结果
 sshd_listen_ports() {
   local with_session=1 key value cfg found=0 port
   local -a ports=() cfgs=()
@@ -234,6 +238,9 @@ sshd_listen_ports() {
   if command -v sshd >/dev/null 2>&1; then
     while IFS=$' \t' read -r key value _; do
       [[ "$key" == "port" && "$value" =~ ^[0-9]{1,5}$ ]] && { ports[10#$value]=1; found=1; }
+      if [[ "$key" == "listenaddress" ]]; then
+        port=$(_sshd_listenaddress_port "$value") && ports[10#$port]=1
+      fi
     done < <(sshd -T 2>/dev/null || true)
   fi
   if (( found == 0 )); then
@@ -243,6 +250,9 @@ sshd_listen_ports() {
     for cfg in "${cfgs[@]+"${cfgs[@]}"}"; do
       while IFS=$' \t' read -r key value _ || [[ -n "$key" ]]; do
         [[ "${key,,}" == "port" && "$value" =~ ^[0-9]{1,5}$ ]] && { ports[10#$value]=1; found=1; }
+        if [[ "${key,,}" == "listenaddress" ]]; then
+          port=$(_sshd_listenaddress_port "$value") && ports[10#$port]=1
+        fi
       done < "$cfg"
     done
   fi
@@ -255,9 +265,25 @@ sshd_listen_ports() {
   fi
   # 稀疏下标数组按下标升序遍历，即数值升序去重
   for port in "${!ports[@]}"; do
-    (( port > 0 )) && printf '%s\n' "$port"
+    (( port > 0 && port <= 65535 )) && printf '%s\n' "$port"
   done
   return 0
+}
+
+# 从 ListenAddress 的值中取端口（内部）
+# 参数：$1 - 如 0.0.0.0:2222、[::1]:2222、host:2222；无端口（0.0.0.0、::、[::1]）时失败
+# 输出：端口（1..65535）
+# 返回：0 有端口 / 1 无端口或非法
+_sshd_listenaddress_port() {
+  local addr="$1" p=""
+  if [[ "$addr" == \[*\]:* ]]; then
+    p="${addr##*\]:}"
+  elif [[ "$addr" == *:* && "${addr#*:}" != *:* ]]; then
+    # 恰好一个冒号：IPv4/主机名:端口（多个冒号的是不带括号的 IPv6，无端口）
+    p="${addr#*:}"
+  fi
+  [[ "$p" =~ ^[0-9]{1,5}$ ]] && (( 10#$p >= 1 && 10#$p <= 65535 )) || return 1
+  printf '%s\n' "$((10#$p))"
 }
 
 # sshd 监听端口（逗号分隔，供 fail2ban port= 等使用）

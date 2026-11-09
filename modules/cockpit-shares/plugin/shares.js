@@ -7,7 +7,8 @@
  *   - NFS 导出：/etc/exports.d/cockpit-file-sharing.exports（语法同 /etc/exports），不碰 /etc/exports
  *
  * 安全约定：
- *   - 所有命令用参数数组 cockpit.spawn([...])，不拼接 shell 字符串
+ *   - 所有命令用参数数组 cockpit.spawn([...])，不拼接 shell 字符串；argv[0] 之外以 - 开头的参数必须是调用点声明的选项
+ *   - 共享路径写入 realpath 结果；上级目录不归 root 或组/其他可写时二次确认
  *   - 共享名/路径/用户名/参数键值先做白名单校验
  *   - 界面输出一律 textContent / createTextNode，不使用 innerHTML
  *   - Samba 密码只经 stdin 传给 smbpasswd -s，不出现在命令行参数里
@@ -95,11 +96,32 @@
     // Cockpit 封装（统一转成原生 Promise）
     // ======================================================================
 
+    // 用户主动取消（二次确认选「取消」）：对话框保持打开、不显示错误
+    function cancelled() {
+        const e = new Error("已取消");
+        e.user = true;
+        e.cancel = true;
+        throw e;
+    }
+
     // argv 必须是数组；默认以管理员执行，stderr 进入错误对象的 message
+    // 选项白名单：argv[0] 之外以 - 开头的参数必须在调用点声明的 opts.flags 中（精确匹配；以 = 结尾的条目按前缀匹配），
+    // 否则拒绝执行——防止路径、共享名等用户输入被命令当作选项（如 find 的 -delete）
     function spawn(argv, opts, input) {
         if (!Array.isArray(argv)) throw new Error("spawn 需要参数数组");
         const options = Object.assign({ superuser: "require", err: "message" }, opts || {});
-        const proc = cockpit.spawn(argv.map(String), options);
+        const flags = options.flags || [];
+        delete options.flags;
+        const args = argv.map(String);
+        for (let i = 1; i < args.length; i++) {
+            const a = args[i];
+            if (a.startsWith("-") && !flags.some(f => f.endsWith("=") ? a.startsWith(f) : a === f)) {
+                const e = new Error("拒绝执行 " + args[0] + "：参数「" + a + "」以 - 开头且不是允许的选项");
+                e.user = true;
+                return Promise.reject(e);
+            }
+        }
+        const proc = cockpit.spawn(args, options);
         if (input !== undefined) proc.input(input);
         return new Promise((resolve, reject) => proc.then(resolve, reject));
     }
@@ -127,7 +149,21 @@
 
     // 读取 Samba 参数的生效值（testparm 合并 smb.conf 与注册表）
     async function testparmValue(key) {
-        return (await spawn(["testparm", "-s", "--parameter-name=" + key])).trim();
+        return (await spawn(["testparm", "-s", "--parameter-name=" + key], { flags: ["-s", "--parameter-name="] })).trim();
+    }
+
+    // 参数名是否为 Samba 认识的参数：testparm --parameter-name 对未知参数退出码 1（输出 "Parameter <名> unknown"）
+    // 带 : 的是参数化选项（如 fruit:xxx、vfs 模块参数），Samba 不校验名称，直接放行
+    async function smbParamKnown(key) {
+        if (key.includes(":")) return true;
+        let out;
+        try {
+            out = await spawn(["testparm", "-s", "--parameter-name=" + key], { flags: ["-s", "--parameter-name="], err: "out" });
+        } catch (e) {
+            if (e && e.exit_status === 1) return false;
+            throw e;
+        }
+        return !String(out).toLowerCase().includes("parameter " + key.toLowerCase() + " unknown");
     }
 
     // ======================================================================
@@ -149,6 +185,15 @@
         if (!name) return "请填写共享名";
         if (!SHARE_NAME_RE.test(name)) return "共享名只能包含字母、数字、汉字、_ . -（可用 $ 结尾表示隐藏共享），不能以 . 或 - 开头，最长 80 个字符";
         if (RESERVED_SHARES.has(name.toLowerCase())) return "「" + name + "」是 Samba 保留名称";
+        return "";
+    }
+
+    // 注册表中已有的共享名（可能由其他工具创建，含空格等）：只拒绝空名、以 - 开头和控制字符，
+    // 保证作为 net conf showshare/delshare/setparm 的参数时不会被当作选项
+    function existingShareNameError(name) {
+        if (!name) return "共享名为空";
+        if (name.startsWith("-")) return "共享名「" + name + "」以 - 开头";
+        if (/[\x00-\x1f\x7f]/.test(name)) return "共享名包含控制字符";
         return "";
     }
 
@@ -186,14 +231,72 @@
         if (syntax) fail(syntax);
         let real;
         try {
-            real = (await spawn(["realpath", "-e", "--", p])).trim();
+            real = (await spawn(["realpath", "-e", "--", p], { flags: ["-e", "--"] })).replace(/\n$/, "");
         } catch (e) {
             fail("路径不存在：" + p);
         }
-        const sys = systemPathError(real);
-        if (sys) fail("路径实际指向 " + real + "，" + sys);
-        const type = (await spawn(["stat", "-c", "%F", "--", real])).trim();
+        // 符号链接目标同样要满足路径语法（不含控制字符/引号等），否则不能写入配置
+        const syn = pathSyntaxError(real);
+        if (syn) fail("路径实际指向 " + real + "，" + syn);
+        const type = (await spawn(["stat", "-c", "%F", "--", real], { flags: ["-c", "--"] })).trim();
         if (type !== "directory") fail("路径不是目录：" + p);
+        return real;
+    }
+
+    // real 的各级祖先目录（不含自身），如 /srv/a/b → ["/", "/srv", "/srv/a"]
+    function ancestorDirs(real) {
+        const out = ["/"];
+        const parts = real.split("/").filter(Boolean);
+        for (let i = 1; i < parts.length; i++) out.push("/" + parts.slice(0, i).join("/"));
+        return real === "/" ? [] : out;
+    }
+
+    // 解析 stat -c "%u:%a:%n" 输出，返回不安全祖先的说明（属主非 root，或组/其他用户可写）
+    function unsafeAncestors(statOut) {
+        const bad = [];
+        for (const line of String(statOut || "").split("\n")) {
+            const m = /^(\d+):([0-7]+):(.*)$/.exec(line);
+            if (!m) continue;
+            const reasons = [];
+            if (m[1] !== "0") reasons.push("属主 UID " + m[1] + " 不是 root");
+            const mode = parseInt(m[2], 8);
+            if (mode & 0o020) reasons.push("组可写");
+            if (mode & 0o002) reasons.push("其他用户可写" + (mode & 0o1000 ? "（有粘滞位）" : ""));
+            if (reasons.length) bad.push(m[3] + "：" + reasons.join("、") + "（权限 " + m[2] + "）");
+        }
+        return bad;
+    }
+
+    // 弹出二次确认，返回 Promise<boolean>（确认 true，取消/关闭 false）
+    function askConfirm(title, body, confirmText) {
+        return new Promise(resolve => {
+            let ok = false;
+            openModal({
+                title, size: "md", danger: true, body,
+                actions: [{ text: confirmText, variant: "danger", run: () => { ok = true } }, CANCEL_ACTION],
+                onClose: () => resolve(ok)
+            });
+        });
+    }
+
+    // 校验并解析共享路径：返回 realpath 结果（写入配置的是真实路径，不是用户输入）；
+    // 任一级祖先目录不归 root 或对组/其他用户可写时警告并要求二次确认（其属主可把路径中的目录替换成符号链接，
+    // 让共享指向任意位置）。prevPath 与解析结果相同（编辑时路径未变）时不重复确认
+    async function resolveSharePath(p, prevPath) {
+        const real = await checkDirRemote(p);
+        if (prevPath && real === prevPath) return real;
+        const dirs = ancestorDirs(real);
+        if (!dirs.length) return real;
+        const out = await spawn(["stat", "-c", "%u:%a:%n", "--"].concat(dirs), { flags: ["-c", "--"] });
+        const bad = unsafeAncestors(out);
+        if (bad.length) {
+            const ok = await askConfirm("共享路径的上级目录不安全", h("div", { class: "ds-stack" },
+                h("p", { text: "共享目录 " + real + (real !== p ? "（由 " + p + " 解析得到）" : "") + " 的以下上级目录不归 root 所有，或允许其他用户写入：" }),
+                preText(bad.join("\n")),
+                h("p", { text: "能写这些目录的用户可以把路径中的某一级替换成符号链接，使共享（以 root 运行的 Samba/NFS 服务）指向系统中任意目录。建议把共享放在 /srv 等仅 root 可写的目录下。" }),
+                h("p", { text: "确定仍要使用该路径吗？" })), "仍然使用");
+            if (!ok) cancelled();
+        }
         return real;
     }
 
@@ -449,7 +552,8 @@
                     m.busy = false;
                     if (sp) sp.remove();
                     setDisabled(false);
-                    if (err && err.user) m.setError(err.message);
+                    if (err && err.cancel) m.setError(null);
+                    else if (err && err.user) m.setError(err.message);
                     else m.setError(a.errorTitle || "操作失败", errText(err));
                 });
             });
@@ -504,14 +608,14 @@
 
     function lockedState() {
         return emptyState("需要管理员权限",
-            "此页面需要管理员权限。请点击 Cockpit 顶栏右上角的「受限访问」（管理员访问）按钮并输入密码，切换为管理员模式后页面会自动刷新。");
+            "此页面需要管理员权限。请点击 Cockpit 顶栏右上角的「受限访问」按钮（部分版本显示为「被限制的访问」）并输入密码，切换为管理员模式后页面会自动刷新。");
     }
 
     function renderAdminBox() {
         clear(adminBox);
         if (state.admin === false) {
             adminBox.appendChild(alertBox("warning", "当前为受限访问模式",
-                h("p", { text: "查看和修改共享需要管理员权限：请点击 Cockpit 顶栏右上角的「受限访问」（管理员访问）按钮，输入密码切换为管理员模式。" })));
+                h("p", { text: "查看和修改共享需要管理员权限：请点击 Cockpit 顶栏右上角的「受限访问」按钮（部分版本显示为「被限制的访问」），输入密码切换为管理员模式。" })));
         }
     }
 
@@ -569,7 +673,7 @@
 
     async function serviceStatus(units) {
         const out = await spawn(["systemctl", "show", "--no-pager", "--property=Id,LoadState,ActiveState,SubState,UnitFileState", "--"].concat(units),
-            { superuser: "try" });
+            { superuser: "try", flags: ["--no-pager", "--property=", "--"] });
         const result = {};
         let cur = {};
         const blocks = [];
@@ -595,7 +699,7 @@
                 : st.ActiveState === "failed" ? label("启动失败", "red") : label("已停止", "grey");
         const boot = installed ? label(enabled ? "开机启动" : (st.UnitFileState === "masked" ? "已屏蔽" : "开机不启动"), enabled ? "blue" : "grey") : null;
         const act = (argv, okText) => {
-            spawn(argv).then(() => {
+            spawn(argv, { flags: ["--now"] }).then(() => {
                 notify("success", okText);
                 onChanged();
             }, err => notify("danger", "操作失败：" + argv.join(" "), errText(err)));
@@ -606,7 +710,7 @@
             if (active) actions.push(button("重启", "secondary", () => act(["systemctl", "restart", unit], title + " 已重启"), { small: true }));
             if (active) {
                 actions.push(button("停止", "link pf-m-danger", () => confirmDialog("停止 " + title + "？", "停止后客户端将无法访问该服务上的共享，并取消开机启动。", "停止",
-                    () => spawn(["systemctl", "disable", "--now", unit]).then(() => {
+                    () => spawn(["systemctl", "disable", "--now", unit], { flags: ["--now"] }).then(() => {
                         notify("success", title + " 已停止");
                         onChanged();
                     })), { small: true }));
@@ -688,9 +792,18 @@
         const parsed = parseSmbConf(text);
         const drop = new Set(names.map(n => n.toLowerCase()));
         const keep = new Array(parsed.lines.length).fill(true);
+        const isComment = l => l.startsWith("#") || l.startsWith(";");
         for (const s of parsed.sections) {
             if (!drop.has(s.name.toLowerCase())) continue;
-            for (let i = s.start; i < s.end; i++) keep[i] = false;
+            let end = s.end;
+            // 后面还有段时，紧贴下一段上方的注释块属于下一段：保留（从段尾向上跳过注释/空行，保留其中第一行注释起的部分）
+            if (end < parsed.lines.length) {
+                let i = end;
+                while (i - 1 > s.start && (!parsed.lines[i - 1].trim() || isComment(parsed.lines[i - 1].trim()))) i--;
+                while (i < end && !isComment(parsed.lines[i].trim())) i++;
+                end = i;
+            }
+            for (let i = s.start; i < end; i++) keep[i] = false;
         }
         return parsed.lines.filter((_, i) => keep[i]).join("\n");
     }
@@ -801,11 +914,21 @@
     }
 
     async function smbShowShare(name) {
+        const ne = existingShareNameError(name);
+        if (ne) fail(ne);
         return parseShowshare(await spawn(["net", "conf", "showshare", name]));
+    }
+
+    async function smbDelShare(name) {
+        const ne = existingShareNameError(name);
+        if (ne) fail(ne);
+        await spawn(["net", "conf", "delshare", name]);
     }
 
     // 以注册表当前内容为基准，逐项 setparm / delparm 到目标参数
     async function applyParams(section, desired, onlyKeys) {
+        const ne = existingShareNameError(section);
+        if (ne) fail(ne);
         let current = [];
         try {
             current = await smbShowShare(section);
@@ -845,7 +968,7 @@
             throw e;
         }
         try {
-            await spawn(["testparm", "-s", SMB_CONF]);
+            await spawn(["testparm", "-s", SMB_CONF], { flags: ["-s"] });
         } catch (e) {
             await replaceFile(SMB_CONF, content, newTag);
             fail("修改后 testparm 校验失败，已恢复原文件：" + errText(e));
@@ -907,6 +1030,9 @@
                 body.appendChild(isNotFound(err) ? sambaMissingState() : errorAlert("读取 Samba 注册表失败", err));
                 return;
             }
+            // 名称异常（以 - 开头、含控制字符）的注册表共享不交给 net conf，单独提示
+            const badNames = names.filter(n => existingShareNameError(n));
+            names = names.filter(n => !existingShareNameError(n));
             let shares;
             try {
                 shares = await Promise.all(names.map(async n => shareFromParams(n, await smbShowShare(n))));
@@ -923,6 +1049,10 @@
                 .map(s => shareFromParams(s.name, s.params));
 
             clear(banner);
+            if (badNames.length) {
+                banner.appendChild(alertBox("warning", "注册表中有 " + badNames.length + " 个共享名称异常，已跳过",
+                    h("p", { text: "名称以 - 开头或包含控制字符的共享无法在此安全管理，请用 net conf 命令手工检查：" + badNames.map(n => JSON.stringify(n)).join("、") })));
+            }
             if (conf.content !== null && !registryEnabled(text)) {
                 banner.appendChild(alertBox("warning", "Samba 注册表未启用",
                     h("p", { text: "smb.conf 的 [global] 中没有 “include = registry”，此处管理的共享不会生效。启用时会先备份 smb.conf，只追加这一行，不改动其他内容。" }),
@@ -1004,7 +1134,7 @@
 
         remove(s) {
             confirmDialog("删除共享「" + s.name + "」？", "只删除 Samba 共享配置，不会删除目录 " + s.path + " 中的任何文件。", "删除", async () => {
-                await spawn(["net", "conf", "delshare", s.name]);
+                await smbDelShare(s.name);
                 notify("success", "已删除共享 " + s.name);
                 this.refresh();
             }, { errorTitle: "删除失败" });
@@ -1034,10 +1164,17 @@
         });
         async function load(dir) {
             clear(list);
+            // GNU find 的 -- 只结束 -H/-L 等前置选项，其后以 - 开头的参数仍被当作表达式（如 -delete），
+            // 因此目录必须是以 / 开头的绝对路径；spawn 的选项白名单再兜底一次
+            if (typeof dir !== "string" || !dir.startsWith("/") || /[\x00-\x1f\x7f]/.test(dir)) {
+                m.setError("请输入以 / 开头的绝对路径", String(dir));
+                return;
+            }
             list.appendChild(loading());
             let out;
             try {
-                out = await spawn(["find", dir, "-mindepth", "1", "-maxdepth", "1", "-type", "d", "-printf", "%f\\0"]);
+                out = await spawn(["find", dir, "-mindepth", "1", "-maxdepth", "1", "-type", "d", "-printf", "%f\\0"],
+                    { flags: ["-mindepth", "-maxdepth", "-type", "-printf"] });
             } catch (e) {
                 clear(list);
                 m.setError("无法读取目录 " + dir, errText(e));
@@ -1167,19 +1304,51 @@
                     tmMaxSize: tm.input.checked ? tmSize.input.value.trim() : "",
                     extra: kv.value()
                 });
-                validateShare(next, isNew);
-                await checkDirRemote(next.path);
-                if (isNew) {
-                    const existingNames = (await smbListShares()).map(n => n.toLowerCase());
-                    if (existingNames.includes(next.name.toLowerCase())) fail("共享「" + next.name + "」已存在");
-                    await spawn(["net", "conf", "addshare", next.name, next.path]);
-                }
-                await applyParams(next.name, shareToParams(next));
+                await saveSambaShare(next, isNew, isNew ? "" : s.path);
                 notify("success", (isNew ? "已创建共享 " : "已保存共享 ") + next.name);
                 onDone();
             });
         }
     };
+
+    // 校验并写入一个 Samba 共享：路径写 realpath 结果；高级参数名先全部校验；
+    // 新建失败时 delshare 回滚，编辑失败时按编辑前的注册表参数恢复
+    async function saveSambaShare(next, isNew, prevPath) {
+        validateShare(next, isNew);
+        // 写入 realpath 解析后的真实路径（上级目录不安全时二次确认）
+        next.path = await resolveSharePath(next.path, prevPath);
+        // 高级参数名先全部用 testparm 校验，任一未知则整体不写
+        for (const [k0] of next.extra) {
+            const k = normKey(k0);
+            if (!(await smbParamKnown(k))) fail("Samba 不认识参数「" + k + "」，未做任何修改");
+        }
+        const desired = shareToParams(next);
+        if (isNew) {
+            const existingNames = (await smbListShares()).map(n => n.toLowerCase());
+            if (existingNames.includes(next.name.toLowerCase())) fail("共享「" + next.name + "」已存在");
+            await spawn(["net", "conf", "addshare", next.name, next.path]);
+            // 新建：之后任何一步失败都删除半成品共享
+            try {
+                await applyParams(next.name, desired);
+            } catch (e) {
+                try {
+                    await smbDelShare(next.name);
+                } catch (e2) { /* 回滚失败时以首个错误为准 */ }
+                throw e;
+            }
+        } else {
+            // 编辑：失败时按编辑前的注册表参数恢复
+            const before = await smbShowShare(next.name);
+            try {
+                await applyParams(next.name, desired);
+            } catch (e) {
+                try {
+                    await applyParams(next.name, before);
+                } catch (e2) { /* 恢复失败时以首个错误为准 */ }
+                throw e;
+            }
+        }
+    }
 
     // ======================================================================
     // 视图：Samba 设置（服务状态 + 全局参数）
@@ -1319,14 +1488,32 @@
         return toks;
     }
 
-    // 返回 { entries: [{ comments, path, clients: [{ host, options }] } | { comments, raw }], trailing }
+    // 拆出行内注释：引号外、位于行首或空白之后的 # 起为注释（与 nfs-utils 在词元之间识别 # 的规则一致）
+    // 返回 { code, comment }，comment 含 # 本身（无注释时为 ""）
+    function splitExportComment(line) {
+        let quoted = false;
+        for (let i = 0; i < line.length; i++) {
+            const c = line[i];
+            if (c === '"') quoted = !quoted;
+            else if (c === "#" && !quoted && (i === 0 || /\s/.test(line[i - 1]))) {
+                return { code: line.slice(0, i).replace(/\s+$/, ""), comment: line.slice(i) };
+            }
+        }
+        return { code: line, comment: "" };
+    }
+
+    // 返回 { entries: [{ comments, src, inline, path, clients: [{ host, options }] } | { comments, src, raw }], trailing }
+    //   src：该条目在原文件中的原始行（未修改的条目按原文写回，保留行内注释、续行与原有写法）
+    //   inline：行内注释（# 起），编辑后的条目序列化时附在行尾
     function parseExports(text) {
         const entries = [];
         let pending = [];
         let buf = "";
+        let src = [];
         for (const raw of String(text || "").split("\n")) {
             if (buf) {
                 buf += " " + raw.trim();
+                src.push(raw);
             } else {
                 const t = raw.trim();
                 if (!t) continue;
@@ -1335,6 +1522,7 @@
                     continue;
                 }
                 buf = t;
+                src = [raw];
             }
             if (buf.endsWith("\\")) {
                 buf = buf.slice(0, -1).trim();
@@ -1342,14 +1530,17 @@
             }
             const line = buf;
             buf = "";
-            const toks = tokenizeExport(line);
-            const entry = { comments: pending };
+            const { code, comment } = splitExportComment(line);
+            const toks = tokenizeExport(code);
+            const entry = { comments: pending, src };
             pending = [];
+            src = [];
             if (!toks || !toks.length || !toks[0].startsWith("/")) {
                 entry.raw = line;
             } else {
                 entry.path = toks[0];
                 entry.clients = [];
+                entry.inline = comment;
                 for (const t of toks.slice(1)) {
                     const m = /^([^()]*)(?:\(([^()]*)\))?$/.exec(t);
                     if (!m) {
@@ -1361,31 +1552,40 @@
                 if (entry.raw) {
                     delete entry.path;
                     delete entry.clients;
+                    delete entry.inline;
                 }
             }
             entries.push(entry);
         }
-        if (buf) entries.push({ comments: pending, raw: buf });
+        if (buf) entries.push({ comments: pending, raw: buf, src });
         else if (pending.length) return { entries, trailing: pending };
         return { entries, trailing: [] };
     }
 
+    // 路径序列化：只含安全字符时原样输出，否则把空白、引号、反斜杠、#、括号、逗号及控制字符写成 \ooo 八进制转义
+    // （exportfs 解析路径时还原 \ooo；不用双引号包裹，避免路径本身含引号时无法表达）
     function quoteExportPath(p) {
-        return /^[A-Za-z0-9_/.+@:,-]+$/.test(p) ? p : '"' + p + '"';
+        if (/^[A-Za-z0-9_/.+@:,-]+$/.test(p)) return p;
+        return p.replace(/[\s"\\#(),\x00-\x1f\x7f]/g, c => "\\" + c.charCodeAt(0).toString(8).padStart(3, "0"));
     }
 
     function serializeExports(model) {
         const out = [];
         for (const e of model.entries) {
             out.push(...e.comments);
-            if (e.raw !== undefined) out.push(e.raw);
-            else out.push([quoteExportPath(e.path)].concat(e.clients.map(c => c.host + (c.options.length ? "(" + c.options.join(",") + ")" : ""))).join(" "));
+            if (e.src && e.src.length) out.push(...e.src);
+            else if (e.raw !== undefined) out.push(e.raw);
+            else {
+                const line = [quoteExportPath(e.path)].concat(e.clients.map(c => c.host + (c.options.length ? "(" + c.options.join(",") + ")" : ""))).join(" ");
+                out.push(e.inline ? line + " " + e.inline : line);
+            }
         }
         out.push(...model.trailing);
         return out.length ? out.join("\n") + "\n" : "";
     }
 
-    const NFS_HOST_RE = /^(\*|@[A-Za-z0-9_.-]+|[A-Za-z0-9*?._:-]+(\/[0-9.]{1,15})?)$/;
+    // 不允许以 - 开头（避免被 exportfs 等命令当作选项）
+    const NFS_HOST_RE = /^(?!-)(\*|@[A-Za-z0-9_.-]+|[A-Za-z0-9*?._:-]+(\/[0-9.]{1,15})?)$/;
     const NFS_OPT_RE = /^[a-z_]+(=[A-Za-z0-9_.:/@+-]+)?$/;
     const NFS_DEFAULT_OPTIONS = ["rw", "sync", "root_squash", "no_subtree_check"];
     const NFS_KNOWN = new Set(["rw", "ro", "sync", "async", "root_squash", "no_root_squash", "all_squash", "no_subtree_check", "subtree_check", "insecure", "secure"]);
@@ -1411,8 +1611,26 @@
             if (NFS_KNOWN.has(c)) fail("选项 " + c + " 请用上方的选项设置");
             if (!opts.includes(c)) opts.push(c);
         }
+        // 原条目就是空主机项（"/path (rw)"，即所有主机）时允许保持为空；新增客户端必须填写
+        if (f.host === "" && f.allowEmptyHost) return { host: "", options: opts };
         if (!f.host || !NFS_HOST_RE.test(f.host)) fail("客户端格式不合法：" + (f.host || "（空）") + "。示例：192.168.1.0/24、client.lan、*");
         return { host: f.host, options: opts };
+    }
+
+    // 高风险客户端选项：所有主机（* 或空主机项）配合 no_root_squash / insecure，或任意客户端 anonuid=0 / anongid=0
+    // 返回：说明文字数组（为空表示无风险项）
+    function nfsRiskWarnings(clients) {
+        const warns = [];
+        for (const c of clients) {
+            const who = c.host === "" ? "（所有主机，空主机项）" : c.host;
+            const world = c.host === "*" || c.host === "";
+            if (world && c.options.includes("no_root_squash")) warns.push(who + "：no_root_squash —— 任何能连到本机的客户端都能以 root 身份读写该目录");
+            if (world && c.options.includes("insecure")) warns.push(who + "：insecure —— 任何主机都可从非特权端口（普通用户进程）访问");
+            for (const o of c.options) {
+                if (/^anon(uid|gid)=0+$/.test(o)) warns.push(who + "：" + o + " —— 匿名/被映射的用户将获得 root " + (o.startsWith("anonuid") ? "用户" : "组") + "身份");
+            }
+        }
+        return warns;
     }
 
     // ======================================================================
@@ -1486,7 +1704,7 @@
             const before = this.loaded.content;
             if (cur.content !== before) fail("文件已被其他程序修改，请刷新页面后重试（" + EXPORTS_FILE + "）");
             const text = serializeExports(model);
-            if (cur.tag === "-") await spawn(["mkdir", "-p", "--", EXPORTS_DIR]);
+            if (cur.tag === "-") await spawn(["mkdir", "-p", "--", EXPORTS_DIR], { flags: ["-p", "--"] });
             let newTag;
             try {
                 newTag = await replaceFile(EXPORTS_FILE, text, cur.tag);
@@ -1495,11 +1713,11 @@
                 throw e;
             }
             try {
-                await spawn(["exportfs", "-ra"]);
+                await spawn(["exportfs", "-ra"], { flags: ["-ra"] });
             } catch (e) {
                 await replaceFile(EXPORTS_FILE, before, newTag);
                 try {
-                    await spawn(["exportfs", "-ra"]);
+                    await spawn(["exportfs", "-ra"], { flags: ["-ra"] });
                 } catch (e2) { /* 回滚后再次应用失败时以首个错误为准 */ }
                 fail("exportfs -ra 失败，已恢复原文件：\n" + errText(e));
             }
@@ -1523,7 +1741,8 @@
             const clientsBox = h("div", { class: "ds-stack ds-stack-sm" });
             const clientRows = [];
 
-            const addClient = c => {
+            // fromFileEmpty：原文件中的空主机项（/path (rw)），允许保持为空
+            const addClient = (c, fromFileEmpty) => {
                 const f = clientToForm(c);
                 const host = textInput(f.host, { placeholder: "192.168.1.0/24、host.lan 或 *", label: "客户端" });
                 const access = selectInput([["rw", "读写（rw）"], ["ro", "只读（ro）"]], f.access, { label: "访问" });
@@ -1545,18 +1764,19 @@
                 const row = {
                     value: () => ({
                         host: host.input.value.trim(), access: access.input.value, sync: sync.input.value, squash: squash.input.value,
-                        noSubtree: noSub.input.checked, insecure: insecure.input.checked, custom: custom.input.value.trim()
+                        noSubtree: noSub.input.checked, insecure: insecure.input.checked, custom: custom.input.value.trim(),
+                        allowEmptyHost: !!fromFileEmpty
                     })
                 };
                 clientRows.push(row);
                 clientsBox.appendChild(box);
             };
-            entry.clients.forEach(addClient);
+            entry.clients.forEach(c => addClient(c, !isNew && c.host === ""));
 
             const form = formEl("ds-form",
                 formGroup("路径", path.group, "必须是已存在的目录；不允许导出系统目录", { required: true }),
                 formGroup("客户端", h("div", { class: "ds-stack ds-stack-sm" }, clientsBox,
-                    button("添加客户端", "link", () => addClient(newClient()), { inline: true }))));
+                    button("添加客户端", "link", () => addClient(newClient(), false), { inline: true }))));
 
             formDialog(isNew ? "新建 NFS 导出" : "编辑 NFS 导出", "lg", form, isNew ? "创建" : "保存", "保存失败", async () => {
                 const p = normPath(path.input.value);
@@ -1566,14 +1786,23 @@
                 const clients = clientRows.map(r => formToClient(r.value()));
                 const dupHost = clients.map(c => c.host).find((hst, i, a) => a.indexOf(hst) !== i);
                 if (dupHost !== undefined) fail("客户端重复：" + dupHost);
-                if (this.model.entries.some((e, i) => i !== idx && e.path === p)) fail("该路径已有导出，请直接编辑原条目");
-                await checkDirRemote(p);
-                const updated = { comments: entry.comments || [], path: p, clients };
+                // 写入 realpath 解析后的真实路径（上级目录不安全时二次确认）
+                const real = await resolveSharePath(p, isNew ? "" : entry.path);
+                if (this.model.entries.some((e, i) => i !== idx && (e.path === p || e.path === real))) fail("该路径已有导出，请直接编辑原条目");
+                const risks = nfsRiskWarnings(clients);
+                if (risks.length) {
+                    const ok = await askConfirm("NFS 导出包含高风险选项", h("div", { class: "ds-stack" },
+                        h("p", { text: "以下客户端设置会让不受信任的主机获得过高权限：" }),
+                        preText(risks.join("\n")),
+                        h("p", { text: "建议把客户端限定为具体网段（如 192.168.1.0/24），并保留 root_squash。确定仍要保存吗？" })), "仍然保存");
+                    if (!ok) cancelled();
+                }
+                const updated = { comments: entry.comments || [], path: real, clients, inline: entry.inline || "" };
                 const entries = this.model.entries.slice();
                 if (isNew) entries.push(updated);
                 else entries[idx] = updated;
                 await this.save({ entries, trailing: this.model.trailing });
-                notify("success", (isNew ? "已创建导出 " : "已保存导出 ") + p);
+                notify("success", (isNew ? "已创建导出 " : "已保存导出 ") + real);
                 showTab("nfs");
             });
         }
@@ -1601,7 +1830,7 @@
             let accounts, pdb;
             try {
                 accounts = await loadAccounts();
-                pdb = await spawn(["pdbedit", "-L"]);
+                pdb = await spawn(["pdbedit", "-L"], { flags: ["-L"] });
             } catch (err) {
                 clear(body);
                 body.appendChild(isNotFound(err) ? sambaMissingState() : errorAlert("读取 Samba 用户失败", err));
@@ -1656,7 +1885,7 @@
                 if (/[\r\n]/.test(a)) fail("密码不能包含换行");
                 if (a !== pw2.input.value) fail("两次输入的密码不一致");
                 // -s：从 stdin 读取两遍密码；密码不出现在命令行参数中
-                await spawn(["smbpasswd", "-s", "-a", name], {}, a + "\n" + a + "\n");
+                await spawn(["smbpasswd", "-s", "-a", name], { flags: ["-s", "-a"] }, a + "\n" + a + "\n");
                 notify("success", "已" + (exists ? "修改" : "设置") + " " + name + " 的 Samba 密码");
                 showTab("users");
             });
@@ -1665,7 +1894,7 @@
         removeUser(name) {
             if (!this.checkName(name)) return;
             confirmDialog("删除「" + name + "」的 Samba 密码？", "该用户将无法再访问 Samba 共享；系统账户本身不受影响。", "删除", async () => {
-                await spawn(["smbpasswd", "-x", name]);
+                await spawn(["smbpasswd", "-x", name], { flags: ["-x"] });
                 notify("success", "已删除 " + name + " 的 Samba 密码");
                 showTab("users");
             }, { errorTitle: "删除失败" });

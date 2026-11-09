@@ -150,6 +150,11 @@ config_get_url() {
 #       $4 - 文件权限（可选，默认 644；敏感信息应设为 600）
 # 返回：0 成功，1 失败
 config_write() {
+  # 读改写配置文件期间持锁（并发写会丢更新、共用 .tmp 文件互相覆盖）
+  if declare -F debnas_locked >/dev/null 2>&1 && [[ -z "${_DEBNAS_LOCKS_HELD[config]:-}" ]]; then
+    debnas_locked config config_write "$@"
+    return
+  fi
   local module_name="${1:?config_write: 缺少模块名}"
   local key="${2:?config_write: 缺少键名}"
   local value="${3:?config_write: 缺少键值}"
@@ -236,6 +241,11 @@ config_write() {
 #       $2 - 键名
 # 返回：0 成功（包括原本不存在的情况）
 config_delete() {
+  # 读改写配置文件期间持锁（并发写会丢更新、共用 .tmp 文件互相覆盖）
+  if declare -F debnas_locked >/dev/null 2>&1 && [[ -z "${_DEBNAS_LOCKS_HELD[config]:-}" ]]; then
+    debnas_locked config config_delete "$@"
+    return
+  fi
   local module_name="${1:?config_delete: 缺少模块名}"
   local key="${2:?config_delete: 缺少键名}"
   local conf_file

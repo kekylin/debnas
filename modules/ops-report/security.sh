@@ -48,6 +48,29 @@ ops_login_parse() {
     }'
 }
 
+# 从失败登录日志行提取来源 IP（stdin 每行一条，stdout 每行一个 IP，取不到的行不输出）
+# 说明：用户名可被攻击者控制，且总写在真实来源之前（sshd：用户名在 "from <IP> port N" 之前；
+#       pam_unix：user= 在 rhost= 之后），所以：
+#       - 消息本身以 "pam_xxx(...): authentication failure;" 开头的行：取第一个 rhost=
+#       - 其他行：只取最后一个 "<IP> port <数字>"，用户名里伪造的 "from <IP>" 不计入
+ops_fail_source_ips() {
+  awk '
+    {
+      ip = ""; s = $0
+      if ($0 ~ /^[^]]*\]: pam_[a-z_]+\([^)]*\): authentication failure;/) {
+        if (match($0, /rhost=[0-9a-fA-F.:]+/)) ip = substr($0, RSTART + 6, RLENGTH - 6)
+      } else {
+        while (match(s, /[[:space:]][0-9a-fA-F.:]+[[:space:]]+port[[:space:]]+[0-9]+/)) {
+          ip = substr(s, RSTART + 1, RLENGTH - 1)
+          s = substr(s, RSTART + RLENGTH)
+        }
+        sub(/[[:space:]].*$/, "", ip)
+      }
+      sub(/^::ffff:/, "", ip)
+      if (ip ~ /[.:]/ && ip ~ /[0-9a-fA-F]/) print ip
+    }'
+}
+
 # 登录日志最早记录日期，写入 OPS_LOGIN_DATA_START（module.sh 数据覆盖状态显示）
 # shellcheck disable=SC2034  # OPS_LOGIN_DATA_START 在 module.sh 中读取
 ops_login_data_start() {
@@ -147,7 +170,7 @@ ops_collect_security() {
         ratio = total > 0 ? (count[u] * 100 / total) : 0
         printf "%s|%d|%d|%.1f|%s|%s|%d|%s\n", u, count[u] + 0, active_days, ratio, first_ts[u], last_ts[u], ips[u] + 0, period
       }
-    }' | sort -k2 -nr || true)
+    }' | sort -t'|' -k2,2nr || true)
 
   OPS_LOGIN_HOURS=$(printf '%s\n' "$parsed" | awk -F '\t' '
     BEGIN { for (i = 0; i < 24; i++) c[i] = 0 }
@@ -187,9 +210,10 @@ ops_collect_security() {
       | grep -Ei "$fail_pattern" || true)
   fi
   OPS_LOGIN_FAIL_COUNT=$(printf '%s\n' "$raw_fail" | grep -v '^$' | wc -l || true)
-  OPS_FAIL_IP_STATS=$(printf '%s\n' "$raw_fail" \
-    | grep -oE 'rhost=[0-9a-fA-F.:]+|from [0-9a-fA-F.:]+' \
-    | sed 's/rhost=//;s/from //;s/^::ffff://' | sort | uniq -c | sort -rn \
+  # 来源 IP：用户名可被攻击者控制（"Invalid user x from 1.2.3.4 from <真实IP> port 22"），
+  # 每行只取最后一个 "<IP> port <数字>"（sshd 把真实来源写在用户名之后）；没有时退回 pam 的 rhost=
+  OPS_FAIL_IP_STATS=$(printf '%s\n' "$raw_fail" | ops_fail_source_ips \
+    | sort | uniq -c | sort -rn \
     | awk '{print $2, $1}' | head -10 || true)
   if [[ -z "$OPS_FAIL_IP_STATS" && "${OPS_LOGIN_FAIL_COUNT:-0}" -gt 0 ]]; then
     OPS_FAIL_IP_STATS=$(printf '%s\n' "$raw_fail" \
@@ -302,7 +326,7 @@ ops_drift_compact_diff() {
   local count out
   count=$(printf '%s\n' "$lines" | grep -v '^$' | wc -l || true)
   out=$(printf '%s\n' "$lines" | grep -v '^$' | head -"$max" \
-    | awk 'NF { if (n++) printf " · "; printf "%s", $0 }')
+    | awk 'NF { if (n++) printf " · "; printf "%s", $0 }' || true)
   if [[ "$count" -gt "$max" ]]; then
     out="${out} 等 ${count} 项"
   fi
@@ -326,6 +350,9 @@ ops_collect_suspicious_processes() {
     p="${pid##*/}"
     exe="${links["${pid}/exe"]:-}"
     cwd="${links["${pid}/cwd"]:-}"
+    # exe/cwd 路径同样可被本地用户控制（目录名可含换行/ESC 等），去掉控制字符后再进报告
+    exe="${exe//[$ctrl]/ }"
+    cwd="${cwd//[$ctrl]/ }"
     # comm/cmdline 可被任意本地用户控制：NUL 与换行/制表等控制字符替换为空格，
     # 防止伪造多行记录；cmdline 截断避免报告被超长参数撑大（HTML 转义在渲染层完成）
     # 用 read 直接读 /proc 文件，不再每个进程起 2 次 tr
@@ -442,10 +469,10 @@ ops_collect_security_drift() {
     risk="中"
     if [[ "$category" == "users" ]]; then
       local old_users new_users user_added user_removed
-      old_users=$(awk -F: '$1 !~ /^#/ && $1 != "" {print $1}' "$previous_file" | sort -u)
-      new_users=$(awk -F: '$1 !~ /^#/ && $1 != "" {print $1}' "$current_file" | sort -u)
-      user_added=$(comm -13 <(printf '%s\n' "$old_users") <(printf '%s\n' "$new_users") | paste -sd ',' -)
-      user_removed=$(comm -23 <(printf '%s\n' "$old_users") <(printf '%s\n' "$new_users") | paste -sd ',' -)
+      old_users=$(awk -F: '$1 !~ /^#/ && $1 != "" {print $1}' "$previous_file" 2>/dev/null | sort -u || true)
+      new_users=$(awk -F: '$1 !~ /^#/ && $1 != "" {print $1}' "$current_file" 2>/dev/null | sort -u || true)
+      user_added=$(comm -13 <(printf '%s\n' "$old_users") <(printf '%s\n' "$new_users") | paste -sd ',' - || true)
+      user_removed=$(comm -23 <(printf '%s\n' "$old_users") <(printf '%s\n' "$new_users") | paste -sd ',' - || true)
       removed="${user_removed:-无}"
       added="${user_added:-无}"
       type="用户变更"
@@ -493,7 +520,7 @@ ops_collect_security_drift() {
       # 只减少端口时 comm 无输出，grep 返回 1，pipefail 下会让 set -e 终止整个报告
       new_ports=$(comm -13 <(printf '%s\n' "$old_ports") <(printf '%s\n' "$port_lines") | grep -v '^$' || true)
       new_count=$(printf '%s\n' "$new_ports" | grep -v '^$' | wc -l || true)
-      new_note=$(printf '%s\n' "$new_ports" | head -10 | paste -sd ',' -)
+      new_note=$(printf '%s\n' "$new_ports" | head -10 | paste -sd ',' - || true)
       if [[ "$new_count" -gt 10 ]]; then
         new_note="${new_note} 等 ${new_count} 项"
       fi

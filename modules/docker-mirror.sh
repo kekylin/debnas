@@ -30,6 +30,13 @@ array_to_json_array() {
   printf '%s\n  ]\n' "$out"
 }
 
+# daemon.json 是否"空"：不存在、为空或只含空白（按空对象处理，直接新建）
+_dm_json_blank() {
+  [[ ! -s "$DAEMON_JSON" ]] && return 0
+  [[ -r "$DAEMON_JSON" ]] || return 1
+  ! grep -q '[^[:space:]]' "$DAEMON_JSON" 2>/dev/null
+}
+
 # 合并并去重 registry-mirrors，优先保留已有配置，返回最终 JSON 内容
 # 说明：
 #   - 只合并 daemon.json 中 "registry-mirrors" 键，不再把 proxies 等其他 URL 误当镜像源
@@ -40,8 +47,8 @@ build_merged_daemon_json() {
 
   log_info "构建 Docker 镜像加速配置..."
 
-  if [[ ! -s "$DAEMON_JSON" ]]; then
-    log_warning "配置文件 $DAEMON_JSON 不存在或为空，将创建新文件。"
+  if _dm_json_blank; then
+    log_warning "配置文件 $DAEMON_JSON 不存在或为空（含只有空白），将创建新文件。"
     local mirrors_json
     mirrors_json=$(array_to_json_array "${new_mirrors[@]}")
     printf '{\n  "registry-mirrors": %s\n}\n' "$mirrors_json"
@@ -104,8 +111,8 @@ module_status() {
     echo "absent|未安装 Docker"
     return 0
   fi
-  if [[ ! -s "$DAEMON_JSON" ]]; then
-    echo "absent|未配置镜像加速（无 ${DAEMON_JSON}）"
+  if _dm_json_blank; then
+    echo "absent|未配置镜像加速（无 ${DAEMON_JSON} 或内容为空）"
     return 0
   fi
   if [[ ! -r "$DAEMON_JSON" ]]; then
@@ -137,7 +144,7 @@ module_plan() {
     echo "info|docker|未安装 Docker，执行时会直接失败（请先运行 docker-ce 模块）"
     return 0
   fi
-  if [[ ! -s "$DAEMON_JSON" ]]; then
+  if _dm_json_blank; then
     echo "write|${DAEMON_JSON}|新建，写入 registry-mirrors：${DOCKER_MIRRORS[*]}"
   elif [[ ! -r "$DAEMON_JSON" ]]; then
     command -v jq >/dev/null 2>&1 || echo "pkg|jq|合并已有 daemon.json 需要"
@@ -170,9 +177,27 @@ main() {
   # 主流程：构建配置、智能写入、按需重启
   local IFS=$' \n\t'
   log_warning "镜像加速地址为第三方服务（${DOCKER_MIRRORS[*]}），拉取的镜像内容由其提供，请按需评估"
-  local new_content rc=0
+  local new_content rc=0 missing_list="" norm_new="" norm_old=""
+  # DebNAS 加速源都已配置：直接判"未变"，不重写、不重启（紧凑写法/键顺序不同都不算变化）
+  if ! _dm_json_blank && _dm_json_valid; then
+    missing_list=$(_dm_missing_mirrors)
+    if [[ -z "$missing_list" ]]; then
+      log_info "镜像加速配置未变（DebNAS 加速源均已配置）"
+      return 0
+    fi
+  fi
   if ! new_content=$(build_merged_daemon_json "${DOCKER_MIRRORS[@]}"); then
     exit "${ERROR_GENERAL}"
+  fi
+
+  # 语义相同（jq -S 规范化后一致）则不写、不重启
+  if ! _dm_json_blank && command -v jq >/dev/null 2>&1; then
+    norm_new=$(jq -S . <<< "$new_content" 2>/dev/null) || norm_new=""
+    norm_old=$(jq -S . "$DAEMON_JSON" 2>/dev/null) || norm_old=""
+    if [[ -n "$norm_new" && "$norm_new" == "$norm_old" ]]; then
+      log_info "镜像加速配置未变"
+      return 0
+    fi
   fi
 
   # daemon.json 变更只需重启 docker，无需 systemctl daemon-reload（未修改 unit 文件）

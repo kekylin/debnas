@@ -2,7 +2,8 @@
 # 功能：第三方 APT 源公钥的下载、指纹校验与安装（统一 docker-ce / cockpit-45drives / tailscale 的三份实现）
 # 说明：
 #   gpg_key_fingerprint_verify  临时 GNUPGHOME 解析公钥，要求恰好一把主密钥且主密钥指纹等于期望值
-#   keyring_install_verified    带超时下载（失败重试 1 次）→ 校验 → 按需 dearmor → 再校验
+#   keyring_install_verified    带超时下载（失败重试 1 次）→ 校验 → 临时 GNUPGHOME 导入后 export-minimal 导出
+#                               （--dearmor 存二进制，否则保持下载格式）→ 再校验
 #                               → 内容相同跳过 → 同目录临时文件 mv -fT 原子替换（不截断已有 keyring）
 #   apt 之后用钉死的 keyring 校验 Release 签名：镜像站/下载地址被篡改也无法替换软件包。
 # 依赖: core/logging.sh、system/tempfile.sh（create_temp_file/create_temp_dir）；
@@ -162,22 +163,26 @@ keyring_install_verified() {
 
   local armored=0
   grep -q "BEGIN PGP PUBLIC KEY BLOCK" "$tmp_dl" 2>/dev/null && armored=1
-  if [[ $dearmor -eq 1 && $armored -eq 1 ]]; then
-    local gpg_home
-    gpg_home=$(create_temp_dir "gpg-dearmor") || return 1
-    if ! gpg --homedir "$gpg_home" --batch --yes --no-autostart --dearmor -o "$tmp_out" "$tmp_dl" 2>/dev/null; then
-      [[ -n "$gpg_home" ]] && rm -rf -- "$gpg_home"
-      log_error "${name} GPG 公钥转换（dearmor）失败"
-      return 1
-    fi
-    [[ -n "$gpg_home" ]] && rm -rf -- "$gpg_home"
-  else
-    if [[ $dearmor -eq 0 && "$dest" == *.asc && $armored -eq 0 ]]; then
-      log_error "${name} 公钥目标为 .asc，但下载内容不是 ASCII armored 格式：${url}"
-      return 1
-    fi
-    cp -- "$tmp_dl" "$tmp_out" || return 1
+  if [[ $dearmor -eq 0 && "$dest" == *.asc && $armored -eq 0 ]]; then
+    log_error "${name} 公钥目标为 .asc，但下载内容不是 ASCII armored 格式：${url}"
+    return 1
   fi
+  # 不直接存下载到的原始字节：导入临时 GNUPGHOME 后按指纹导出 export-minimal 结果
+  # （只含主密钥/子密钥与自签名，丢弃附带的其他数据包与第三方签名）；
+  # --dearmor 存二进制，否则保持下载时的格式（armored 下载 → --armor，如 Docker 的 .asc）
+  local gpg_home fpr_norm
+  local -a armor_opt=()
+  fpr_norm=$(_keyring_normalize_fpr "$expected")
+  [[ $dearmor -eq 0 && $armored -eq 1 ]] && armor_opt=(--armor)
+  gpg_home=$(create_temp_dir "gpg-export") || return 1
+  if ! gpg --homedir "$gpg_home" --batch --quiet --no-autostart --import "$tmp_dl" >/dev/null 2>&1 \
+    || ! gpg --homedir "$gpg_home" --batch --quiet --no-autostart --export --export-options export-minimal \
+      "${armor_opt[@]}" -o "$tmp_out" --yes -- "$fpr_norm" 2>/dev/null; then
+    [[ -n "$gpg_home" ]] && rm -rf -- "$gpg_home"
+    log_error "${name} GPG 公钥导出（export-minimal）失败"
+    return 1
+  fi
+  [[ -n "$gpg_home" ]] && rm -rf -- "$gpg_home"
   # 最终写入物再校验一次（防止转换环节出错）
   if [[ ! -s "$tmp_out" ]] || ! gpg_key_fingerprint_verify "$tmp_out" "$expected" "$label"; then
     log_error "${name} GPG 公钥校验失败，拒绝安装"

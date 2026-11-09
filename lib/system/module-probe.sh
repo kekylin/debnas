@@ -169,8 +169,11 @@ module_probe() {
   fi
   if [[ "$action" == "status" ]]; then timeout="$MODULE_PROBE_STATUS_TIMEOUT"; else timeout="$MODULE_PROBE_PLAN_TIMEOUT"; fi
 
+  # 后台任务自成进程组，超时时连同其中的命令一起终止（不留孤儿）
+  bg_group_begin
   ( _module_probe_exec "$path" "$action" "$module_name" ) > "$tmp" 2>/dev/null &
   local pid=$!
+  bg_group_end
   _module_probe_wait "$pid" "$timeout" || rc=$?
 
   local raw=""
@@ -201,10 +204,11 @@ _module_probe_wait() {
   local deadline=$(( ${EPOCHREALTIME/[.,]/} / 1000 + timeout * 1000 ))
   # 睡眠用的空管道只打开一次（原实现每轮 <(:) 都 fork 一个子进程）；
   # 10ms 轮询：多数探测几十毫秒内结束，结束后最多再等一个周期
-  exec {fd}<> <(:) 2>/dev/null || fd=""
+  # 2>/dev/null 必须放在 { } 上：不带命令的 exec 会把重定向永久作用于当前 shell（stderr 从此消失）
+  { exec {fd}<> <(:); } 2>/dev/null || fd=""
   while kill -0 "$pid" 2>/dev/null; do
     if (( ${EPOCHREALTIME/[.,]/} / 1000 >= deadline )); then
-      kill "$pid" 2>/dev/null || true
+      bg_group_kill "$pid"
       wait "$pid" 2>/dev/null || true
       [[ -n "$fd" ]] && exec {fd}>&-
       return 124
@@ -257,7 +261,7 @@ module_status_collect_start() {
     [[ -n "$module_name" ]] || continue
     # 已在采集中的先终止，避免旧结果覆盖
     if [[ -n "${_MODULE_PROBE_PIDS[$module_name]:-}" ]]; then
-      kill "${_MODULE_PROBE_PIDS[$module_name]}" 2>/dev/null || true
+      bg_group_kill "${_MODULE_PROBE_PIDS[$module_name]}"
       unset '_MODULE_PROBE_PIDS[$module_name]'
     fi
     rm -f "${dir}/${module_name}.status" 2>/dev/null || true
@@ -267,12 +271,14 @@ module_status_collect_start() {
     fi
     get_module_field_var path "$module_name" "path" || continue
     _MODULE_STATUS["$module_name"]="pending|检测中"
+    bg_group_begin
     (
       raw=$( _module_probe_exec "$path" status "$module_name" 2>/dev/null ) || raw="${raw:-error|状态检测失败}"
       printf '%s\n' "$raw" > "${dir}/${module_name}.status.tmp" 2>/dev/null \
         && mv -f "${dir}/${module_name}.status.tmp" "${dir}/${module_name}.status" 2>/dev/null
     ) </dev/null >/dev/null 2>&1 &
     _MODULE_PROBE_PIDS["$module_name"]=$!
+    bg_group_end
   done
   return 0
 }
@@ -297,7 +303,7 @@ module_status_collect_poll() {
       _MODULE_STATUS["$module_name"]=$(module_status_merge_state "$module_name" "unknown|状态检测失败")
       unset '_MODULE_PROBE_PIDS[$module_name]'
     elif (( elapsed >= timeout * 1000 )); then
-      kill "${_MODULE_PROBE_PIDS[$module_name]}" 2>/dev/null || true
+      bg_group_kill "${_MODULE_PROBE_PIDS[$module_name]}"
       _MODULE_STATUS["$module_name"]=$(module_status_merge_state "$module_name" "unknown|状态检测超时")
       unset '_MODULE_PROBE_PIDS[$module_name]'
     fi
@@ -309,7 +315,7 @@ module_status_collect_poll() {
 module_status_collect_stop() {
   local module_name
   for module_name in "${!_MODULE_PROBE_PIDS[@]}"; do
-    kill "${_MODULE_PROBE_PIDS[$module_name]}" 2>/dev/null || true
+    bg_group_kill "${_MODULE_PROBE_PIDS[$module_name]}"
   done
   _MODULE_PROBE_PIDS=()
   return 0

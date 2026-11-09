@@ -155,6 +155,8 @@ ui_sysinfo_updates_start() {
     _SI_UPDATES="$cv"
     return 0
   fi
+  # 自成进程组：停止时连同 apt-get 一起终止（不留孤儿）
+  bg_group_begin
   (
     n=$(LC_ALL=C apt-get -s -o Debug::NoLocking=true upgrade 2>/dev/null | grep -c '^Inst ') || true
     printf '%s\n' "${n:-?}" > "${out_file}.tmp" 2>/dev/null && mv -f "${out_file}.tmp" "$out_file" 2>/dev/null
@@ -163,6 +165,7 @@ ui_sysinfo_updates_start() {
     fi
   ) </dev/null >/dev/null 2>&1 &
   _SI_UPDATES_PID=$!
+  bg_group_end
   return 0
 }
 
@@ -187,7 +190,7 @@ ui_sysinfo_updates_poll() {
 # 停止后台统计（退出仪表盘时调用）
 ui_sysinfo_updates_stop() {
   if [[ -n "$_SI_UPDATES_PID" ]]; then
-    kill "$_SI_UPDATES_PID" 2>/dev/null || true
+    bg_group_kill "$_SI_UPDATES_PID"
     _SI_UPDATES_PID=""
   fi
   return 0

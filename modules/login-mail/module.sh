@@ -33,6 +33,17 @@ _login_mail_notify_state() {
   echo "unset"
 }
 
+# PAM 文件里是否已有当前格式（带 seteuid）的登录通知行
+# 参数：$1 - 脚本路径；$2 - PAM 文件
+_login_mail_pam_current() {
+  _LM_PAM_LINE="$(_layout_pam_notify_line "$1")" awk '
+    BEGIN { want = ENVIRON["_LM_PAM_LINE"]; found = 0 }
+    { line = $0; sub(/^[[:space:]]+/, "", line); sub(/[[:space:]]+$/, "", line) }
+    line == want { found = 1 }
+    END { exit(found ? 0 : 1) }
+  ' "$2" 2>/dev/null
+}
+
 # 当前状态：一行 "状态码|说明"（只读、< 300ms、不联网）
 module_status() {
   local pam="$DEBNAS_PAM_SESSION_FILE" script="$DEBNAS_LOGIN_NOTIFY_SCRIPT"
@@ -52,6 +63,10 @@ module_status() {
   if [[ "$has_new" -eq 1 ]]; then
     if [[ ! -f "$script" ]]; then
       echo "error|PAM 已引用但脚本 ${script} 不存在，通知不会发送（optional，不影响登录）"
+      return 0
+    fi
+    if ! _login_mail_pam_current "$script" "$pam"; then
+      echo "warn|PAM 行缺少 seteuid：普通用户 su / pkexec 切换到非 root 身份时不会发送通知（重新启用会自动修正）"
       return 0
     fi
     case "$(_login_mail_notify_state)" in
@@ -83,11 +98,11 @@ module_plan() {
   # 启用
   [[ -d "$script_dir" ]] || echo "write|${script_dir}/|启用：创建目录（755 root）"
   echo "write|${script}|启用：生成登录通知脚本（750 root）；内容变化时原件备份到 /var/backups/debnas/"
-  if [[ -r "$pam" ]] && login_notify_pam_references "$script" "$pam" \
+  if [[ -r "$pam" ]] && _login_mail_pam_current "$script" "$pam" \
     && ! login_notify_pam_references "$legacy" "$pam"; then
     echo "info|${pam}|启用：pam_exec 行已存在，不改动"
   else
-    echo "write|${pam}|启用：统一为一条 pam_exec 行（旧路径行原位替换）；原件备份到 /var/backups/debnas/"
+    echo "write|${pam}|启用：统一为一条带 seteuid 的 pam_exec 行（旧路径/旧格式行原位替换）；原件备份到 /var/backups/debnas/"
   fi
   [[ -f "$legacy" ]] \
     && echo "write|${legacy}|启用：旧位置脚本不再被引用时备份到 /var/backups/debnas/ 后删除"

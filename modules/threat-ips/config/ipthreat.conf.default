@@ -16,9 +16,11 @@ IPSET_NAME_IPV6="ipthreat_block_ipv6"
 
 # 用户白名单（每行一个 IP 或 CIDR，# 开头为注释）：命中的威胁条目不会被封禁
 WHITELIST_FILE="/etc/debnas/conf.d/threat-ips-whitelist.conf"
-# 拒绝过宽的威胁条目（IPv4 掩码小于 /9、IPv6 前缀小于 /16），防止一条记录封掉大片地址
-declare -i MIN_IPV4_PREFIX=9
-declare -i MIN_IPV6_PREFIX=16
+# 拒绝过宽的威胁条目（IPv4 掩码小于 /16、IPv6 前缀小于 /32），防止一条记录封掉大片地址
+declare -i MIN_IPV4_PREFIX=16
+declare -i MIN_IPV6_PREFIX=32
+# 解析告警最多逐条显示的条数（其余只汇总条数）
+declare -i MAX_PARSE_WARNINGS=20
 
 # hash:net 类型支持 CIDR，MAX_IP_LIMIT 表示 CIDR 条目数限制（非单个 IP 数量）
 declare -i MAX_IP_LIMIT=65536

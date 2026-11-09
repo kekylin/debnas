@@ -18,6 +18,13 @@ source "${SCRIPT_DIR}/lib/bootstrap.sh"
 
 DEB822_PATH="/etc/apt/sources.list.d/debian.sources"
 TRADITIONAL_PATH="/etc/apt/sources.list"
+# 区分 sid / testing 用（允许测试覆盖）
+SOURCES_DEBIAN_VERSION_FILE="${SOURCES_DEBIAN_VERSION_FILE:-/etc/debian_version}"
+
+# 本次运行写入前的状态（apt update 失败时据此恢复，见 _sources_restore_backup）
+_SOURCES_DEB822_EXISTED=0
+_SOURCES_LEGACY_MOVED=0
+_SOURCES_LEGACY_BAK=""
 
 # wget/curl 用于镜像站连通性探测；如果不可用则跳过探测，使用默认镜像
 # 检测放在 main 中执行（_sources_detect_probe_tool），加载/只读探测阶段不输出日志
@@ -91,24 +98,87 @@ _backup_file() {
   fi
 
   if [[ "${rc}" -eq 0 ]] && rm -f -- "${file}"; then
+    _SOURCES_LEGACY_MOVED=1
     log_info "已移除 ${file}（备份 → ${DEBNAS_BACKUP_ROOT}/${DEBNAS_BACKUP_RUN_ID}${file}）"
     return 0
   fi
   dest="${file}.$(printf '%(%Y%m%d%H%M%S)T' -1).bak"
   mv -- "${file}" "${dest}"
+  _SOURCES_LEGACY_MOVED=1
+  _SOURCES_LEGACY_BAK="${dest}"
   log_info "已备份 ${file} → ${dest}"
+}
+
+# 系统跟随的套件类型：stable | testing | sid
+# 说明：testing 与 sid 的 os-release 都只写下一版代号（如 forky），代号本身区分不了；
+#       /etc/debian_version 为 "<代号>/sid" 时是开发版：现有源已指向 sid/unstable（或代号就是 sid）按 sid，否则按 testing
+_sources_suite_kind() {
+  local v=""
+  case "${CODENAME}" in
+    sid) echo "sid"; return 0 ;;
+    testing) echo "testing"; return 0 ;;
+  esac
+  [[ -r "${SOURCES_DEBIAN_VERSION_FILE}" ]] && { v=$(< "${SOURCES_DEBIAN_VERSION_FILE}"); } 2>/dev/null
+  v="${v%%$'\n'*}"
+  if [[ "${v}" != */sid ]]; then
+    echo "stable"
+    return 0
+  fi
+  if grep -qsE '^[[:space:]]*Suites:.*(^|[[:space:]:])(sid|unstable)([[:space:]]|$)|^[[:space:]]*deb(-src)?[[:space:]].*[[:space:]](sid|unstable)([[:space:]]|$)' \
+    "${DEB822_PATH}" "${TRADITIONAL_PATH}"; then
+    echo "sid"
+  else
+    echo "testing"
+  fi
+}
+
+# apt update 失败：从集中备份目录取回本次运行前的 debian.sources 与 sources.list
+# 返回：0 已恢复，1 有文件无法恢复（已记录错误）
+_sources_restore_backup() {
+  local run_dir="" backup content rc=0
+  [[ -n "${DEBNAS_BACKUP_ROOT:-}" && -n "${DEBNAS_BACKUP_RUN_ID:-}" ]] && run_dir="${DEBNAS_BACKUP_ROOT}/${DEBNAS_BACKUP_RUN_ID}"
+
+  backup="${run_dir:+${run_dir}${DEB822_PATH}}"
+  if [[ -n "${backup}" && -f "${backup}" ]]; then
+    content=$(< "${backup}")
+    if [[ -n "${content}" ]]; then
+      write_file_if_changed "${DEB822_PATH}" "${content}" "" 1 || [[ $? -eq 1 ]] || rc=1
+    else
+      cp -a -- "${backup}" "${DEB822_PATH}" || rc=1
+    fi
+  elif [[ "${_SOURCES_DEB822_EXISTED}" -eq 0 ]]; then
+    # 运行前没有 debian.sources：删除本次新建的文件
+    [[ -n "${DEB822_PATH}" ]] && { rm -f -- "${DEB822_PATH}" || rc=1; }
+  else
+    log_error "未找到 ${DEB822_PATH} 的备份（集中备份可能已关闭），无法自动恢复"
+    rc=1
+  fi
+
+  if [[ "${_SOURCES_LEGACY_MOVED}" -eq 1 ]]; then
+    backup="${run_dir:+${run_dir}${TRADITIONAL_PATH}}"
+    if [[ -n "${_SOURCES_LEGACY_BAK}" && -f "${_SOURCES_LEGACY_BAK}" ]]; then
+      mv -- "${_SOURCES_LEGACY_BAK}" "${TRADITIONAL_PATH}" || rc=1
+    elif [[ -n "${backup}" && -f "${backup}" ]]; then
+      cp -a -- "${backup}" "${TRADITIONAL_PATH}" || rc=1
+    else
+      log_error "未找到 ${TRADITIONAL_PATH} 的备份，无法自动恢复"
+      rc=1
+    fi
+  fi
+  return "${rc}"
 }
 
 # 构建 DEB822 格式的软件源配置内容
 # 参数：mirror_url - 镜像站 URL
 # 输出：DEB822 配置内容（stdout）
-# 说明：sid 不存在 -updates/-backports/-security；testing 不存在 -backports
+# 说明：sid 不存在 -updates/-backports/-security；testing 不存在 -backports（类型见 _sources_suite_kind）
 build_deb822_content() {
   local mirror_url="$1"
-  local suites="${CODENAME} ${CODENAME}-updates ${CODENAME}-backports"
+  local suites="${CODENAME} ${CODENAME}-updates ${CODENAME}-backports" kind
+  kind=$(_sources_suite_kind)
 
-  case "${CODENAME}" in
-    sid) suites="${CODENAME}" ;;
+  case "${kind}" in
+    sid) suites="sid" ;;
     testing) suites="${CODENAME} ${CODENAME}-updates" ;;
   esac
 
@@ -122,7 +192,7 @@ Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
 EOF
 
   # sid 无安全更新仓库
-  [[ "${CODENAME}" != "sid" ]] || return 0
+  [[ "${kind}" != "sid" ]] || return 0
 
   cat <<EOF
 
@@ -283,6 +353,7 @@ main() {
 
   # 构建 DEB822 内容，使用 write_file_if_changed 实现幂等写入
   new_content=$(build_deb822_content "${selected_mirror}")
+  [[ -f "$DEB822_PATH" ]] && _SOURCES_DEB822_EXISTED=1
   # 内容变更时 write_file_if_changed 会先把现有 debian.sources 备份到 /var/backups/debnas
   write_file_if_changed "$DEB822_PATH" "$new_content" || rc=$?
   case "$rc" in
@@ -291,7 +362,12 @@ main() {
       _backup_file "${TRADITIONAL_PATH}" mv
       log_success "源已写入"
       if ! update_package_lists "${selected_mirror}"; then
-        log_warning "apt update 失败，源已写入"
+        # 新源未通过 apt update：恢复运行前的源文件，不留下不可用的配置
+        if _sources_restore_backup; then
+          log_error "apt update 失败，已从备份恢复原软件源（${DEB822_PATH}、${TRADITIONAL_PATH}）"
+        else
+          log_error "apt update 失败，自动恢复原软件源未完成，请从 ${DEBNAS_BACKUP_ROOT:-/var/backups/debnas} 手动恢复"
+        fi
         return 1
       fi
       ;;

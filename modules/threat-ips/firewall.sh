@@ -22,14 +22,43 @@ reload_firewalld() {
 }
 
 
+# 把待移除条目分成两组：与待新增条目重叠的（必须先删，否则 firewalld 判重叠拒绝新增）与其余的
+# 参数：$1 - 待新增文件，$2 - 待移除文件，$3/$4 - 输出：先删组 / 后删组
+_split_conflicting_removals() {
+  local add_file="$1" del_file="$2" first_file="$3" rest_file="$4"
+  {
+    LC_ALL=C awk "${_THREAT_NET_AWK}"'netparse($1) { printf "%s %03d A %s\n", NKEY, NM, $1 }' "${add_file}"
+    LC_ALL=C awk "${_THREAT_NET_AWK}"'{ if (netparse($1)) printf "%s %03d D %s\n", NKEY, NM, $1; else printf "~ 999 D %s\n", $1 }' "${del_file}"
+  } | LC_ALL=C sort -k1,1 -k2,2n -k3,3 | LC_ALL=C awk -v first="${first_file}" -v rest="${rest_file}" "${_THREAT_NET_AWK}"'
+    # 按网络地址、前缀升序扫描，栈中保存包含当前条目的上级网段；A/D 互为祖先即重叠
+    {
+      k = $1; m = $2 + 0; t = $3; o = $4
+      if (k == "~") { dl[++nd] = o; next }
+      while (sp > 0 && !netcontains(SK[sp], SM[sp], k, m)) { if (ST[sp] == "A") na--; sp-- }
+      if (t == "D") { dl[++nd] = o; if (na > 0) hit[o] = 1 }
+      else for (i = 1; i <= sp; i++) if (ST[i] == "D") hit[SO[i]] = 1
+      sp++; SK[sp] = k; SM[sp] = m; ST[sp] = t; SO[sp] = o
+      if (t == "A") na++
+    }
+    END {
+      printf "" > first; printf "" > rest
+      for (i = 1; i <= nd; i++) print dl[i] > (dl[i] in hit ? first : rest)
+    }
+  '
+}
+
 # 将单个 IPSet 增量同步为目标列表（只删多余、只加缺失），永久与运行时配置分别处理
-# 不使用 --reload：重载会清空 fail2ban 等组件写入的运行时规则；失败时旧条目保持不动
+# 顺序：先删与新条目重叠的旧条目 → 新增 → 再删其余过期条目；新增失败时不做后续移除，并把先删的旧条目加回，
+#       避免出现"旧的已删、新的没加上"的封禁空窗
+# 不使用 --reload：重载会清空 fail2ban 等组件写入的运行时规则
 sync_ipset_entries() {
   local ipset_name="$1" new_file="$2" ip_type="$3"
-  local old_file add_file del_file scope add_count=0 del_count=0
+  local old_file add_file del_file first_file rest_file scope add_count=0 del_count=0
   old_file=$(create_temp_file "ipset_old" ".txt") || return 1
   add_file=$(create_temp_file "ipset_add" ".txt") || return 1
   del_file=$(create_temp_file "ipset_del" ".txt") || return 1
+  first_file=$(create_temp_file "ipset_del_first" ".txt") || return 1
+  rest_file=$(create_temp_file "ipset_del_rest" ".txt") || return 1
   LC_ALL=C sort -u "${new_file}" -o "${new_file}"
 
   for scope in permanent runtime; do
@@ -46,15 +75,29 @@ sync_ipset_entries() {
     mv "${old_file}.sorted" "${old_file}"
     LC_ALL=C comm -23 "${old_file}" "${new_file}" > "${del_file}"
     LC_ALL=C comm -13 "${old_file}" "${new_file}" > "${add_file}"
+    : > "${first_file}"
+    cp "${del_file}" "${rest_file}"
+    if [[ -s "${add_file}" && -s "${del_file}" ]]; then
+      _split_conflicting_removals "${add_file}" "${del_file}" "${first_file}" "${rest_file}"
+    fi
 
-    if [[ -s "${del_file}" ]] && ! firewall-cmd "${scope_args[@]}" --ipset="${ipset_name}" \
-      --remove-entries-from-file="${del_file}" &>/dev/null; then
-      log_error "从 ${ip_type} IPSet（${scope}）移除过期条目失败：${ipset_name}"
+    if [[ -s "${first_file}" ]] && ! firewall-cmd "${scope_args[@]}" --ipset="${ipset_name}" \
+      --remove-entries-from-file="${first_file}" &>/dev/null; then
+      log_error "从 ${ip_type} IPSet（${scope}）移除与新条目重叠的旧条目失败：${ipset_name}（现有封禁保持不变）"
       return 1
     fi
     if [[ -s "${add_file}" ]] && ! firewall-cmd "${scope_args[@]}" --ipset="${ipset_name}" \
       --add-entries-from-file="${add_file}" &>/dev/null; then
-      log_error "向 ${ip_type} IPSet（${scope}）添加条目失败：${ipset_name}"
+      log_error "向 ${ip_type} IPSet（${scope}）添加条目失败：${ipset_name}（未移除旧条目）"
+      if [[ -s "${first_file}" ]] && ! firewall-cmd "${scope_args[@]}" --ipset="${ipset_name}" \
+        --add-entries-from-file="${first_file}" &>/dev/null; then
+        log_warning "恢复已移除的 $(wc -l < "${first_file}") 条重叠旧条目失败：${ipset_name}"
+      fi
+      return 1
+    fi
+    if [[ -s "${rest_file}" ]] && ! firewall-cmd "${scope_args[@]}" --ipset="${ipset_name}" \
+      --remove-entries-from-file="${rest_file}" &>/dev/null; then
+      log_error "从 ${ip_type} IPSet（${scope}）移除过期条目失败：${ipset_name}（新条目已添加）"
       return 1
     fi
     if [[ "${scope}" == "permanent" ]]; then
@@ -62,14 +105,17 @@ sync_ipset_entries() {
       del_count=$(wc -l < "${del_file}")
     fi
   done
-  rm -f "${old_file}" "${add_file}" "${del_file}"
+  rm -f "${old_file}" "${add_file}" "${del_file}" "${first_file}" "${rest_file}"
   log_info "${ip_type} IPSet 已同步：共 $(wc -l < "${new_file}") 条（新增 ${add_count}，移除 ${del_count}）"
 }
 
-# 剔除受保护地址后去重排序单个 IP 类型文件
+# 剔除受保护地址、合并重叠条目后去重排序单个 IP 类型文件
 _process_single_ip_file() {
   local temp_file="$1" output_file="$2" ip_type="$3"
   if ! filter_protected_entries "${temp_file}" "${ip_type}"; then
+    return 1
+  fi
+  if ! merge_overlapping_entries "${temp_file}" "${ip_type}"; then
     return 1
   fi
   if ! deduplicate_and_sort_ips "${temp_file}" "${output_file}"; then

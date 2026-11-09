@@ -194,9 +194,13 @@ cmd_update() {
 		_update_confirm_unsigned "$branch" || return 1
 	fi
 
+	# 并发保护：整个更新过程持有 flock（与 install.sh 共用 DEBNAS_UPDATE_LOCK），进程退出自动释放
+	deploy_lock || return 1
+	deploy_recover "$install_dir" || return 1
+
+	# 临时目录放在进程私有目录下，EXIT/INT/TERM 时由 tempfile.sh 的 trap 自动清理
 	local tmp_dir
-	tmp_dir=$(mktemp -d /tmp/debnas-update.XXXXXX)
-	chmod 700 "$tmp_dir"
+	tmp_dir=$(create_temp_dir "update") || { log_error "无法创建临时目录"; return 1; }
 	local tarball="${tmp_dir}/debnas-update.tar.gz"
 	local tag=""
 
@@ -219,6 +223,11 @@ cmd_update() {
 
 		local installed_tag
 		installed_tag=$(installer_marker_get "$install_dir" "tag")
+		# 缺少 RELEASE 标记（或标记里没有 tag）时退回用代码内的 DEBNAS_VERSION（tools/release.sh --bump 与 tag 同步），
+		# 否则防降级检查形同虚设
+		if [[ -z "$installed_tag" ]] && installer_valid_tag "${DEBNAS_VERSION:-}"; then
+			installed_tag="$DEBNAS_VERSION"
+		fi
 		if [[ -n "$want_tag" ]]; then
 			tag="$want_tag"
 		else
@@ -280,6 +289,7 @@ cmd_update() {
 	if ! (unset _DEBNAS_BOOTSTRAPPED _DEBNAS_CORE_LOADED; bash -c 'source "$1/lib/bootstrap.sh" && migration_run' _ "/opt/debnas") 2>/dev/null; then
 		log_warning "版本迁移存在问题，请运行 debnas doctor 检查"
 	fi
+	deploy_unlock
 
 	log_success "DebNAS 更新完成"
 	return 0
@@ -328,6 +338,9 @@ cmd_uninstall() {
 	rm -rf /var/log/debnas 2>/dev/null && log_info "已移除日志目录: /var/log/debnas/"
 	rm -rf /var/lib/debnas 2>/dev/null && log_info "已移除状态目录: /var/lib/debnas/"
 	rm -rf /tmp/debnas 2>/dev/null && log_info "已移除临时目录: /tmp/debnas/"
+	# root 的临时基目录已改为 /run/debnas（本进程仍在使用，退出时由 tempfile.sh 清理 PID 子目录）
+	# 被中断的部署残留
+	rm -rf /opt/.debnas.old /opt/.debnas.new 2>/dev/null || true
 
 	log_success "DebNAS 已卸载"
 	log_info "已安装的软件包和系统配置未被修改。如需恢复系统，请手动操作。"
@@ -438,6 +451,11 @@ main() {
 	if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
 		log_error "需要 root 权限（请使用 su - 切换到 root 用户后执行）"
 		exit "${ERROR_PERMISSION:-4}"
+	fi
+
+	# 上次更新被中断（SIGKILL/断电）留下的部署残留：自动回滚或清理（锁被占用时跳过）
+	if [[ "$_DEBNAS_ROOT" == "/opt/debnas" ]]; then
+		deploy_recover "/opt/debnas" || true
 	fi
 
 	# 获取剩余参数

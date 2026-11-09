@@ -28,7 +28,8 @@ readonly DEBNAS_INSTALL_DIR="/opt/debnas"
 readonly DEBNAS_BIN="/usr/local/bin/debnas"
 readonly DEBNAS_CONF_DIR="/etc/debnas"
 readonly DEBNAS_LOG_DIR="/var/log/debnas"
-readonly DEBNAS_STATE_DIR="/var/lib/debnas/state"
+readonly DEBNAS_LIB_DIR="/var/lib/debnas"
+readonly DEBNAS_STATE_DIR="${DEBNAS_LIB_DIR}/state"
 
 # ⚠️ 以下 URL 与 lib/system/installer.sh 中的定义必须保持同步
 # 发布产物（GitHub Release / Gitee Release 附件）：<base>/<tag>/<file>
@@ -183,8 +184,9 @@ do_uninstall() {
   _warn "不会恢复已安装的软件包或已修改的系统配置。"
 
   if [[ "$FORCE_YES" -ne 1 ]]; then
+    require_tty_or_yes "卸载"
     local confirm=""
-    # EOF（如管道/无终端）时 read 返回非 0，set -e 下会静默退出，按"取消"处理
+    # EOF 时 read 返回非 0，set -e 下会静默退出，按"取消"处理
     read -rp "确认继续？[y/N]: " confirm || confirm=""
     if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
       _info "已取消卸载"
@@ -246,17 +248,22 @@ do_uninstall() {
     _info "日志: ${DEBNAS_LOG_DIR}"
   fi
 
-  # 移除状态目录
-  if [[ -d "$DEBNAS_STATE_DIR" ]]; then
-    rm -rf "$DEBNAS_STATE_DIR"
-    _info "状态: ${DEBNAS_STATE_DIR}"
+  # 移除状态目录（整个 /var/lib/debnas：状态、文件清单等，与 debnas uninstall 一致）
+  if [[ -d "$DEBNAS_LIB_DIR" ]]; then
+    rm -rf "$DEBNAS_LIB_DIR"
+    _info "状态: ${DEBNAS_LIB_DIR}"
   fi
 
-  # 移除临时文件（使用固定路径，卸载模式下 DEBNAS_TMP_DIR 未定义）
-  if [[ -d "/tmp/debnas" ]]; then
-    rm -rf "/tmp/debnas"
-    _info "临时: /tmp/debnas"
-  fi
+  # 移除临时文件（root 用 /run/debnas，旧版本用 /tmp/debnas；卸载模式下 DEBNAS_TMP_DIR 未定义）
+  local t
+  for t in /run/debnas /tmp/debnas; do
+    if [[ -d "$t" && ! -L "$t" ]]; then
+      rm -rf "$t"
+      _info "临时: ${t}"
+    fi
+  done
+  # 被中断的部署残留
+  rm -rf "${DEBNAS_INSTALL_DIR%/*}/.${DEBNAS_INSTALL_DIR##*/}.old" "${DEBNAS_INSTALL_DIR%/*}/.${DEBNAS_INSTALL_DIR##*/}.new"
 
   _success "卸载完成"
   _info "已安装的软件包和系统配置未被修改。如需恢复系统，请手动操作。"
@@ -326,7 +333,8 @@ release_dearmor() {
 # 参数：$1 - 产物目录（含 <tar 包>、SHA256SUMS、SHA256SUMS.asc）
 #       $2 - tar 包文件名（debnas-<tag>.tar.gz）
 #       $3 - 二进制 keyring 文件
-#       $4 - 期望的签名者主密钥指纹（40/64 位十六进制，大小写/空格不敏感）
+#       $4 - 期望的签名者主密钥指纹（40/64 位十六进制，大小写/空格不敏感；
+#            密钥轮换期间可为逗号分隔的多个指纹，任一匹配即通过）
 # 返回：0 通过；1 失败（失败时删除三个下载物）
 release_verify() {
   if _release_verify_steps "$@"; then
@@ -341,7 +349,7 @@ _release_verify_steps() {
 
   expected="${expected//[[:space:]]/}"
   expected="${expected^^}"
-  if [[ ! "$expected" =~ ^([0-9A-F]{40}|[0-9A-F]{64})$ ]]; then
+  if [[ ! "$expected" =~ ^([0-9A-F]{40}|[0-9A-F]{64})(,([0-9A-F]{40}|[0-9A-F]{64}))*$ ]]; then
     _release_fail "发布公钥指纹无效或未配置"
     return 1
   fi
@@ -378,10 +386,11 @@ _release_verify_steps() {
 
   local bad signer
   bad=$(awk '$1 == "[GNUPG:]" && $2 ~ /^(BADSIG|ERRSIG|EXPSIG|EXPKEYSIG|REVKEYSIG|NO_PUBKEY)$/ { print $2; exit }' "${work}/status")
-  # VALIDSIG <签名密钥指纹> ... <主密钥指纹>：任一与期望指纹相同即视为匹配
-  signer=$(awk -v want="$expected" '$1 == "[GNUPG:]" && $2 == "VALIDSIG" {
+  # VALIDSIG <签名密钥指纹> ... <主密钥指纹>：任一与期望指纹（之一）相同即视为匹配
+  signer=$(awk -v want="$expected" 'BEGIN { n = split(want, w, ","); for (i = 1; i <= n; i++) ok[w[i]] = 1 }
+    $1 == "[GNUPG:]" && $2 == "VALIDSIG" {
       a = toupper($3); b = toupper($NF)
-      if (a == want || b == want) { print want; found = 1; exit }
+      if ((a in ok) || (b in ok)) { print (b in ok) ? b : a; found = 1; exit }
       last = b
     } END { if (!found && last != "") print "MISMATCH:" last }' "${work}/status")
   if [[ "$rc" -ne 0 || -n "$bad" || -z "$signer" ]]; then
@@ -414,6 +423,220 @@ _release_verify_steps() {
   return 0
 }
 # <<< DEBNAS-RELEASE-VERIFY-END
+
+# 下方区块同样是 lib/system/installer.sh 中同名区块的副本（安装目录整树替换 + 更新锁），勿在此手改。
+# >>> DEBNAS-DEPLOY-BEGIN（单一来源：lib/system/installer.sh；install.sh 中的同名区块由 tools/release.sh 同步生成，勿手改）
+# 安装目录整树替换：debnas update（lib）与自包含引导脚本 install.sh 共用这一份代码。
+# 流程：在安装目录的同级暂存目录 .<名>.new 中组装完整新树（新代码 + 旧安装目录中的非代码条目，
+#       如 RELEASE），全部成功后用两次 rename 切换：<安装目录> → .<名>.old，.<名>.new → <安装目录>。
+#       - 组装中途失败/中断：旧安装原封不动，暂存目录在失败时或下次启动时清理；
+#       - 两次 rename 在忽略 INT/TERM/HUP 的子 shell 中完成（父进程被中断时子 shell 仍会走完）；
+#         被 SIGKILL/断电打断在两次 rename 之间时，下次启动由 deploy_recover 把 .<名>.old 改回；
+#       - rename 不改写正在执行的 bin/debnas 的 inode（原地覆写会让运行中的 bash 读到错位内容）；
+#       - 上游已删除的旧模块/文件随旧树一起移除。
+#       并发保护：deploy_lock 对 DEBNAS_UPDATE_LOCK（默认 /run/debnas-update.lock）加 flock。
+
+# 部署输出：已加载 lib 日志时用 log_*；install.sh 不加载 lib，按其 [FAIL]/[WARNING]/[INFO] 格式写 stderr
+# 参数：$1 - error|warn|info  $2 - 消息
+_deploy_msg() {
+  if declare -F log_error >/dev/null 2>&1; then
+    case "$1" in
+      error) log_error "$2" ;;
+      warn)  log_warning "$2" ;;
+      *)     log_info "$2" ;;
+    esac
+  else
+    case "$1" in
+      error) printf '[FAIL] %s\n' "$2" >&2 ;;
+      warn)  printf '[WARNING] %s\n' "$2" >&2 ;;
+      *)     printf '[INFO] %s\n' "$2" >&2 ;;
+    esac
+  fi
+}
+
+# 加更新锁（非阻塞；同一进程重复调用直接返回）。锁随进程退出自动释放，也可 deploy_unlock 提前释放
+# 返回：0 已加锁（或系统无 flock 命令时告警后放行）；1 另一个安装/更新正在进行或锁文件无法打开
+deploy_lock() {
+  [[ -z "${_DEBNAS_DEPLOY_LOCK_FD:-}" ]] || return 0
+  local lock="${DEBNAS_UPDATE_LOCK:-/run/debnas-update.lock}" fd
+  if ! command -v flock >/dev/null 2>&1; then
+    _deploy_msg warn "缺少 flock 命令（util-linux），跳过并发保护"
+    return 0
+  fi
+  if ! exec {fd}>>"$lock"; then
+    _deploy_msg error "无法打开更新锁文件：${lock}"
+    return 1
+  fi
+  if ! flock -n "$fd"; then
+    exec {fd}>&-
+    _deploy_msg error "另一个 DebNAS 安装/更新正在进行（锁 ${lock}），请稍后再试"
+    return 1
+  fi
+  _DEBNAS_DEPLOY_LOCK_FD="$fd"
+  return 0
+}
+
+# 释放 deploy_lock 加的锁（关闭锁文件描述符）
+deploy_unlock() {
+  [[ -n "${_DEBNAS_DEPLOY_LOCK_FD:-}" ]] || return 0
+  exec {_DEBNAS_DEPLOY_LOCK_FD}>&-
+  _DEBNAS_DEPLOY_LOCK_FD=""
+  return 0
+}
+
+# 处理被中断的部署残留（启动时调用；无残留时不加锁、不 fork）
+# 参数：$1 - 安装目录
+# 返回：0 无残留或已处理（无写权限、锁被占用时跳过）；1 回滚失败
+# 规则：.<名>.old 存在而安装目录缺失 → 切换被打断，改回旧版本；安装目录已存在 → 切换已完成，删除旧树；
+#       .<名>.new → 删除未完成的暂存树；旧版逐目录部署遗留的 <安装目录>/.<目录>.old 同理（缺失则改回）
+deploy_recover() {
+  local install_dir="${1%/}" parent name old new d any=0 rc=0 locked_here=0
+  [[ -n "$install_dir" ]] || return 0
+  parent="${install_dir%/*}"; [[ -n "$parent" ]] || parent="/"
+  name="${install_dir##*/}"
+  old="${parent}/.${name}.old"
+  new="${parent}/.${name}.new"
+  [[ -e "$old" || -L "$old" || -e "$new" || -L "$new" ]] && any=1
+  for d in bin lib modules config compose keys; do
+    [[ -e "${install_dir}/.${d}.old" || -e "${install_dir}/.${d}.new" ]] && any=1
+  done
+  (( any )) || return 0
+  [[ -w "$parent" ]] || return 0
+  if [[ -z "${_DEBNAS_DEPLOY_LOCK_FD:-}" ]]; then
+    # 锁被占用说明另一进程正在部署，残留是它的工作目录，不能动
+    deploy_lock 2>/dev/null || return 0
+    locked_here=1
+  fi
+
+  if [[ -e "$old" || -L "$old" ]]; then
+    if [[ ! -e "$install_dir" && ! -L "$install_dir" ]]; then
+      if mv -T -- "$old" "$install_dir"; then
+        _deploy_msg warn "检测到被中断的更新（切换未完成），已回滚到旧版本：${install_dir}"
+      else
+        _deploy_msg error "回滚失败：请手动执行 mv -T ${old} ${install_dir}"
+        rc=1
+      fi
+    else
+      rm -rf -- "${old:?}"
+    fi
+  fi
+  if [[ -e "$new" || -L "$new" ]]; then
+    rm -rf -- "${new:?}"
+  fi
+  for d in bin lib modules config compose keys; do
+    if [[ -e "${install_dir}/.${d}.old" ]]; then
+      if [[ ! -e "${install_dir}/${d}" ]]; then
+        if mv -T -- "${install_dir}/.${d}.old" "${install_dir}/${d}"; then
+          _deploy_msg warn "检测到旧版更新残留，已恢复 ${install_dir}/${d}；建议重新运行 install.sh 覆盖安装"
+        else
+          rc=1
+        fi
+      else
+        rm -rf -- "${install_dir:?}/.${d}.old"
+      fi
+    fi
+    [[ -e "${install_dir}/.${d}.new" ]] && rm -rf -- "${install_dir:?}/.${d}.new"
+  done
+  (( locked_here )) && deploy_unlock
+  return "$rc"
+}
+
+# 整树替换安装目录
+# 参数：$1 - 新版本源目录（解压后的仓库根，须含 bin/debnas、lib/、modules/）
+#       $2 - 安装目录
+# 返回：0 成功；1 失败（旧安装保持不变）
+deploy_tree() {
+  local src_dir="${1:-}" install_dir="${2:-}"
+  local parent name old new d e base rc=0
+
+  if [[ -z "$src_dir" || -z "$install_dir" ]]; then
+    _deploy_msg error "deploy_tree: 缺少源目录或安装目录参数"
+    return 1
+  fi
+  install_dir="${install_dir%/}"
+  # 校验更新包完整性（在动现有安装之前）
+  if [[ ! -f "${src_dir}/bin/debnas" ]]; then
+    _deploy_msg error "更新包不完整，关键文件缺失：bin/debnas"
+    return 1
+  fi
+  for d in lib modules; do
+    if [[ ! -d "${src_dir}/${d}" ]]; then
+      _deploy_msg error "更新包不完整，缺少目录：${d}"
+      return 1
+    fi
+  done
+
+  parent="${install_dir%/*}"; [[ -n "$parent" ]] || parent="/"
+  name="${install_dir##*/}"
+  old="${parent}/.${name}.old"
+  new="${parent}/.${name}.new"
+  mkdir -p -- "$parent" || { _deploy_msg error "无法创建目录：${parent}"; return 1; }
+  deploy_lock || return 1
+  deploy_recover "$install_dir" || return 1
+  if [[ -e "$old" || -L "$old" || -e "$new" || -L "$new" ]]; then
+    _deploy_msg error "存在无法清理的部署残留：${old} / ${new}"
+    return 1
+  fi
+
+  # 第一阶段：组装完整新树（失败即删除暂存树，旧安装不动）
+  if ! mkdir -m 755 -- "$new"; then
+    _deploy_msg error "无法创建暂存目录：${new}"
+    return 1
+  fi
+  for d in bin lib modules config compose keys; do
+    [[ -d "${src_dir}/${d}" ]] || continue
+    cp -R -- "${src_dir}/${d}" "${new}/${d}" || { rc=1; break; }
+  done
+  if (( rc == 0 )); then
+    for e in install.sh README.md LICENSE; do
+      [[ -f "${src_dir}/${e}" ]] || continue
+      cp -- "${src_dir}/${e}" "${new}/${e}" || { rc=1; break; }
+    done
+  fi
+  # 旧安装目录中新版本没有提供的条目原样带过去（RELEASE 标记、更新包未包含的目录等）
+  if (( rc == 0 )) && [[ -d "$install_dir" ]]; then
+    for e in "${install_dir}"/* "${install_dir}"/.[!.]* "${install_dir}"/..?*; do
+      [[ -e "$e" || -L "$e" ]] || continue
+      base="${e##*/}"
+      [[ -e "${new}/${base}" || -L "${new}/${base}" ]] && continue
+      case "$base" in .bin.old|.lib.old|.modules.old|.config.old|.compose.old|.keys.old|.*.new) continue ;; esac
+      cp -a -- "$e" "${new}/${base}" || { rc=1; break; }
+    done
+  fi
+  if (( rc == 0 )); then
+    chmod +x "${new}/bin/"* 2>/dev/null || true
+    [[ -f "${new}/bin/debnas" ]] || rc=1
+  fi
+  if (( rc != 0 )); then
+    rm -rf -- "${new:?}"
+    _deploy_msg error "组装新版本失败（磁盘空间不足或权限问题？），现有安装未改动"
+    return 1
+  fi
+
+  # 第二阶段：切换（忽略中断信号；mv -T 防止目标意外存在时把目录移进去）
+  (
+    trap '' INT TERM HUP
+    if [[ -e "$install_dir" || -L "$install_dir" ]]; then
+      mv -T -- "$install_dir" "$old" || exit 1
+    fi
+    if ! mv -T -- "$new" "$install_dir"; then
+      if [[ -e "$old" || -L "$old" ]]; then
+        mv -T -- "$old" "$install_dir" || exit 3
+      fi
+      exit 2
+    fi
+    exit 0
+  ) || rc=$?
+  if (( rc != 0 )); then
+    [[ "$rc" -eq 3 ]] && _deploy_msg error "回滚失败：旧版本在 ${old}，请手动执行 mv -T ${old} ${install_dir}"
+    [[ "$rc" -ne 3 ]] && rm -rf -- "${new:?}"
+    _deploy_msg error "替换安装目录失败：${install_dir}"
+    return 1
+  fi
+  rm -rf -- "${old:?}"
+  return 0
+}
+# <<< DEBNAS-DEPLOY-END
 
 # 把 ASCII armor 公钥文本转换为 gpgv 可用的二进制 keyring
 # 参数：$1 - armor 文本  $2 - 输出 keyring 文件
@@ -593,35 +816,29 @@ extract_repo() {
     exit 1
   fi
 
-  # 创建安装目录
-  mkdir -p "$DEBNAS_INSTALL_DIR"
-
-  # 复制文件到安装目录
+  # 整树替换（与 debnas update 共用 DEBNAS-DEPLOY 区块）：先在暂存目录组装完整新树再一次性切换，
+  # 失败即中止且旧安装不变；新版本已删除的旧模块不会残留
   _action "部署"
-  cp -rf "$extract_dir"/bin "$DEBNAS_INSTALL_DIR/" 2>/dev/null || true
-  cp -rf "$extract_dir"/lib "$DEBNAS_INSTALL_DIR/" 2>/dev/null || true
-  cp -rf "$extract_dir"/modules "$DEBNAS_INSTALL_DIR/" 2>/dev/null || true
-  cp -rf "$extract_dir"/config "$DEBNAS_INSTALL_DIR/" 2>/dev/null || true
-  # compose/ 是 docker-apps、service-query 模块的数据目录，缺失会导致模块报错退出
-  cp -rf "$extract_dir"/compose "$DEBNAS_INSTALL_DIR/" 2>/dev/null || true
-  # keys/ 存放发布公钥，debnas update 用它验证后续更新包的签名
-  cp -rf "$extract_dir"/keys "$DEBNAS_INSTALL_DIR/" 2>/dev/null || true
-  cp -f "$extract_dir"/install.sh "$DEBNAS_INSTALL_DIR/" 2>/dev/null || true
-  cp -f "$extract_dir"/README.md "$DEBNAS_INSTALL_DIR/" 2>/dev/null || true
-  cp -f "$extract_dir"/LICENSE "$DEBNAS_INSTALL_DIR/" 2>/dev/null || true
-
-  # 设置权限
-  chmod +x "$DEBNAS_INSTALL_DIR/bin/"* 2>/dev/null || true
-  chmod +x "$DEBNAS_INSTALL_DIR/lib/"*.sh 2>/dev/null || true
+  if ! deploy_tree "$extract_dir" "$DEBNAS_INSTALL_DIR"; then
+    _fail "部署失败，已中止（原有安装未改动）"
+    rm -rf "$tmpdir"
+    exit 1
+  fi
 
   _success "文件安装完成"
 }
 
 # 安装全局命令
 install_debnas_bin() {
+  local parent="${DEBNAS_INSTALL_DIR%/*}" name="${DEBNAS_INSTALL_DIR##*/}"
   cat > "$DEBNAS_BIN" <<WRAPPER
 #!/bin/bash
 # DebNAS 全局命令入口（由 install.sh 生成）
+# 更新在两次 rename 之间被 SIGKILL/断电打断时安装目录会缺失：持锁把旧版本改回后再启动
+if [[ ! -e ${DEBNAS_INSTALL_DIR} && -d ${parent}/.${name}.old ]] && command -v flock >/dev/null 2>&1; then
+  flock -n "\${DEBNAS_UPDATE_LOCK:-/run/debnas-update.lock}" mv -T ${parent}/.${name}.old ${DEBNAS_INSTALL_DIR} \\
+    && echo "[WARNING] 检测到被中断的更新，已回滚到旧版本" >&2
+fi
 exec bash ${DEBNAS_INSTALL_DIR}/bin/debnas "\$@"
 WRAPPER
   chmod +x "$DEBNAS_BIN"
@@ -658,6 +875,15 @@ EOF
   fi
 }
 
+# 需要确认的操作：stdin 不是终端（如 wget -O- | bash）且未加 --yes 时无法确认，以非 0 退出并提示
+# 参数：$1 - 操作名
+require_tty_or_yes() {
+  if [[ ! -t 0 ]]; then
+    _fail "非交互环境（如管道方式运行）无法确认${1}，请加 --yes 重新运行（例：bash install.sh --yes）"
+    exit 1
+  fi
+}
+
 # 检测已安装状态
 check_existing_install() {
   if [[ -d "$DEBNAS_INSTALL_DIR" ]] && [[ -f "${DEBNAS_INSTALL_DIR}/bin/debnas" ]]; then
@@ -667,6 +893,7 @@ check_existing_install() {
       _info "--yes 模式：自动执行覆盖更新"
       return 0
     fi
+    require_tty_or_yes "覆盖更新"
 
     echo ""
     echo "  [1] 覆盖更新（保留配置和状态）"
@@ -714,6 +941,10 @@ main() {
   # 检测已安装
   check_existing_install
 
+  # 并发保护：与 debnas update 共用更新锁（DEBNAS-DEPLOY 区块）；处理上次被中断的部署残留
+  deploy_lock || exit 1
+  deploy_recover "$DEBNAS_INSTALL_DIR" || exit 1
+
   # 创建安全临时目录
   # 注意：不能声明为 local —— set -e 在函数内触发退出时局部变量已失效，
   # EXIT trap 读到空值，临时目录会残留
@@ -751,6 +982,8 @@ main() {
   rm -rf "$_install_tmpdir"
   trap - EXIT
   _info "临时文件已清理"
+  # 释放更新锁：下面 exec 的菜单会继承锁文件描述符，不释放会挡住之后的 debnas update
+  deploy_unlock
 
   echo ""
   _success "DebNAS 安装完成！"

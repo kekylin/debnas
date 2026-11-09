@@ -63,10 +63,14 @@ validate_permissions() {
 
 # 系统目录（含子路径）禁止设置 ACL：误操作（尤其递归）会破坏系统权限
 readonly -a ACL_PROTECTED_DIRS=(/bin /boot /dev /etc /lib /lib32 /lib64 /libx32 /proc /root /run /sbin /sys /usr /var)
+# 按通配匹配的保护路径（含子路径）：SSH 密钥目录（ACL 会让 sshd StrictModes 拒绝登录，或让他人改写 authorized_keys）、
+# /opt 下的程序与可执行文件目录
+readonly -a ACL_PROTECTED_GLOBS=('/home/*/.ssh' /opt/debnas '/opt/*/bin' '/opt/*/sbin' '/opt/*/libexec')
 
 # 校验目标路径不是根目录或系统目录（按 realpath 解析符号链接后判断）
+# 参数：$1 - 路径，$2 - 可选 recursive：递归操作时还拒绝"包含受保护目录"的上级目录（如 /home、/home/<用户>）
 validate_acl_path() {
-  local path="$1" real dir
+  local path="$1" recursive="${2:-}" real dir pat hit
   real=$(realpath -m -- "$path" 2>/dev/null) || real="$path"
   if [[ "$real" == "/" ]]; then
     log_error "拒绝对根目录 / 设置 ACL"
@@ -78,7 +82,32 @@ validate_acl_path() {
       return 1
     fi
   done
+  for pat in "${ACL_PROTECTED_GLOBS[@]}"; do
+    # shellcheck disable=SC2053  # 有意按通配模式匹配
+    if [[ "$real" == $pat || "$real" == $pat/* ]]; then
+      log_error "拒绝对受保护目录设置 ACL：$path（解析为 $real，匹配 $pat）"
+      return 1
+    fi
+  done
+  if [[ "$recursive" == "recursive" ]]; then
+    for pat in "${ACL_PROTECTED_GLOBS[@]}"; do
+      for hit in $pat; do
+        [[ -e "$hit" ]] || continue
+        if [[ "$hit" == "$real"/* ]]; then
+          log_error "拒绝递归设置 ACL：$path 下包含受保护目录 $hit"
+          return 1
+        fi
+      done
+    done
+  fi
   return 0
+}
+
+# 路径是否为一级目录（按 realpath 判断，如 /srv、/home、/mnt）
+_acl_is_toplevel_dir() {
+  local real
+  real=$(realpath -m -- "$1" 2>/dev/null) || real="$1"
+  [[ -d "$real" && "$real" =~ ^/[^/]+$ ]]
 }
 
 # 校验用户名/组名：只允许合法名称字符且必须存在，防止注入 ","、":" 追加额外 ACL 条目
@@ -122,7 +151,7 @@ view_acl() {
     log_error "$path 不存在"
     return
   fi
-  getfacl "$path" 2>&1 | tee "$ACL_OUTPUT" || log_error "读取 $path 的 ACL 失败"
+  getfacl -- "$path" 2>&1 | tee "$ACL_OUTPUT" || log_error "读取 $path 的 ACL 失败"
   log_acl_action "查看ACL: $path"
   module_mark_action
 }
@@ -145,6 +174,7 @@ set_user_acl() {
   if ! validate_permissions "$permissions"; then return; fi
   recursive=$(ui_input "是否递归设置？(y/n)" "n")
 
+  if [[ "$recursive" == "y" ]] && ! validate_acl_path "$path" recursive; then return; fi
   [[ "$(ui_confirm "为用户设置ACL权限？" "路径: $path\n用户: $username\n权限: $permissions\n递归: $recursive")" == "0" ]] || {
     log_info "已取消"
     return
@@ -154,7 +184,7 @@ set_user_acl() {
   _acl_run "" "ACL: u:$username:$permissions $path" \
     "设置用户ACL: u:$username:$permissions $path (递归: $recursive)" \
     "无法设置权限。请检查输入或查看 $ACL_OUTPUT。" \
-    "${rflag[@]}" -m u:"$username":"$permissions" "$path"
+    "${rflag[@]}" -m u:"$username":"$permissions" -- "$path"
 }
 
 # 为组设置ACL权限
@@ -175,6 +205,7 @@ set_group_acl() {
   if ! validate_permissions "$permissions"; then return; fi
   recursive=$(ui_input "是否递归设置？(y/n)" "n")
 
+  if [[ "$recursive" == "y" ]] && ! validate_acl_path "$path" recursive; then return; fi
   [[ "$(ui_confirm "为组设置ACL权限？" "路径: $path\n组: $groupname\n权限: $permissions\n递归: $recursive")" == "0" ]] || {
     log_info "已取消"
     return
@@ -184,7 +215,7 @@ set_group_acl() {
   _acl_run "" "ACL: g:$groupname:$permissions $path" \
     "设置组ACL: g:$groupname:$permissions $path (递归: $recursive)" \
     "无法设置权限。请检查输入或查看 $ACL_OUTPUT。" \
-    "${rflag[@]}" -m g:"$groupname":"$permissions" "$path"
+    "${rflag[@]}" -m g:"$groupname":"$permissions" -- "$path"
 }
 
 # 设置目录的默认ACL权限
@@ -210,7 +241,7 @@ set_default_acl() {
   }
   _acl_run "" "ACL 默认: $path" "设置默认ACL: $entry:$permissions $path" \
     "无法设置默认ACL权限。请检查输入或查看 $ACL_OUTPUT。" \
-    -d -m "$entry":"$permissions" "$path"
+    -d -m "$entry":"$permissions" -- "$path"
 }
 
 # 取消目录的默认ACL权限
@@ -230,7 +261,7 @@ remove_default_acl() {
   }
   _acl_run "" "ACL 默认取消: $path" "取消默认ACL: $path" \
     "无法取消默认ACL权限。请检查输入或查看 $ACL_OUTPUT。" \
-    -k "$path"
+    -k -- "$path"
 }
 
 # 删除ACL权限
@@ -248,6 +279,7 @@ remove_acl() {
   if ! validate_acl_entry "$entry"; then return; fi
   recursive=$(ui_input "是否递归删除？(y/n)" "n")
 
+  if [[ "$recursive" == "y" ]] && ! validate_acl_path "$path" recursive; then return; fi
   [[ "$(ui_confirm "删除ACL权限？" "路径: $path\n条目: $entry\n递归: $recursive")" == "0" ]] || {
     log_info "已取消"
     return
@@ -256,7 +288,7 @@ remove_acl() {
   [[ "$recursive" == "y" ]] && rflag=(-R)
   _acl_run "" "ACL 删除: $entry" "删除ACL: $entry $path (递归: $recursive)" \
     "无法删除ACL条目。请检查输入或查看 $ACL_OUTPUT。" \
-    "${rflag[@]}" -x "$entry" "$path"
+    "${rflag[@]}" -x "$entry" -- "$path"
 }
 
 # 批量设置ACL权限
@@ -285,11 +317,22 @@ batch_set_acl() {
       log_warning "$path 不存在，已跳过。"
       continue
     fi
-    validate_acl_path "$path" || continue
+    if [[ "$recursive" == "y" ]]; then
+      validate_acl_path "$path" recursive || continue
+      # 一级目录（如 /srv、/home、/mnt）递归影响面极大：逐个二次确认
+      if _acl_is_toplevel_dir "$path"; then
+        [[ "$(ui_confirm "二次确认：递归作用于一级目录" "$path 是一级目录，将递归修改其下全部文件的 ACL，且无法自动撤销。确定继续？")" == "0" ]] || {
+          log_info "已跳过 $path"
+          continue
+        }
+      fi
+    else
+      validate_acl_path "$path" || continue
+    fi
     _acl_run -a "已为 $path 设置 $entry:$permissions" \
       "批量设置ACL: $entry:$permissions $path (递归: $recursive)" \
       "无法为 $path 设置权限，请查看 $ACL_OUTPUT。" \
-      "${rflag[@]}" -m "$entry":"$permissions" "$path"
+      "${rflag[@]}" -m "$entry":"$permissions" -- "$path"
   done
   shopt -u nullglob
 }
@@ -321,9 +364,9 @@ module_plan() {
   fi
   echo "info|acl-manager|交互式菜单，需逐项输入路径/用户或组/权限并确认：查看 / 设置用户 ACL / 设置组 ACL / 设置默认 ACL / 取消默认 ACL / 删除 ACL / 批量设置"
   echo "write|用户指定的文件或目录|setfacl 修改扩展权限（可选递归）；不另做备份，如需回滚请先 getfacl -R 导出"
-  echo "info|系统目录保护|拒绝对 / 及 ${ACL_PROTECTED_DIRS[*]} 下的路径设置 ACL"
+  echo "info|系统目录保护|拒绝对 / 及 ${ACL_PROTECTED_DIRS[*]} ${ACL_PROTECTED_GLOBS[*]} 下的路径设置 ACL；递归时还拒绝包含上述目录的上级目录"
   echo "write|${LOG_FILE}|追加操作审计日志"
-  echo "risk|递归操作|递归设置/删除会作用于整棵目录树，无法自动撤销"
+  echo "risk|递归操作|递归设置/删除会作用于整棵目录树，无法自动撤销；批量递归命中一级目录时逐个二次确认"
   return 0
 }
 

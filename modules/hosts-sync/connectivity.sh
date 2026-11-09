@@ -123,7 +123,8 @@ test_ip_connectivity() {
     return 1
   fi
   
-  if [[ $https_result -eq 1 ]] || [[ $tcp_result -eq 1 ]] || [[ $ping_result -eq 1 ]]; then
+  # 非严格组也必须通过 HTTPS 证书校验：只通 TCP/ping 无法证明该 IP 属于此域名（DNS 污染的 IP 往往也能 ping 通）
+  if [[ $https_result -eq 1 ]]; then
     echo "${https_result}|${tcp_result}|${ping_result}|${ping_delay}"
     return 0
   fi

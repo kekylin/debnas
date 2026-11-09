@@ -25,6 +25,8 @@ readonly WALLPAPER_FILE="${BRANDING_DIR}/login-bg.png"
 readonly ISSUE_FILE="/etc/cockpit/issue.cockpit"
 readonly STATE_FILE="${BRANDING_DIR}/.initialized"
 readonly DEFAULT_WALLPAPER_API_URL="https://www.bing.com/HPImageArchive.aspx?format=js&idx=0&n=1&mkt=zh-CN"
+readonly WALLPAPER_API_MAX_BYTES=1048576     # API JSON 上限 1 MiB
+readonly WALLPAPER_IMAGE_MAX_BYTES=20971520  # 壁纸图片上限 20 MiB
 
 # 获取壁纸 API 地址（优先级：debnas.conf > 默认值）
 get_wallpaper_api_url() {
@@ -75,21 +77,45 @@ prepare_env() {
 }
 
 # ==================== 壁纸下载 ====================
+# 校验图片文件头：只接受 PNG（89 50 4E 47 0D 0A 1A 0A）或 JPEG（FF D8 FF）
+# 参数：$1 - 文件路径
+# 返回：0 是 PNG/JPEG，1 不是或读取失败
+_wp_image_magic_ok() {
+  local magic
+  magic=$(head -c 8 -- "$1" 2>/dev/null | od -An -tx1 | tr -d ' \n') || return 1
+  [[ "$magic" == 89504e470d0a1a0a || "$magic" == ffd8ff* ]]
+}
+
 update_wallpaper() {
   check_cockpit_version || return 1
   prepare_env
   local bing_json bing_url bing_title bing_copyright full_url wallpaper_api_url
   wallpaper_api_url=$(get_wallpaper_api_url)
-  bing_json=$(curl --fail --silent --location --max-time 30 --connect-timeout 10 "$wallpaper_api_url" 2>/dev/null) || return 1
+  bing_json=$(curl --fail --silent --location --max-time 30 --connect-timeout 10 \
+    --max-filesize "$WALLPAPER_API_MAX_BYTES" "$wallpaper_api_url" 2>/dev/null) || return 1
 
   bing_url=$(grep -oP '(?<="url":")[^"]+' <<<"$bing_json" | head -n1 || true)
   bing_title=$(grep -oP '(?<="title":")[^"]+' <<<"$bing_json" | head -n1 || true)
   bing_copyright=$(grep -oP '(?<="copyright":")[^"]+' <<<"$bing_json" | head -n1 || true)
   [[ -n "$bing_url" ]] || return 1
+  # 只接受站内路径：必须以 / 开头（不能是 //host 协议相对地址），且不含 @（防止拼成 https://www.bing.com@evil/）
+  if [[ "$bing_url" != /* || "$bing_url" == //* || "$bing_url" == *@* ]]; then
+    log_warning "壁纸 API 返回的图片地址不合法，已忽略：${bing_url:0:80}"
+    return 1
+  fi
 
   full_url="https://www.bing.com${bing_url}"
 
-  if curl --fail --location --silent --show-error --max-time 60 --connect-timeout 10 -o "${WALLPAPER_FILE}.tmp" "$full_url"; then
+  if curl --fail --location --silent --show-error --max-time 60 --connect-timeout 10 \
+    --max-filesize "$WALLPAPER_IMAGE_MAX_BYTES" -o "${WALLPAPER_FILE}.tmp" "$full_url"; then
+    # 老版本 curl 的 --max-filesize 只看 Content-Length，没声明长度的响应要下载后再核对一次
+    local img_size
+    img_size=$(stat -c '%s' -- "${WALLPAPER_FILE}.tmp" 2>/dev/null || echo 0)
+    if [[ "$img_size" -gt "$WALLPAPER_IMAGE_MAX_BYTES" ]] || ! _wp_image_magic_ok "${WALLPAPER_FILE}.tmp"; then
+      log_warning "下载的壁纸超过大小上限或不是 PNG/JPEG 图片，已丢弃"
+      rm -f -- "${WALLPAPER_FILE}.tmp"
+      return 1
+    fi
     mv -f "${WALLPAPER_FILE}.tmp" "$WALLPAPER_FILE"
     write_file_if_changed "$ISSUE_FILE" "$(printf '%s\n%s\n' "$bing_title" "$bing_copyright")" || true
     mark_initialized
@@ -261,7 +287,8 @@ disable_bing_wallpaper() {
   cron_unregister "wallpaper" || true
   _wp_remove_branding_dir || true
   write_file_if_changed "$ISSUE_FILE" "基于Debian搭建 DebNAS" || true
-  restart_cockpit
+  # Cockpit 未运行时 restart_cockpit 返回 1（已告警）：禁用照常完成，不能让 set -e 中止
+  restart_cockpit || true
   log_success "壁纸已禁用"
   module_mark_action
 }

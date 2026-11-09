@@ -112,7 +112,16 @@ layout_link_legacy_notify_email() {
 
 # 生成 pam_exec 行
 # 参数：$1 - 脚本路径
+# 说明：seteuid 让脚本以有效 UID（root）运行。不加时 pam_exec 用调用进程的真实 UID：
+#       普通用户 su / pkexec 时真实 UID 是该用户，只有目标身份带 root 组（如 su 到 root）
+#       才碰巧读得到 750 的脚本和 640 的通知邮箱；su 到其他普通用户时登录通知静默不发
 _layout_pam_notify_line() {
+  printf 'session optional pam_exec.so debug seteuid /bin/bash %s' "$1"
+}
+
+# 旧格式 pam_exec 行（不带 seteuid）：只用于识别，sync 时原位升级为新格式
+# 参数：$1 - 脚本路径
+_layout_pam_notify_line_noeuid() {
   printf 'session optional pam_exec.so debug /bin/bash %s' "$1"
 }
 
@@ -120,14 +129,17 @@ _layout_pam_notify_line() {
 # 参数：$1 - 目标脚本路径（空字符串表示移除所有登录通知行）
 #       $2 - PAM 文件（可选，默认 DEBNAS_PAM_SESSION_FILE）
 # 返回：0 已变更，1 未变更，2 失败
-# 说明：识别新旧两种脚本路径的行；旧行原位替换为新行，多余的重复行删除，不会留下两条
+# 说明：识别新旧两种脚本路径、带与不带 seteuid 两种格式的行；旧行原位替换为新行，
+#       多余的重复行删除，不会留下两条
 login_notify_pam_sync() {
   local script="${1-}"
   local pam_file="${2:-$DEBNAS_PAM_SESSION_FILE}"
-  local new_line="" line content="" inserted=0 changed=0
-  local old_a old_b
-  old_a=$(_layout_pam_notify_line "$DEBNAS_LEGACY_LOGIN_NOTIFY_SCRIPT")
-  old_b=$(_layout_pam_notify_line "$DEBNAS_LOGIN_NOTIFY_SCRIPT")
+  local new_line="" line content="" inserted=0 changed=0 known p
+  local -a known_lines=()
+  for p in "$DEBNAS_LEGACY_LOGIN_NOTIFY_SCRIPT" "$DEBNAS_LOGIN_NOTIFY_SCRIPT" "$script"; do
+    [[ -n "$p" ]] || continue
+    known_lines+=("$(_layout_pam_notify_line "$p")" "$(_layout_pam_notify_line_noeuid "$p")")
+  done
   [[ -z "$script" ]] || new_line=$(_layout_pam_notify_line "$script")
 
   if [[ ! -f "$pam_file" ]]; then
@@ -142,7 +154,11 @@ login_notify_pam_sync() {
     # 只比较去掉首尾空白后的整行，避免误伤注释或其他 pam_exec 行
     local trimmed="${line#"${line%%[![:space:]]*}"}"
     trimmed="${trimmed%"${trimmed##*[![:space:]]}"}"
-    if [[ "$trimmed" == "$old_a" || "$trimmed" == "$old_b" || ( -n "$new_line" && "$trimmed" == "$new_line" ) ]]; then
+    known=0
+    for p in "${known_lines[@]}"; do
+      if [[ "$trimmed" == "$p" ]]; then known=1; break; fi
+    done
+    if [[ "$known" -eq 1 ]]; then
       if [[ -n "$new_line" && "$inserted" -eq 0 ]]; then
         content+="${new_line}"$'\n'
         inserted=1
@@ -172,14 +188,15 @@ login_notify_pam_sync() {
 
 # 判断 PAM 文件是否仍引用指定脚本
 # 参数：$1 - 脚本路径；$2 - PAM 文件（可选）
-# 返回：0 引用，1 未引用
+# 返回：0 引用（带或不带 seteuid 的行均算），1 未引用
 login_notify_pam_references() {
   local script="$1" pam_file="${2:-$DEBNAS_PAM_SESSION_FILE}"
   [[ -f "$pam_file" ]] || return 1
-  _DEBNAS_PAM_LINE="$(_layout_pam_notify_line "$script")" awk '
-    BEGIN { want = ENVIRON["_DEBNAS_PAM_LINE"]; found = 0 }
+  _DEBNAS_PAM_LINE="$(_layout_pam_notify_line "$script")" \
+  _DEBNAS_PAM_LINE_OLD="$(_layout_pam_notify_line_noeuid "$script")" awk '
+    BEGIN { want = ENVIRON["_DEBNAS_PAM_LINE"]; want_old = ENVIRON["_DEBNAS_PAM_LINE_OLD"]; found = 0 }
     { line = $0; sub(/^[[:space:]]+/, "", line); sub(/[[:space:]]+$/, "", line) }
-    line == want { found = 1 }
+    line == want || line == want_old { found = 1 }
     END { exit(found ? 0 : 1) }
   ' "$pam_file" 2>/dev/null
 }

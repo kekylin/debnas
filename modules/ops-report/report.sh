@@ -632,6 +632,27 @@ ops_collect_disk_trend() {
   mv "$tmp" "$snapshot" 2>/dev/null || true
 }
 
+# 输出安全源索引里的包名（去重，每行一个）
+# 参数：$1 - apt 列表目录（可选，默认 /var/lib/apt/lists）
+# 返回：始终 0。没有 security 源（glob 不匹配）或索引被压缩存放（Acquire::GzipIndexes 等）时，
+#       原来的 grep 管道返回非 0，会在 set -e 下中止整份报告；压缩索引经 apt-helper cat-file 解压读取
+ops_security_package_names() {
+  local dir="${1:-/var/lib/apt/lists}" f
+  local -a files=()
+  for f in "$dir"/*security*Packages*; do
+    if [[ -f "$f" ]]; then files+=("$f"); fi
+  done
+  [[ "${#files[@]}" -gt 0 ]] || return 0
+  {
+    if [[ -x /usr/lib/apt/apt-helper ]]; then
+      /usr/lib/apt/apt-helper cat-file "${files[@]}"
+    else
+      cat -- "${files[@]}"
+    fi
+  } 2>/dev/null | awk '/^Package:/ {print $2}' | sort -u || true
+  return 0
+}
+
 ops_collect_updates() {
   OPS_UPDATE_COUNT=0
   OPS_UPDATE_SESSIONS=0
@@ -656,8 +677,7 @@ ops_collect_updates() {
     OPS_UPDATE_COUNT=$(printf '%s\n' "${OPS_UPDATE_LIST}" | grep -v '^$' | wc -l || true)
     OPS_UPDATE_SESSIONS=$(printf '%s\n' "${OPS_UPDATE_LIST}" | grep -v '^$' | awk '{print $1}' | sort -u | wc -l || true)
     local security_pkgs
-    security_pkgs=$(grep -h '^Package:' /var/lib/apt/lists/*security*Packages* 2>/dev/null \
-      | awk '{print $2}' | sort -u)
+    security_pkgs=$(ops_security_package_names /var/lib/apt/lists || true)
     if [[ -n "$security_pkgs" ]] && [[ -n "$OPS_UPDATE_LIST" ]]; then
       OPS_SECURITY_PACKAGES="$security_pkgs"
       OPS_SECURITY_INSTALLED_COUNT=$(printf '%s\n' "${OPS_UPDATE_LIST}" \
@@ -727,7 +747,7 @@ ops_collect_updates() {
   fi
 
   if [[ -d /var/lib/apt/lists ]]; then
-    OPS_LAST_UPDATE_CHECK=$(stat -c '%y' /var/lib/apt/lists 2>/dev/null | cut -d. -f1)
+    OPS_LAST_UPDATE_CHECK=$(stat -c '%y' /var/lib/apt/lists 2>/dev/null | cut -d. -f1 || true)
     [[ -n "$OPS_LAST_UPDATE_CHECK" ]] || OPS_LAST_UPDATE_CHECK="待采集"
   fi
   if [[ -f /var/run/reboot-required ]]; then
@@ -1460,7 +1480,7 @@ ops_build_login_risk_note() {
   if [[ "$abnormal_count" -gt 0 ]]; then
     local users_text user_count
     users_text=$(printf '%s\n' "$abnormal_users" | head -3 \
-      | awk 'NF { if (n++) printf "、"; printf "%s", $1 }')
+      | awk 'NF { if (n++) printf "、"; printf "%s", $1 }' || true)
     user_count=$(printf '%s\n' "$abnormal_users" | grep -v '^$' | wc -l || true)
     if [[ "$user_count" -gt 3 ]]; then
       users_text="${users_text} 等 ${user_count} 个用户"
@@ -1471,7 +1491,7 @@ ops_build_login_risk_note() {
   if [[ "$fail_count" -gt 0 ]]; then
     local fail_text ip
     fail_text="失败登录：${fail_count} 次"
-    ip=$(printf '%s\n' "${OPS_FAIL_IP_STATS:-}" | head -1 | awk '{print $1}')
+    ip=$(printf '%s\n' "${OPS_FAIL_IP_STATS:-}" | head -1 | awk '{print $1}' || true)
     [[ -n "$ip" ]] && fail_text="${fail_text}（主要来源 ${ip}）"
     parts="${parts:+${parts}；}${fail_text}"
     OPS_LOGIN_RISK_ITEMS=$((OPS_LOGIN_RISK_ITEMS + 1))
@@ -2062,7 +2082,7 @@ ops_suspicious_summary() {
   fi
   local names
   names=$(printf '%s\n' "${OPS_SUSPICIOUS_PROGRAMS:-}" | head -3 \
-    | awk '{ sub(/：.*/, "", $2); if (n++) printf "、"; printf "%s", $2 }')
+    | awk '{ sub(/：.*/, "", $2); if (n++) printf "、"; printf "%s", $2 }' || true)
   if [[ "${OPS_SUSPICIOUS_PROGRAM_COUNT}" -gt 3 ]]; then
     names="${names} 等 ${OPS_SUSPICIOUS_PROGRAM_COUNT} 项"
   fi
@@ -2264,7 +2284,7 @@ ops_render_html_report() {
   host_ip=$(hostname -I 2>/dev/null | awk '{print $1}' || true)
   [[ -n "$host_ip" ]] || host_ip="未知 IP"
   if [[ "${OPS_LOGIN_FAIL_COUNT:-0}" -gt 0 ]]; then
-    fail_source_summary=$(printf '%s\n' "${OPS_FAIL_IP_STATS:-}" | head -1 | awk '{print $1}')
+    fail_source_summary=$(printf '%s\n' "${OPS_FAIL_IP_STATS:-}" | head -1 | awk '{print $1}' || true)
     if [[ "$fail_source_summary" == "未知" ]]; then
       fail_source_summary="，失败登录来源暂无法解析"
     elif [[ -n "$fail_source_summary" ]]; then

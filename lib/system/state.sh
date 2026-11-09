@@ -76,6 +76,11 @@ state_get() {
 #       $3 - 键值
 # 返回：0 成功，1 失败
 state_set() {
+  # 读改写状态文件期间持锁（并发写会丢更新、共用 .tmp 文件互相覆盖）
+  if declare -F debnas_locked >/dev/null 2>&1 && [[ -z "${_DEBNAS_LOCKS_HELD[state]:-}" ]]; then
+    debnas_locked state state_set "$@"
+    return
+  fi
   local module_name="${1:?state_set: 缺少模块名}"
   local key="${2:?state_set: 缺少键名}"
   local value="${3:?state_set: 缺少键值}"
@@ -151,8 +156,9 @@ state_mark_checkpoint() {
 }
 
 # 交互模块执行真实动作后调用，供 module-runner 判断是否记录状态与日志
+# 写入非空内容：module-runner 用 mktemp 预建空标记文件，按"非空"（-s）判定执行过
 module_mark_action() {
-  [[ -n "${DEBNAS_ACTION_MARKER:-}" ]] && : > "$DEBNAS_ACTION_MARKER" 2>/dev/null || true
+  [[ -n "${DEBNAS_ACTION_MARKER:-}" ]] && printf '1\n' > "$DEBNAS_ACTION_MARKER" 2>/dev/null || true
   return 0
 }
 

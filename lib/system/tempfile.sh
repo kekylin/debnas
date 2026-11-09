@@ -19,7 +19,23 @@ IFS=$'\n\t'
 # ==================== 常量定义 ====================
 
 # 临时文件基目录（所有进程共享）
-readonly DEBNAS_TMP_BASE="${DEBNAS_TMP_BASE:-/tmp/debnas}"
+# root 运行时用 /run/debnas（0700，只有 root 可写的 /run 下，普通用户无法抢先创建造成拒绝服务）；
+# 非 root（如普通用户运行 --probe）仍用 /tmp/debnas（0755），靠下方的属主/符号链接校验 fail-closed。
+# 测试可通过环境变量 DEBNAS_TMP_BASE 覆盖
+if [[ -z "${DEBNAS_TMP_BASE:-}" ]]; then
+  if [[ "${EUID:-$(id -u)}" -eq 0 && -d /run && -w /run ]]; then
+    DEBNAS_TMP_BASE="/run/debnas"
+  else
+    DEBNAS_TMP_BASE="/tmp/debnas"
+  fi
+fi
+readonly DEBNAS_TMP_BASE
+# 基目录权限：root 用 0700（所有 DebNAS 进程都以 root 运行）；非 root 保持 0755
+if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
+  readonly _DEBNAS_TMP_BASE_MODE="700"
+else
+  readonly _DEBNAS_TMP_BASE_MODE="755"
+fi
 
 # 跨进程信号去重哨兵（放在受属主校验保护的基目录内，避免 /tmp 下固定文件名被他人预建）
 readonly _DEBNAS_SIGNAL_SENTINEL="${DEBNAS_TMP_BASE}/.signal_handled"
@@ -53,7 +69,7 @@ _temp_dir_owned_by_me() {
 }
 
 # 初始化临时文件目录
-# 创建基目录（755，允许 _apt 等系统用户遍历访问）和进程 PID 子目录（700）
+# 创建基目录（root 0700 / 非 root 0755）和进程 PID 子目录（700）
 # 安全：基目录位于全局可写的 /tmp，普通用户可抢先创建同名目录/符号链接，
 #       之后即可替换 root 写入其中的文件。因此不再"存在即复用"，而是
 #       校验属主必须为当前有效用户且不是符号链接，否则拒绝使用（fail-closed）。
@@ -62,13 +78,13 @@ init_temp_dir() {
   # 基目录
   if [[ ! -e "$DEBNAS_TMP_BASE" && ! -L "$DEBNAS_TMP_BASE" ]]; then
     # 并发进程可能同时创建，失败后由下方属主校验兜底
-    mkdir -m 755 "$DEBNAS_TMP_BASE" 2>/dev/null || true
+    mkdir -m "$_DEBNAS_TMP_BASE_MODE" "$DEBNAS_TMP_BASE" 2>/dev/null || true
   fi
   if ! _temp_dir_owned_by_me "$DEBNAS_TMP_BASE"; then
     echo "临时目录不安全（不存在/非当前用户所有/为符号链接）：${DEBNAS_TMP_BASE}，请确认后手动删除再重试" >&2
     return 1
   fi
-  chmod 755 "$DEBNAS_TMP_BASE" || {
+  chmod "$_DEBNAS_TMP_BASE_MODE" "$DEBNAS_TMP_BASE" || {
     echo "临时目录权限设置失败：${DEBNAS_TMP_BASE}" >&2
     return 1
   }
@@ -181,7 +197,7 @@ _debnas_cleanup_on_signal() {
   if [[ ! -f "$_DEBNAS_SIGNAL_SENTINEL" ]]; then
     _first_signal=1
     if [[ ! -e "$DEBNAS_TMP_BASE" && ! -L "$DEBNAS_TMP_BASE" ]]; then
-      mkdir -m 755 "$DEBNAS_TMP_BASE" 2>/dev/null || true
+      mkdir -m "$_DEBNAS_TMP_BASE_MODE" "$DEBNAS_TMP_BASE" 2>/dev/null || true
     fi
     if _temp_dir_owned_by_me "$DEBNAS_TMP_BASE"; then
       touch "$_DEBNAS_SIGNAL_SENTINEL" 2>/dev/null || true
@@ -213,3 +229,44 @@ mark_normal_exit() {
 }
 
 
+
+# ==================== 读改写互斥锁 ====================
+
+# 已持有的锁（锁名 → 1）：同一进程（含其命令替换子 shell）内嵌套调用同名锁时直接执行，避免自锁
+declare -gA _DEBNAS_LOCKS_HELD=()
+
+# 在互斥锁内执行命令（crontab、debnas.conf、state 文件的读改写用，防并发写丢更新）
+# 参数：$1 - 锁名（[A-Za-z0-9_-]），其余 - 要执行的命令及参数
+# 返回：命令的退出码；等待锁超时（30s）返回 1
+# 说明：锁文件放在受属主校验保护的临时基目录（root 为 /run/debnas）下；无 flock 命令或基目录
+#       不可用时退化为直接执行（与旧行为一致，不因加锁失败而不能工作）
+debnas_locked() {
+  local name="${1:?debnas_locked: 缺少锁名}"
+  shift
+  local fd="" rc=0
+  # 已持有同名锁：直接执行
+  if [[ -n "${_DEBNAS_LOCKS_HELD[$name]:-}" ]]; then
+    "$@"
+    return
+  fi
+  # 注意：不能写成 exec {fd}>>file 2>/dev/null——不带命令的 exec 会把 2>/dev/null 也永久作用于
+  # 当前 shell，之后的日志与报错全部消失（表现为模块静默"成功"）。这里先判断可写再打开
+  local lock_file="${DEBNAS_TMP_BASE}/${name}.lock"
+  if command -v flock >/dev/null 2>&1 && [[ "$name" =~ ^[A-Za-z0-9_-]+$ ]] && init_temp_dir 2>/dev/null \
+     && [[ ( -f "$lock_file" && ! -L "$lock_file" && -w "$lock_file" ) || ( ! -e "$lock_file" && ! -L "$lock_file" ) ]]; then
+    exec {fd}>>"$lock_file" || fd=""
+  fi
+  if [[ -n "$fd" ]] && ! flock -w 30 "$fd"; then
+    exec {fd}>&-
+    if declare -F log_error >/dev/null 2>&1; then
+      log_error "等待锁超时（${name}），可能有另一个 DebNAS 进程正在修改，请稍后重试"
+    fi
+    return 1
+  fi
+  # 无法加锁（无 flock/基目录不可用）时同样标记，调用方据此判断"已在锁内"，不会递归
+  _DEBNAS_LOCKS_HELD[$name]=1
+  "$@" || rc=$?
+  unset '_DEBNAS_LOCKS_HELD[$name]'
+  [[ -z "$fd" ]] || exec {fd}>&-
+  return "$rc"
+}

@@ -34,10 +34,22 @@ SHARES_DIFF_STALE=()
 
 # ==================== 配置读取 ====================
 
-# 读取界面选择：debnas | 45drives（非法值按默认 debnas 处理）
+# 老用户升级：debnas.conf 未设置 file_sharing_ui（旧版没有该项），但已装 45Drives cockpit-file-sharing
+# 返回：0 是（应按 45drives 处理：不卸载、不切换），1 否
+shares_legacy_45drives() {
+	local v
+	v=$(config_read "global" "file_sharing_ui" "" 2>/dev/null) || v=""
+	[[ -z "$v" ]] && pkg_is_installed "$SHARES_45DRIVES_PKG"
+}
+
+# 读取界面选择：debnas | 45drives（非法值按默认 debnas 处理；未设置且已装 45Drives 插件时为 45drives）
 # 参数：$1 - --quiet 时不打告警日志（只读探测用）
 shares_ui_choice() {
 	local v
+	if shares_legacy_45drives; then
+		echo "45drives"
+		return 0
+	fi
 	v=$(config_read "global" "file_sharing_ui" "debnas" 2>/dev/null) || v="debnas"
 	v="${v,,}"
 	case "$v" in
@@ -312,6 +324,9 @@ module_plan() {
 	esac
 
 	choice=$(shares_ui_choice --quiet)
+	if shares_legacy_45drives; then
+		echo "write|${DEBNAS_GLOBAL_CONF:-/etc/debnas/debnas.conf}|老用户升级：未设置 file_sharing_ui 且已装 ${SHARES_45DRIVES_PKG}，写入 file_sharing_ui=45drives（不卸载 45Drives 插件）"
+	fi
 	if [[ "$choice" == "45drives" ]]; then
 		echo "info|cockpit-45drives|file_sharing_ui=45drives：本模块改为执行 cockpit-45drives（exec），以下为该模块的预演"
 		sub=$(_shares_probe_delegate plan) || sub=""
@@ -398,6 +413,17 @@ main() {
 		exit "${ERROR_UNSUPPORTED_OS}"
 		;;
 	esac
+
+	# 老用户升级：未设置 file_sharing_ui 且已装 45Drives 插件 → 固化为 45drives，不卸载、不切换
+	if shares_legacy_45drives; then
+		log_warning "debnas.conf 未设置 file_sharing_ui，且已安装 45Drives 文件共享插件（${SHARES_45DRIVES_PKG}）：按 45drives 处理，不卸载"
+		if config_write "global" "file_sharing_ui" "45drives"; then
+			log_info "已写入 file_sharing_ui=45drives（${DEBNAS_GLOBAL_CONF:-/etc/debnas/debnas.conf}）"
+		else
+			log_warning "写入 file_sharing_ui=45drives 失败（本次仍按 45drives 处理）"
+		fi
+		log_info "如需切换到 DebNAS 自研共享管理插件：把 debnas.conf 中 file_sharing_ui 改为 debnas 后重新运行本模块"
+	fi
 
 	choice=$(shares_ui_choice)
 	if [[ "$choice" == "45drives" ]]; then

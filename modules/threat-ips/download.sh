@@ -57,13 +57,19 @@ prepare_input_file() {
 # 返回：0 有有效条目，1 全部无效
 parse_ip_entries() {
   local temp_input="$1" temp_file_ipv4="$2" temp_file_ipv6="$3"
-  local warn_file stats msg total_count=0 valid_count=0 invalid_count=0
+  local warn_file stats msg total_count=0 valid_count=0 invalid_count=0 warn_count=0
 
   warn_file=$(create_temp_file "parse_warn" ".txt") || return 1
   log_info "解析 IP 列表中..."
   stats=$(LC_ALL=C awk -v out4="${temp_file_ipv4}" -v out6="${temp_file_ipv6}" \
-    -v warnf="${warn_file}" -v maxr="${MAX_RANGE_SIZE}" '
-    function warn(m) { print m >> warnf }
+    -v warnf="${warn_file}" -v maxr="${MAX_RANGE_SIZE}" -v maxw="${MAX_PARSE_WARNINGS}" '
+    # 告警只写前 maxw 条（其余只计数）；列表原文去掉控制字符并截断到 80 字符，防止日志/终端注入与刷屏
+    function warn(m) { if (++nw <= maxw) print m >> warnf }
+    function clean(s) {
+      gsub("[\001-\037\177]", "", s)
+      if (length(s) > 80) s = substr(s, 1, 80) "..."
+      return s
+    }
     # 形如 d{1,3}.d{1,3}.d{1,3}.d{1,3}（mawk 旧版不支持 {m,n}，逐段判断）
     function quad(s,   o, i) {
       if (split(s, o, ".") != 4) return 0
@@ -154,17 +160,17 @@ parse_ip_entries() {
       if (c ~ /^[0-9a-fA-F:]+\/[0-9]+$/) {
         p = index(c, "/"); m = substr(c, p + 1)
         if (length(m) <= 3) {
-          if (m + 0 > 128) warn("无效 IPv6 CIDR 掩码：" c)
-          else if (!v6ok(c)) warn("无效 IPv6 CIDR 格式：" c)
+          if (m + 0 > 128) warn("无效 IPv6 CIDR 掩码：" clean(c))
+          else if (!v6ok(c)) warn("无效 IPv6 CIDR 格式：" clean(c))
           else { print c >> out6; return 1 }
         }
       }
       if (c ~ /^[0-9.]+-[0-9.]+$/ && split(c, t, "-") == 2 && quad(t[1]) && quad(t[2])) {
-        if (!v4ok(t[1]) || !v4ok(t[2])) warn("无效 IPv4 范围地址：" c)
+        if (!v4ok(t[1]) || !v4ok(t[2])) warn("无效 IPv4 范围地址：" clean(c))
         else {
           sn = ip2n(t[1]); en = ip2n(t[2]); cnt = en - sn + 1
-          if (sn > en) warn("无效 IPv4 范围：" c "（起始地址大于结束地址）")
-          else if (cnt > maxr) warn("IPv4 范围过大：" c "（" sprintf("%.0f", cnt) " 条，建议使用 CIDR 格式）")
+          if (sn > en) warn("无效 IPv4 范围：" clean(c) "（起始地址大于结束地址）")
+          else if (cnt > maxr) warn("IPv4 范围过大：" clean(c) "（" sprintf("%.0f", cnt) " 条，建议使用 CIDR 格式）")
           else {
             for (i = sn; i <= en; i++)
               printf("%d.%d.%d.%d\n", int(i / 16777216), int(i / 65536) % 256, int(i / 256) % 256, i % 256) >> out4
@@ -174,7 +180,7 @@ parse_ip_entries() {
       }
       if (c ~ /^[0-9a-fA-F:]+-[0-9a-fA-F:]+$/) {
         split(c, t, "-")
-        if (!v6ok(t[1]) || !v6ok(t[2])) warn("无效 IPv6 范围：" c)
+        if (!v6ok(t[1]) || !v6ok(t[2])) warn("无效 IPv6 范围：" clean(c))
         else { print t[1] >> out6; print t[2] >> out6; return 1 }
       }
       k = sipclass(c)
@@ -187,16 +193,19 @@ parse_ip_entries() {
       c = norm($0)
       if (c == "") { bad++; next }
       if (parse(c)) ok++
-      else { warn("无效输入：" $0); bad++ }
+      else { warn("无效输入：" clean($0)); bad++ }
     }
-    END { printf "%d %d %d\n", NR, ok, bad }
+    END { printf "%d %d %d %d\n", NR, ok, bad, nw }
   ' "${temp_input}") || { rm -f "${warn_file}"; log_error "解析 IP 列表失败"; return 1; }
 
   while IFS= read -r msg; do
     log_warning "${msg}"
   done < "${warn_file}"
   rm -f "${warn_file}"
-  IFS=' ' read -r total_count valid_count invalid_count <<< "${stats}"
+  IFS=' ' read -r total_count valid_count invalid_count warn_count <<< "${stats}"
+  if [[ "${warn_count:-0}" -gt "${MAX_PARSE_WARNINGS}" ]]; then
+    log_warning "其余 $(( warn_count - MAX_PARSE_WARNINGS )) 条解析告警已省略（共 ${warn_count} 条）"
+  fi
 
   if [[ ${valid_count} -gt 0 ]]; then
     log_info \
@@ -205,6 +214,125 @@ parse_ip_entries() {
   if [[ ${invalid_count} -eq ${total_count} ]]; then
     log_info "所有输入 IP (${invalid_count} 条) 无效，已跳过"
     return 1
+  fi
+}
+
+# IP 网段 awk 函数库（IPv4/IPv6 共用，纯 awk，不依赖 python）
+#   netparse(s)  解析 "地址[/前缀]"（前缀须为纯数字，IPv4 0~32、IPv6 0~128）。成功返回 1 并设置：
+#                NKEY 网络地址（主机位清零）的定长十六进制串（IPv4 8 位、IPv6 32 位，可直接按字符串排序/比较）、
+#                NM 前缀长度、NFAM 4/6、NSLASH 原文是否带 "/"；格式非法返回 0。
+#                IPv6 展开 :: 与内嵌 IPv4，大小写/前导 0/压缩写法不同的同一地址得到同一 NKEY
+#   netcontains(pk, pm, xk, xm)  网段 pk/pm 是否包含 xk/xm（同族；CIDR 网段要么嵌套要么不相交，重叠即包含）
+#   netcanon()   按最近一次 netparse 结果输出规范写法（IPv4 点分十进制；IPv6 小写、去前导 0、最长连续 0 组压缩为 ::）
+# shellcheck disable=SC2016  # awk 程序文本，$ 由 awk 解释
+_THREAT_NET_AWK='
+function hexv(h,   i, v) {
+  v = 0
+  for (i = 1; i <= length(h); i++) v = v * 16 + index("0123456789abcdef", substr(h, i, 1)) - 1
+  return v
+}
+function v6group(t) { return t ~ /^[0-9a-f]+$/ && length(t) <= 4 }
+function netparse(s,   p, m, o, g, n, i, lc, v4, dc, left, right, nl, nr, L, R, r, cut, val, key) {
+  s = tolower(s); NSLASH = 0; m = -1
+  p = index(s, "/")
+  if (p) {
+    m = substr(s, p + 1); s = substr(s, 1, p - 1); NSLASH = 1
+    if (m !~ /^[0-9]+$/ || length(m) > 3) return 0
+    m += 0
+  }
+  if (s ~ /^[0-9.]+$/) {
+    if (split(s, o, ".") != 4) return 0
+    for (i = 1; i <= 4; i++) if (o[i] !~ /^[0-9]+$/ || length(o[i]) > 3 || o[i] + 0 > 255) return 0
+    if (m < 0) m = 32
+    if (m > 32) return 0
+    NFAM = 4; n = 2
+    g[1] = o[1] * 256 + o[2]; g[2] = o[3] * 256 + o[4]
+  } else {
+    if (s !~ /^[0-9a-f:.]+$/ || !index(s, ":") || index(s, ":::")) return 0
+    if (m < 0) m = 128
+    if (m > 128) return 0
+    # 内嵌 IPv4（如 ::ffff:1.2.3.4）：最后一段点分地址换成两组十六进制
+    if (index(s, ".")) {
+      for (lc = length(s); lc > 0 && substr(s, lc, 1) != ":"; lc--) ;
+      v4 = substr(s, lc + 1)
+      if (split(v4, o, ".") != 4) return 0
+      for (i = 1; i <= 4; i++) if (o[i] !~ /^[0-9]+$/ || length(o[i]) > 3 || o[i] + 0 > 255) return 0
+      s = substr(s, 1, lc) sprintf("%x:%x", o[1] * 256 + o[2], o[3] * 256 + o[4])
+    }
+    dc = index(s, "::")
+    if (dc) {
+      left = substr(s, 1, dc - 1); right = substr(s, dc + 2)
+      if (index(right, "::")) return 0
+    } else {
+      left = s; right = ""
+    }
+    nl = left == "" ? 0 : split(left, L, ":")
+    nr = right == "" ? 0 : split(right, R, ":")
+    for (i = 1; i <= nl; i++) if (!v6group(L[i])) return 0
+    for (i = 1; i <= nr; i++) if (!v6group(R[i])) return 0
+    if (dc ? nl + nr > 7 : nl != 8) return 0
+    NFAM = 6; n = 8
+    for (i = 1; i <= 8; i++) g[i] = 0
+    for (i = 1; i <= nl; i++) g[i] = hexv(L[i])
+    for (i = 1; i <= nr; i++) g[8 - nr + i] = hexv(R[i])
+  }
+  NM = m; key = ""
+  for (i = 1; i <= n; i++) {
+    r = NM - 16 * (i - 1); val = g[i]
+    if (r <= 0) val = 0
+    else if (r < 16) { cut = 2 ^ (16 - r); val = int(val / cut) * cut }
+    key = key sprintf("%04x", val)
+  }
+  NKEY = key
+  return 1
+}
+function netcontains(pk, pm, xk, xm,   q, r) {
+  if (length(pk) != length(xk) || pm + 0 > xm + 0) return 0
+  q = int(pm / 4); r = pm % 4
+  if (substr(pk, 1, q) != substr(xk, 1, q)) return 0
+  if (r == 0) return 1
+  return int(hexv(substr(pk, q + 1, 1)) / 2 ^ (4 - r)) == int(hexv(substr(xk, q + 1, 1)) / 2 ^ (4 - r))
+}
+function netcanon(   i, h, a, b, out, bs, bl, cs, cl) {
+  if (NFAM == 4) {
+    a = hexv(substr(NKEY, 1, 4)); b = hexv(substr(NKEY, 5, 4))
+    out = int(a / 256) "." (a % 256) "." int(b / 256) "." (b % 256)
+  } else {
+    bs = 0; bl = 0; cl = 0
+    for (i = 1; i <= 8; i++) {
+      h[i] = hexv(substr(NKEY, 4 * i - 3, 4))
+      if (h[i] == 0) { if (!cl) cs = i; cl++; if (cl > bl) { bl = cl; bs = cs } } else cl = 0
+    }
+    if (bl < 2) bs = 0
+    out = ""
+    for (i = 1; i <= 8; i++) {
+      if (bs && i == bs) { out = out "::"; i += bl - 1; continue }
+      out = out ((out == "" || substr(out, length(out), 1) == ":") ? "" : ":") sprintf("%x", h[i])
+    }
+  }
+  return NSLASH ? out "/" NM : out
+}
+'
+
+# 剔除被其他条目包含的网段（如同时有 1.2.3.0/24 与 1.2.3.4，丢弃后者；重复条目只留一条）
+# firewalld 校验 hash:net 条目时发现任意两条重叠会整批拒绝，必须在写入前消除
+# 参数：$1 - IP 文件（原地改写，已经 filter_protected_entries 校验），$2 - 类型（日志用）
+merge_overlapping_entries() {
+  local ip_file="$1" ip_type="$2"
+  local merged_file stat_file dropped=0
+  merged_file=$(create_temp_file "merged_${ip_type}" ".txt") || return 1
+  stat_file=$(create_temp_file "merge_stat" ".txt") || return 1
+  LC_ALL=C awk "${_THREAT_NET_AWK}"'
+    netparse($1) { printf "%s %03d %s\n", NKEY, NM, $1 }
+  ' "${ip_file}" | LC_ALL=C sort -k1,1 -k2,2n | LC_ALL=C awk -v statfile="${stat_file}" "${_THREAT_NET_AWK}"'
+    { if (have && netcontains(lk, lm, $1, $2 + 0)) { dropped++; next }; lk = $1; lm = $2 + 0; have = 1; print $3 }
+    END { print dropped + 0 > statfile }
+  ' > "${merged_file}" || { rm -f "${merged_file}" "${stat_file}"; return 1; }
+  mv "${merged_file}" "${ip_file}"
+  dropped=$(cat "${stat_file}" 2>/dev/null) || dropped=0
+  rm -f "${stat_file}"
+  if [[ "${dropped:-0}" -gt 0 ]]; then
+    log_info "${ip_type} 已合并重叠条目：丢弃被其他网段包含的 ${dropped} 条"
   fi
 }
 
@@ -271,16 +399,22 @@ filter_protected_entries() {
       END { print bad + 0, wide + 0, prot + 0 > statfile }
     ' "${protected_file}" "${ip_file}" > "${filtered_file}"
   else
-    awk -v minmask="${MIN_IPV6_PREFIX}" -v statfile="${stat_file}" '
-      NR == FNR { if ($1 ~ /:/) { a = tolower($1); sub(/\/128$/, "", a); own[a] = 1 }; next }
-      {
-        e = tolower($1); addr = e; m = 128
-        if (index(e, "/")) { split(e, t, "/"); addr = t[1]; m = t[2] + 0 }
-        if (m < minmask) { wide++; next }
-        if (addr == "::" || addr == "::1" || addr ~ /^(fe[89ab]|f[cd]|ff)/ || (addr in own)) { prot++; next }
-        print $1
+    # 按前缀计算重叠（展开为 8 组十六进制后比较），不再只做字符串比较：
+    # 白名单/本机地址落在威胁网段内（或威胁条目落在白名单网段内）都算命中；输出规范化写法
+    LC_ALL=C awk -v minmask="${MIN_IPV6_PREFIX}" -v statfile="${stat_file}" "${_THREAT_NET_AWK}"'
+      BEGIN {
+        nb = split("::/128 ::1/128 fe80::/10 fc00::/7 ff00::/8", B, " ")
+        for (i = 1; i <= nb; i++) if (netparse(B[i])) { pk[++np] = NKEY; pm[np] = NM }
       }
-      END { print 0, wide + 0, prot + 0 > statfile }
+      NR == FNR { if ($1 ~ /:/ && netparse($1) && NFAM == 6) { pk[++np] = NKEY; pm[np] = NM }; next }
+      {
+        if (!netparse($1) || NFAM != 6) { bad++; next }
+        if (NM < minmask) { wide++; next }
+        for (k = 1; k <= np; k++)
+          if (netcontains(pk[k], pm[k], NKEY, NM) || netcontains(NKEY, NM, pk[k], pm[k])) { prot++; next }
+        print netcanon()
+      }
+      END { print bad + 0, wide + 0, prot + 0 > statfile }
     ' "${protected_file}" "${ip_file}" > "${filtered_file}"
   fi
 

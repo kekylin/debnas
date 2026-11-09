@@ -57,6 +57,9 @@ cron_validate_schedule() {
   local schedule="$1"
   local -a fields
   local IFS=' '
+  # 表达式原样拼进 crontab：换行/回车可追加任意条目（read 只读第一行，后面几行会绕过校验），
+  # % 在 crontab 命令字段中表示换行/标准输入，一律拒绝
+  [[ "$schedule" != *[$'\n\r%']* ]] || return 1
   read -r -a fields <<< "$schedule"
   [[ ${#fields[@]} -eq 5 ]] || return 1
   _cron_field_valid "${fields[0]}" 0 59 || return 1
@@ -134,6 +137,11 @@ _set_crontab() {
 # 返回：0 成功，1 失败
 # 说明：如果已存在相同模块的条目，则先移除再添加（幂等）
 cron_register() {
+  # 读改写 crontab 期间持锁（并发注册会丢掉对方刚写入的条目）
+  if declare -F debnas_locked >/dev/null 2>&1 && [[ -z "${_DEBNAS_LOCKS_HELD[cron]:-}" ]]; then
+    debnas_locked cron cron_register "$@"
+    return
+  fi
   local module_name="${1:?cron_register: 缺少模块名}"
   local schedule="${2:?cron_register: 缺少 cron 表达式}"
   local marker
@@ -152,13 +160,14 @@ cron_register() {
   # 构建 cron 命令（传递 DEBNAS_CRON_MODE=1 告知模块以非交互模式运行）
   local cron_cmd="${schedule} DEBNAS_CRON_MODE=1 ${DEBNAS_BIN} run ${module_name} ${marker}"
 
-  # 获取当前 crontab，移除该模块的旧条目
+  # 获取当前 crontab，移除该模块的旧主条目
   local current_crontab
   current_crontab=$(_get_current_crontab)
 
-  # 移除旧条目并添加新条目
+  # 只按主条目后缀 " run <模块> <标记>" 精确匹配；变体条目（run <模块> <参数> <标记>，
+  # 如 ops-report 的年报）同样以标记结尾，按标记匹配会被一起删掉
   local new_crontab
-  new_crontab=$(printf '%s\n' "$current_crontab" | _cron_filter_out_marker "$marker" || true)
+  new_crontab=$(printf '%s\n' "$current_crontab" | _cron_filter_out_marker " run ${module_name} ${marker}" || true)
 
   # 追加新条目（确保末尾有换行）
   if [[ -n "$new_crontab" ]]; then
@@ -180,6 +189,11 @@ ${cron_cmd}"
 # 参数：$1 - 模块名，$2 - cron 表达式，$3 - 附加命令参数
 # 返回：0 成功，1 失败
 cron_register_variant() {
+  # 读改写 crontab 期间持锁（并发注册会丢掉对方刚写入的条目）
+  if declare -F debnas_locked >/dev/null 2>&1 && [[ -z "${_DEBNAS_LOCKS_HELD[cron]:-}" ]]; then
+    debnas_locked cron cron_register_variant "$@"
+    return
+  fi
   local module_name="${1:?cron_register_variant: 缺少模块名}"
   local schedule="${2:?cron_register_variant: 缺少 cron 表达式}"
   local command_args="${3:-}"
@@ -235,6 +249,11 @@ ${cron_cmd}"
 # 参数：$1 - 模块名
 # 返回：0 成功（包括原本不存在的情况），1 操作失败
 cron_unregister() {
+  # 读改写 crontab 期间持锁（并发注册会丢掉对方刚写入的条目）
+  if declare -F debnas_locked >/dev/null 2>&1 && [[ -z "${_DEBNAS_LOCKS_HELD[cron]:-}" ]]; then
+    debnas_locked cron cron_unregister "$@"
+    return
+  fi
   local module_name="${1:?cron_unregister: 缺少模块名}"
   local marker
   marker=$(_cron_entry_marker "$module_name")
