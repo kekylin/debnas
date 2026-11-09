@@ -16,6 +16,29 @@
 
 > 当前开发分支：`refactor/debnas-v2`
 
+### Security（2026-11-09 全面审查修复，分支 fix/review-20261109）
+- 临时目录 `/tmp/debnas` 及日志回退目录增加属主/符号链接校验，防止普通用户预建目录后替换 root 写入的文件（fail-closed）
+- `write_file_if_changed` 改为同目录临时文件 + 原子 rename，保留原文件权限/属主；写入失败返回 2 并记录错误
+- `config.sh` 键名/模块名校验，修复 GNU sed `e` 命令注入与 `../` 路径穿越；`cron.sh` 模块名/variant 校验
+- `NO_COLOR` 算术求值命令注入；tar 解压加 `--no-same-owner`；wget 加超时
+- hosts-sync：/etc/hosts 不再被改成 0600、保留用户空行；连通性校验改为带 SNI 并校验证书；过滤回环/私网/fake-ip 结果
+- security：su 限制此前在 Debian 默认配置下从未生效（注释行误判为已配置）；现插在 pam_rootok 之后并加 use_uid，管理员不在 sudo 组时跳过防锁死；/var/log/history 防抢建
+- threat-ips：剔除保留网段/本机/当前 SSH 来源/白名单/过宽前缀；改为差量同步不再先清空；reload 后重启 fail2ban 恢复其规则；flock 互斥
+- firewall / fail2ban：按实际 SSH 端口放行与监控；按已安装服务放行 samba/nfs；jail.local 不覆盖用户自定义文件；局域网网段加入 ignoreip
+- docker-ce：固定校验 Docker 官方公钥指纹；docker-mirror：只合并 registry-mirrors，JSON 非法时拒绝覆盖
+- cockpit：转发头仅在 `cockpit_behind_proxy=1` 时写入，不再整文件覆盖用户配置；45drives 安装脚本失败不再被吞
+- login-mail：通知改为后台执行不阻塞登录，ip-api 明文地理查询默认关闭（`login_mail_geoip=1` 开启）
+- ops-report：HTML 报告转义所有系统来源数据（进程名/主机名/登录信息等）防 XSS；邮件主题 RFC 2047 编码并防头注入；报告文件 600 创建
+
+### Fixed（2026-11-09 全面审查修复）
+- cockpit-net：先检查 NetworkManager；检测到静态 IP 配置时拒绝执行并给出 nmcli 迁移提示，避免失联
+- mail-account：Exim smarthost 端口改为 `host::port`（原写法实际走 25 端口）；465 支持 smtps
+- sources：重复运行不再覆盖原始 .bak；sid/testing 不再生成不存在的套件
+- sys-patches：去掉 gawk 专有 `match()`（mawk 下明细为空）；apt update 失败时在报告中标注
+- service-query 不再启动 cockpit；wallpaper 仅样式变化时重启 cockpit；bbr/vm-components sysctl 覆盖问题
+- ops-report：Debian 12 可用率恒为 0%、CST 时区偏差、端口仅减少时报告崩溃、.xz 历史 sar 数据不可读、多 jail 封禁数为 0、全量扫 journal
+- lib/bin：installer_deploy 原子替换并部署 config/compose；install.sh 补复制 compose/；migration 使用新版本代码执行；module-runner 透传退出码；菜单 `08`/Y/N 快捷键/缩放错位；state/doctor/apt 多处 pipefail 中途退出
+
 ### Added
 - 新增 `ops-report` 运维报告模块：支持 7/30/180/365 天终端摘要、本地 HTML 报告、Markdown 邮件通知与固定周报/年报定时任务
 - 新增统一“定时任务”管理模块（位于系统维护二级菜单），支持选择模块后启用/禁用/查看定时任务
