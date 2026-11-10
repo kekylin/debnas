@@ -58,9 +58,11 @@ wget https://github.com/kekylin/debnas/raw/v2026.11.0/install.sh && bash install
 - 指定 `--region cn` 使用国内源（Gitee 优先，GitHub 备用）
 - 下载时两个地址互为备用，任一失效自动切换
 - 安装完成后自动启动交互菜单
+- 旧教程里的写法 `bash <(wget -qO- …/install.sh) -s github@main` / `-s gitee@main` 仍可用：`-s github@…` 等同 `--region global`，`-s gitee@…` 等同 `--region cn`，`@` 后的分支名被忽略（安装的始终是已签名的发布版本）
 
 #### 完整性校验与信任边界
 - 安装脚本默认下载固定发布版本的代码包（GitHub/Gitee Release 附件），先用脚本内嵌的发布公钥通过 `gpgv` 验证 `SHA256SUMS` 的 GPG 签名并核对签名者指纹，再用 `sha256sum` 校验代码包；任一步失败即中止安装。`debnas update` 使用已安装目录中的公钥做同样的校验。
+- `debnas update` 查询"最新版本号"时，读取 main 分支上的 `LATEST` 与它的签名 `LATEST.asc`，同样用已安装的发布公钥验签，通过才采用；签名对不上则拒绝自动更新（可用 `debnas update --tag <版本号>` 指定版本，代码包照常验签）。自动发现的版本只升不降。
 - 签名保护的是之后下载的代码包；`install.sh` 本身经 HTTPS 从代码托管平台获取，它的可信度取决于下载渠道。上面的命令指向**发布 tag 下的 `install.sh`**（而不是随时变动的 main 分支），发布后内容不再变化。谨慎的用户可从 Release 页面下载 `install.sh`、`SHA256SUMS`、`SHA256SUMS.asc`，用 `gpg --verify SHA256SUMS.asc SHA256SUMS && sha256sum -c --ignore-missing SHA256SUMS` 自行核验后再执行。
 - 安装指定版本：`bash install.sh --tag <版本号>`。
 - 开发调试可按分支安装（**不做任何校验**）：`bash install.sh --unsigned --branch dev`，脚本会醒目警告并要求手动输入 `yes`，非交互环境下拒绝执行。
