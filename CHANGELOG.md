@@ -14,6 +14,40 @@
 
 ## [未发布]
 
+### Security（2026-11-10 跟进修复，分支 fix/followup-20261110）
+- `debnas update` 的"最新版本号"改为**已签名的指针**：仓库根新增 `LATEST`（一行 tag）与 `LATEST.asc`（发布密钥的分离签名），update 从 main 分支取这两个文件，用已安装目录 `keys/` 里的公钥与指纹验签（与发布包同一套 `gpgv` 逻辑，抽成公共函数 `release_check_sig`），通过才采用。`LATEST` 取到但验签失败、或缺 `LATEST.asc` → 拒绝自动更新（仍可 `--tag` 指定版本，代码包照常验签）；两个文件都取不到（维护者尚未发布指针）→ 告警并回退读 main 分支 `install.sh` 的版本号。两种来源都保留"只升不降"。此前版本号直接读自未签名的 `install.sh`
+- 全局命令 `/usr/local/bin/debnas` 改为同目录临时文件 + rename 写入：旧安装里它是指向 `bin/debnas` 的软链接时，覆盖安装不再顺着链接把 `bin/debnas` 本身写成包装脚本
+
+### Added
+- `tools/release.sh --sign-latest <tag> <密钥 ID>`：生成并自检 `LATEST` / `LATEST.asc`；构建正式版本时自动生成（预发布版本、或 `LATEST` 已指向更高版本时不动），并提示在附件上传后提交推送
+- `tools/release.sh --embed-key <新公钥> --keep-old`：换发布密钥的过渡版——`keys/debnas-release.asc` 与 `install.sh` 内嵌区块同时包含新旧两把公钥、`keys/debnas-release.fpr` 两行，任一把签的发布包与 `LATEST` 都能通过；下个版本执行不带 `--keep-old` 的 `--embed-key` 移除旧钥。步骤见 `tools/release.sh` 文件头与 docs/MAINTENANCE.md「更换发布密钥」
+- `.gitattributes`：`tests/`、`docs/`、`tools/`、`.github/`、`.gitattributes`、`.gitignore`、`LATEST`、`LATEST.asc` 标记 `export-ignore`，不进发布包与平台分支归档（`keys/` 保留）
+- 运维报告：磁盘一节新增「磁盘容量预测」表（按近 N 天使用率增速外推到 90% 告警线，基线不足 1 天显示"数据不足"）；容量快照改为每盘每天一条、保留 400 天，同日重复生成报告不再冲掉基线
+- threat-ips：firewall-cmd 写出的永久配置（`/etc/firewalld/ipsets/ipthreat_block_ipv{4,6}.xml` 与 `zones/drop.xml`）登记到文件清单，`debnas files` 可见
+
+### Changed
+- `tests/`、`docs/` 不再被 `.gitignore` 排除（改为入库，发布包体积由 `export-ignore` 控制）；新增忽略本地测试报告 `tests/reports/`
+- 发布公钥文件与 `install.sh` 内嵌公钥允许多个公钥块（`release_dearmor` 逐块解码后拼接）；`tools/release.sh --check-keys` 与构建时检查改为"内嵌指纹集合 = 指纹文件集合 = 公钥文件里实际的主密钥集合"，指纹文件里多出没有对应公钥的指纹不再放行
+- 构建发布时检查包内含 `keys/debnas-release.asc`
+- 全局命令包装脚本内容收拢为单一来源（`lib/system/installer.sh` DEBNAS-DEPLOY 区块的 `deploy_install_wrapper`），`install.sh` 与 `debnas update` 共用
+- 仪表盘：功能栏与"执行计划·预演"框按内容分配行数——预演生成后预演框按条数扩展（80x24 下由固定 2 条提高到最多 13 条），未勾选时预演框保持最小、其余行归功能栏；双栏、单栏均适用，切换分类/窗口尺寸变化时重新计算
+- 仪表盘：详情区说明过长时折成两行；单栏功能列表超出时显示 ↑/↓；快捷键行放不下时按优先级省略，80 列下 移动/勾选/执行/预演/退出 始终可见；临时提示 4 秒后自动消失
+- 运维报告：Debian 13 默认没有登录记录读取工具，启用或生成报告时若既无 `wtmpdb` 也无 `last`，自动安装 `wtmpdb` 与 `libpam-wtmpdb`（PAM 由包自带的 pam-auth-update 启用，不改 `/etc/pam.d`）；Debian 12 自带 `last`，不安装任何包；安装失败只告警
+- firewall / bbr / vm-components：修改已有的 `/etc/firewalld/zones/*.xml`、`/etc/sysctl.conf` 不再用 `sed -i` 原地改，统一经 `write_file_if_changed` 写回（原件备份、原子替换、登记文件清单）
+
+### Fixed
+- CI 全部任务失败：`.gitignore` 排除了 `tests/`，而 `ci.yml` 调用 `tests/run.sh`、`tests/check.sh`。`tests/` 入库；`ci.yml` 每个 job 在 `actions/checkout` 之前先安装 git（容器内没有 git 时 checkout 走归档接口，归档受 `export-ignore` 影响会缺 `tests/`）；bats-unit 任务加装 gnupg / jq 让签名校验用例实际执行
+- 旧教程里的安装命令 `bash <(wget -qO- …/install.sh) -s github@main` / `-s gitee@main` 报"未知参数: -s"：`install.sh` 兼容 `-s 平台@分支`（github → `--region global`，gitee → `--region cn`，分支部分忽略，仍安装已签名的发布版本），并提示新写法；格式非法时报错并给出新用法
+- `debnas update` 不刷新 `/usr/local/bin/debnas` 包装脚本：更新成功后由新版本代码重新生成；`debnas` 启动时发现包装脚本过期或仍是旧版软链接也会换成当前版本（从 v2026.11.0 升上来时执行更新的是旧代码，靠这一步补上）
+- cockpit / cockpit-net：netplan / systemd-networkd 管理网络的系统（云镜像等）安装 Cockpit 后，随包带入的 NetworkManager 会给同一网卡再配一个 DHCP 地址。现在检测到网卡已由 systemd-networkd 管理时写入 `/etc/NetworkManager/conf.d/10-debnas-unmanaged.conf`，让 NetworkManager 不接管这些网卡；已出现双地址的系统重新执行 cockpit 或 cockpit-net 模块即可修复。ifupdown 的常规安装不受影响。如以后改由 NetworkManager 管理网络，需先删除该文件并 `systemctl reload NetworkManager`
+- firewall：放行规则改为写入 firewalld 实际的默认区（原先固定写 public 区，默认区改成 home / internal 等时规则不生效）；默认区为 trusted 时不写规则并提示
+- firewall：firewalld 已在运行时，写入区文件后同步把新增项补进 firewalld 的永久配置（`firewall-cmd --permanent`，不 reload）。此前之后任何 `--permanent` 操作都会重写区文件并丢掉 DebNAS 放行的条目
+- 定时任务：没有 cron 的系统（如 Debian 12 云镜像）注册定时任务时自动安装并启用 cron；无法安装或服务启动失败时明确报错。此前条目写不进去，或写入了但 cron 未运行
+- threat-ips：未安装 cron 的系统启用威胁 IP 封禁时不再因"启动 cron 失败"而中止
+- 运维报告：服务清单"说明"列同时有周期错误与周期重启时，错误次数被覆盖
+- 运维报告：登录记录在 Cockpit "web console" 会话、终端为空的记录上列错位；"… begins" 行不再计为登录；数据源缺失或周期内无登录时给出明确说明（原来是空表）
+- 运维报告：内核版本改查 `linux-image-$(uname -r)`（原包名查不到），查不到时回退 `uname -v`；"上一版本"取升级前版本
+
 ## [v2026.11.0] - 2026-11-10
 
 > 当前开发分支：`refactor/debnas-v2`
