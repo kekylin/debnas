@@ -3,6 +3,8 @@
 # 说明：
 #   - 布局：顶部系统信息框 / 左栏分类 / 右栏功能列表（勾选+状态+说明）/ 执行计划·预演框 / 快捷键行
 #   - 窄终端（< 100 列或 < 28 行）自动退化为单栏两级（分类 → 功能），仍有状态列、多选、预演
+#   - 行分配：功能栏高度按当前分类内容（表头 + 功能数 + 分隔线 + 详情 1~3 行），预演框按预演条数扩展，
+#     两者此消彼长（_dash_alloc_rows，规则见 docs/DESIGN_SPEC_UI.md §8.2.1）
 #   - 渲染：每帧在内存中合成整屏（_DASH_FRAME），与上一帧逐行比对，只重写变化的行（无全屏 clear，无闪烁）
 #   - 终端：备用屏幕（alt screen）+ 隐藏光标 + stty -echo -icanon；EXIT/INT 时恢复；SIGWINCH 重新布局
 #   - 状态：进入时异步并行采集全部模块 module_status（lib/system/module-probe.sh），执行后只刷新执行过的模块
@@ -36,6 +38,9 @@ declare -g _DASH_SEARCH_MODE=0 _DASH_QUERY=""
 declare -g _DASH_OVERLAY="" _DASH_OVERLAY_OFF=0
 declare -g -a _DASH_OVERLAY_LINES=()
 declare -g _DASH_MSG="" _DASH_QUIT=0 _DASH_RESIZED=0 _DASH_KEY=""
+# 临时提示的自动过期：_DASH_MSG_SEEN 为已计时的提示文本，_DASH_MSG_AT 为开始计时的时刻（秒）
+declare -g _DASH_MSG_SEEN="" _DASH_MSG_AT=0
+readonly DASH_MSG_SECS=4
 
 # 预演
 declare -g -a _DASH_PLAN=()
@@ -45,6 +50,9 @@ declare -g _DASH_PLAN_SIG="" _DASH_PLAN_RISKS=0
 declare -g _DASH_COLS=80 _DASH_ROWS=24 _DASH_W=79 _DASH_MODE="wide"
 declare -g -a _DASH_FRAME=() _DASH_PREV=()
 declare -g _DASH_L="" _DASH_SIG="" _DASH_DESC=""
+# 行分配结果（_dash_alloc_rows）与详情区缓存（_dash_detail_need）
+declare -g _DASH_BOX_C=0 _DASH_PLAN_P=0 _DASH_PW=0 _DASH_DN=1 _DASH_DN_KEY=""
+declare -g -a _DASH_DETAIL=()
 declare -g _DASH_TUI_ON=0 _DASH_STTY="" _DASH_DIR="" _DASH_RUNNER=""
 declare -g _DASH_LAST_SAMPLE=0 _DASH_LAST_DISK=0
 
@@ -516,41 +524,126 @@ _dash_item_header() {
   _DASH_C="${_DC_DIM}    ${a}  ${b}  ${_UI_FIT}${_DC_RESET}"
 }
 
-# 详情行（2 行，宽度 inner）：设置 _DASH_D1 / _DASH_D2
+# 详情区需要的行数（1~3）：写入 _DASH_DN
+# 空列表 1 行；否则 2 行（"▸ 名称 — 说明" + 状态行）；列表中任一条目的说明在 inner 列内放不下时 3 行（说明折成两行）
+# 按整张列表取最大值（而不是只看焦点项），焦点移动时框高不跳动；结果按（inner, 列表）缓存
+_dash_detail_need() {
+  local inner="$1" key cache_key
+  local IFS=' '
+  cache_key="${inner}|${_DASH_LIST[*]}"
+  [[ "$cache_key" == "$_DASH_DN_KEY" ]] && return 0
+  _DASH_DN_KEY="$cache_key"
+  _DASH_DN=1
+  [[ ${#_DASH_LIST[@]} -gt 0 ]] || return 0
+  _DASH_DN=2
+  local hw
+  for key in "${_DASH_LIST[@]}"; do
+    ui_str_width "▸ ${_DASH_ITEM_NAME[$key]} — "; hw=$_UI_W
+    (( hw + 4 <= inner )) || continue
+    ui_str_width "${_DASH_ITEM_DESC[$key]:-}"
+    if (( _UI_W > inner - hw )); then _DASH_DN=3; break; fi
+  done
+  return 0
+}
+
+# 详情行（宽度 inner）：写入数组 _DASH_DETAIL，恰好 $2 行（1~3，不足补空行）
+#   1 行：▸ 名称 — 说明（截断）
+#   2 行：上一行 + "状态：… · 依赖模块：… · 模块名"
+#   3 行：说明放不下时折成两行（第二行与说明起始列对齐），再加状态行
 _dash_detail_lines() {
-  local inner="$1" key
+  local inner="$1" lines="${2:-2}" key
+  _DASH_DETAIL=()
   if [[ ${#_DASH_LIST[@]} -eq 0 ]]; then
     if (( _DASH_SEARCH_MODE > 0 )); then ui_str_fit "没有匹配「${_DASH_QUERY}」的功能" "$inner"; else ui_str_fit "此分类没有功能" "$inner"; fi
-    _DASH_D1="${_DC_DIM}${_UI_FIT}${_DC_RESET}"
-    _dash_blank "$inner"; _DASH_D2="$_UI_FIT"
-    return 0
-  fi
-  key="${_DASH_LIST[$_DASH_FOCUS]}"
-  local name="${_DASH_ITEM_NAME[$key]}" desc="${_DASH_ITEM_DESC[$key]:-}"
-  ui_str_width "▸ ${name} — "; local hw=$_UI_W
-  if (( hw + 4 <= inner )); then
-    ui_str_fit "$name" $(( hw - 5 )); local nm="$_UI_FIT"
-    ui_str_fit "${desc:-（无说明）}" $(( inner - hw ))
-    _DASH_D1="${_DC_ACC}▸ ${_DC_RESET}${_DC_OK}${nm}${_DC_RESET} — ${_UI_FIT}"
+    _DASH_DETAIL+=("${_DC_DIM}${_UI_FIT}${_DC_RESET}")
   else
-    ui_str_fit "▸ ${name}" "$inner"
-    _DASH_D1="${_DC_OK}${_UI_FIT}${_DC_RESET}"
+    key="${_DASH_LIST[$_DASH_FOCUS]}"
+    local name="${_DASH_ITEM_NAME[$key]}" desc="${_DASH_ITEM_DESC[$key]:-}"
+    ui_str_width "▸ ${name} — "; local hw=$_UI_W
+    if (( hw + 4 <= inner )); then
+      ui_str_fit "$name" $(( hw - 5 )); local nm="$_UI_FIT"
+      ui_str_width "$desc"
+      if (( lines >= 3 && _UI_W > inner - hw )); then
+        ui_str_wrap "$desc" $(( inner - hw )) 2
+        local second="${_UI_WRAP[1]:-}"
+        ui_str_fit "${_UI_WRAP[0]:-}" $(( inner - hw ))
+        _DASH_DETAIL+=("${_DC_ACC}▸ ${_DC_RESET}${_DC_OK}${nm}${_DC_RESET} — ${_UI_FIT}")
+        _dash_blank "$hw"; local pad="$_UI_FIT"
+        ui_str_fit "$second" $(( inner - hw ))
+        _DASH_DETAIL+=("${pad}${_UI_FIT}")
+      else
+        ui_str_fit "${desc:-（无说明）}" $(( inner - hw ))
+        _DASH_DETAIL+=("${_DC_ACC}▸ ${_DC_RESET}${_DC_OK}${nm}${_DC_RESET} — ${_UI_FIT}")
+      fi
+    else
+      ui_str_fit "▸ ${name}" "$inner"
+      _DASH_DETAIL+=("${_DC_OK}${_UI_FIT}${_DC_RESET}")
+    fi
+    if (( lines >= 2 )); then
+      local extra=""
+      _dash_item_status "$key"
+      extra="状态：${_DASH_ST_DESC}"
+      if [[ "$key" == m:* ]]; then
+        local m="${key#m:}" dep="" inter=""
+        get_module_field_var dep "$m" "depend_modules" || dep=""
+        get_module_field_var inter "$m" "interactive" "false" || inter="false"
+        [[ -n "$dep" ]] && extra+=" · 依赖模块：${dep}"
+        [[ "$inter" == "true" ]] && extra+=" · 交互式（执行时进入模块菜单）"
+        extra+=" · ${m}"
+      fi
+      ui_str_fit "  ${extra}" "$inner"
+      _DASH_DETAIL+=("${_DC_DIM}${_UI_FIT}${_DC_RESET}")
+    fi
   fi
-  local extra=""
-  _dash_item_status "$key"
-  if [[ "$key" == m:* ]]; then
-    local m="${key#m:}" dep="" inter=""
-    extra="状态：${_DASH_ST_DESC}"
-    get_module_field_var dep "$m" "depend_modules" || dep=""
-    get_module_field_var inter "$m" "interactive" "false" || inter="false"
-    [[ -n "$dep" ]] && extra+=" · 依赖模块：${dep}"
-    [[ "$inter" == "true" ]] && extra+=" · 交互式（执行时进入模块菜单）"
-    extra+=" · ${m}"
-  else
-    extra="状态：${_DASH_ST_DESC}"
-  fi
-  ui_str_fit "  ${extra}" "$inner"
-  _DASH_D2="${_DC_DIM}${_UI_FIT}${_DC_RESET}"
+  while (( ${#_DASH_DETAIL[@]} > lines )); do unset '_DASH_DETAIL[-1]'; done
+  while (( ${#_DASH_DETAIL[@]} < lines )); do
+    _dash_blank "$inner"; _DASH_DETAIL+=("$_UI_FIT")
+  done
+  return 0
+}
+
+# 列表与详情之间的虚线（宽度 inner）：写入 _DASH_C；列表上/下方还有条目时末尾显示 ↑ / ↓
+# 参数：$1 inner，$2 可见条数，$3 总条数
+_dash_sep_line() {
+  local inner="$1" vis="$2" n="$3" more=""
+  (( _DASH_SCROLL > 0 )) && more+="↑"
+  (( _DASH_SCROLL + vis < n )) && more+="↓"
+  ui_str_repeat "┄" $(( inner - ${#more} - (${#more} > 0 ? 1 : 0) ))
+  if [[ -n "$more" ]]; then _UI_FIT="${_UI_FIT} ${more}"; fi
+  _DASH_C="${_DC_BORDER}${_UI_FIT}${_DC_RESET}"
+}
+
+# 预演框想要的内容行数：写入 _DASH_PW
+# 只有"已勾选且预演与当前勾选一致"时才按预演条数要行；未勾选/未预演/勾选已变化时为 0（调用方取最小高度）
+_dash_plan_want() {
+  _DASH_PW=0
+  (( ${#_DASH_SEL[@]} > 0 && ${#_DASH_PLAN[@]} > 0 )) || return 0
+  _dash_sel_sig
+  [[ "$_DASH_SIG" == "$_DASH_PLAN_SIG" ]] && _DASH_PW=${#_DASH_PLAN[@]}
+  return 0
+}
+
+# 在上方列表框（分类/功能）与预演框之间分配内容行（均不含边框）
+# 参数：$1 可分配的总行数
+#       $2 列表框按内容需要的行数
+#       $3 列表框下限（预演条目多时列表框最多被压到这里，再少就滚动）
+#       $4 预演框最小行数
+#       $5 1=列表框占满剩余行（单栏：快捷键行贴底）；0=列表框不超过需要的行数（双栏：整体紧凑）
+# 输出：_DASH_BOX_C 列表框内容行数，_DASH_PLAN_P 预演框内容行数
+# 规则：预演框先按预演条数要行（不少于最小行数），但不能把列表框压到下限以下；其余归列表框
+_dash_alloc_rows() {
+  local avail="$1" need="$2" floor="$3" pmin="$4" fill="$5" want
+  _dash_plan_want; want=$_DASH_PW
+  (( want < pmin )) && want=$pmin
+  (( floor > need )) && floor=$need
+  (( floor > avail - pmin )) && floor=$(( avail - pmin ))
+  (( floor < 1 )) && floor=1
+  (( want > avail - floor )) && want=$(( avail - floor ))
+  (( want < 0 )) && want=0
+  _DASH_PLAN_P=$want
+  _DASH_BOX_C=$(( avail - want ))
+  (( fill == 0 && _DASH_BOX_C > need )) && _DASH_BOX_C=$need
+  return 0
 }
 
 # 确保焦点/分类在可见窗口内
@@ -676,23 +769,40 @@ _dash_compose_footer() {
     _DASH_L="${_DC_ACC}${_UI_FIT}${_DC_RESET}"
     return 0
   fi
-  local -a pairs
+  # pairs：按显示顺序的"键 说明"；drop：放不下时依次省略的键（越靠前越先省略）。
+  # ↑↓ 移动、空格 勾选、回车 执行、d 预演、q 退出 为必备键位，80 列下必须都在；更窄时才继续按 drop 后半段省略，q 始终保留
+  local -a pairs drop=()
   if (( _DASH_SEARCH_MODE == 1 )); then
     pairs=("输入" "过滤" "↑↓" "移动" "回车" "确认" "Esc" "取消")
   elif [[ "$_DASH_MODE" == "narrow" ]]; then
-    pairs=("↑↓" "移动" "→←" "进入/返回" "空格" "勾选" "回车" "执行" "d" "预演" "/" "搜索" "?" "帮助" "q" "退出" "l" "日志")
+    pairs=("↑↓" "移动" "→←" "进入/返回" "空格" "勾选" "回车" "执行" "d" "预演" "/" "搜索" "?" "帮助" "l" "日志" "q" "退出")
+    drop=("l" "?" "/" "→←" "↑↓" "d" "空格" "回车")
   else
     pairs=("↑↓" "移动" "←→" "切换栏" "空格" "勾选" "回车" "执行" "d" "预演" "/" "搜索" "l" "日志" "?" "帮助" "q" "退出")
+    drop=("l" "?" "/" "←→" "↑↓" "d" "空格" "回车")
   fi
-  local out=" " used=1 i k lab kw lw gap=2 total=1 sp
-  # 先按 2 空格间隔试算，放不下时收紧为 1 空格，仍放不下再从末尾丢弃
+  local out=" " used=1 i k lab kw lw gap=2 total=1 sp di=0
+  local -A skip=()
+  # 先按 2 空格间隔试算，放不下时收紧为 1 空格，仍放不下按 drop 顺序省略；没有 drop 表（搜索输入）时从末尾丢弃
   for (( i = 0; i < ${#pairs[@]}; i += 2 )); do
     ui_str_width "${pairs[i]}${pairs[i+1]}"; total=$(( total + _UI_W + 5 ))
   done
-  (( total > w )) && gap=1
+  if (( total > w )); then
+    gap=1
+    total=$(( total - ${#pairs[@]} / 2 ))
+    while (( total > w && di < ${#drop[@]} )); do
+      for (( i = 0; i < ${#pairs[@]}; i += 2 )); do
+        [[ "${pairs[i]}" == "${drop[di]}" ]] || continue
+        ui_str_width "${pairs[i]}${pairs[i+1]}"; total=$(( total - _UI_W - 4 ))
+        skip["${pairs[i]}"]=1
+      done
+      di=$(( di + 1 ))
+    done
+  fi
   printf -v sp "%*s" "$gap" ""
   for (( i = 0; i < ${#pairs[@]}; i += 2 )); do
     k="${pairs[i]}" lab="${pairs[i+1]}"
+    [[ -n "${skip[$k]:-}" ]] && continue
     ui_str_width "$k"; kw=$(( _UI_W + 2 ))
     ui_str_width "$lab"; lw=$_UI_W
     (( used + kw + 1 + lw + gap > w )) && break
@@ -705,6 +815,20 @@ _dash_compose_footer() {
   done
   _dash_blank $(( w - used ))
   _DASH_L="${out}${_UI_FIT}"
+}
+
+# 临时提示自动过期：提示出现 DASH_MSG_SECS 秒后清空，快捷键行恢复显示键位（按任意键也会清空，见 ui_dashboard_handle_key）
+# 参数：$1 当前时刻（秒）
+_dash_msg_expire() {
+  local now="$1"
+  if [[ -z "$_DASH_MSG" ]]; then
+    _DASH_MSG_SEEN=""
+  elif [[ "$_DASH_MSG" != "$_DASH_MSG_SEEN" ]]; then
+    _DASH_MSG_SEEN="$_DASH_MSG" _DASH_MSG_AT="$now"
+  elif (( now - _DASH_MSG_AT >= DASH_MSG_SECS )); then
+    _DASH_MSG="" _DASH_MSG_SEEN=""
+  fi
+  return 0
 }
 
 # 覆盖层（帮助/日志）：追加 height 行（框线含在内）
@@ -734,24 +858,6 @@ _dash_compose_wide() {
   local rows=$_DASH_ROWS w=$_DASH_W
   _dash_compose_info
 
-  local P=4
-  (( rows >= 32 )) && P=5
-  (( rows >= 36 )) && P=6
-  local ncat=${#_DASH_CAT_NAME[@]} maxitems=0 i
-  for (( i = 0; i < ncat; i++ )); do (( _DASH_CAT_LEN[i] > maxitems )) && maxitems=${_DASH_CAT_LEN[i]}; done
-  (( _DASH_SEARCH_MODE > 0 && ${#_DASH_LIST[@]} > maxitems )) && maxitems=${#_DASH_LIST[@]}
-  local need=$(( ncat + 2 ))
-  (( maxitems + 4 > need )) && need=$(( maxitems + 4 ))
-  local maxph=$(( rows - 3 - (P + 2) - 1 ))
-  local PH=$(( need + 2 ))
-  (( PH > maxph )) && PH=$maxph
-  # 预演已生成且条目较多时，用剩余行扩展预演框（保留 1 行空白 + 快捷键行）
-  if (( ${#_DASH_SEL[@]} > 0 && ${#_DASH_PLAN[@]} > P )) && _dash_sel_sig && [[ "$_DASH_SIG" == "$_DASH_PLAN_SIG" ]]; then
-    local pmax=$(( rows - 3 - PH - 2 - 2 ))
-    P=${#_DASH_PLAN[@]}
-    (( P > pmax )) && P=$pmax
-  fi
-
   if [[ -n "$_DASH_OVERLAY" ]]; then
     _dash_compose_overlay $(( rows - 3 - 1 ))
     _dash_compose_footer; _DASH_FRAME+=("$_DASH_L")
@@ -762,7 +868,23 @@ _dash_compose_wide() {
   (( _DASH_COLS >= 120 )) && LW=26
   local RW=$(( w - LW - 1 ))
   local LI=$(( LW - 4 )) RI=$(( RW - 4 ))
-  local C=$(( PH - 2 ))
+
+  # 行分配：双栏高度 = max(分类数 + 2, 表头 + 功能数 + 分隔线 + 详情)，随当前分类变化；
+  # 预演框最少 4~6 行（随终端高度），预演条目多时用剩余行扩展，必要时把双栏压到下限（列表滚动）
+  local pmin=4
+  (( rows >= 32 )) && pmin=5
+  (( rows >= 36 )) && pmin=6
+  local ncat=${#_DASH_CAT_NAME[@]} n=${#_DASH_LIST[@]}
+  _dash_detail_need "$RI"
+  local need=$(( ncat + 2 )) floor=$(( (ncat < 8 ? ncat : 8) + 2 ))
+  (( 2 + n + _DASH_DN > need )) && need=$(( 2 + n + _DASH_DN ))
+  (( 3 + (n < 5 ? n : 5) > floor )) && floor=$(( 3 + (n < 5 ? n : 5) ))
+  # 可分配行 = 总行数 - 信息框 3 - 两组边框 4 - 快捷键行 1 - 空行 1；放不下时让出空行
+  _dash_alloc_rows $(( rows - 9 )) "$need" "$floor" "$pmin" 0
+  if (( _DASH_BOX_C < need || _DASH_PLAN_P < _DASH_PW )); then
+    _dash_alloc_rows $(( rows - 8 )) "$need" "$floor" "$pmin" 0
+  fi
+  local C=$_DASH_BOX_C P=$_DASH_PLAN_P PH=$(( _DASH_BOX_C + 2 ))
 
   # 左栏
   local -a left=()
@@ -790,10 +912,13 @@ _dash_compose_wide() {
   local nsel=${#_DASH_SEL[@]}
   _dash_right_title
   _dash_box_top "$RW" "$_DASH_T" "已选 ${nsel} 项"; right+=("$_DASH_L")
-  local win=$(( C - 4 )) n=${#_DASH_LIST[@]}
+  # 双栏被压矮时先收详情行（最少 1 行），再让列表滚动
+  local dl=$_DASH_DN
+  while (( dl > 1 && C - 2 - dl < n )); do dl=$(( dl - 1 )); done
+  local win=$(( C - 2 - dl ))
   _dash_clamp_scroll "$win"
   local vis=$(( n - _DASH_SCROLL )); (( vis > win )) && vis=$win; (( vis < 0 )) && vis=0
-  _dash_detail_lines "$RI"
+  _dash_detail_lines "$RI" "$dl"
   local sep_row=$(( 1 + vis )) idx
   for (( r = 0; r < C; r++ )); do
     if (( r == 0 )); then
@@ -803,16 +928,9 @@ _dash_compose_wide() {
       _dash_item_line "${_DASH_LIST[$idx]}" "$RI"
       _dash_box_row "$RW" "$_DASH_C" $(( idx == _DASH_FOCUS && _DASH_PANE == 1 ? 1 : 0 ))
     elif (( r == sep_row )); then
-      local more=""
-      (( _DASH_SCROLL > 0 )) && more+="↑"
-      (( _DASH_SCROLL + vis < n )) && more+="↓"
-      ui_str_repeat "┄" $(( RI - ${#more} - (${#more} > 0 ? 1 : 0) ))
-      if [[ -n "$more" ]]; then _UI_FIT="${_UI_FIT} ${more}"; fi
-      _dash_box_row "$RW" "${_DC_BORDER}${_UI_FIT}${_DC_RESET}"
-    elif (( r == sep_row + 1 )); then
-      _dash_box_row "$RW" "$_DASH_D1"
-    elif (( r == sep_row + 2 )); then
-      _dash_box_row "$RW" "$_DASH_D2"
+      _dash_sep_line "$RI" "$vis" "$n"; _dash_box_row "$RW" "$_DASH_C"
+    elif (( r <= sep_row + dl )); then
+      _dash_box_row "$RW" "${_DASH_DETAIL[r - sep_row - 1]}"
     else
       _dash_blank "$RI"; _dash_box_row "$RW" "$_UI_FIT"
     fi
@@ -845,20 +963,32 @@ _dash_compose_narrow() {
   ui_str_fit " DebNAS ${DEBNAS_VERSION:-v3} · ${_SI_HOST} · CPU ${p1} 内存 ${p2} 根 ${p3} · 待更新 ${_SI_UPDATES:-…}" "$w"
   _DASH_FRAME+=("${_DC_ACC}${_UI_FIT}${_DC_RESET}")
 
-  local P=0
-  (( rows >= 20 )) && P=3
-  local boxh=$(( rows - 1 - 1 - (P > 0 ? P + 2 : 0) ))
-
   if [[ -n "$_DASH_OVERLAY" ]]; then
     _dash_compose_overlay $(( rows - 2 ))
     _dash_compose_footer; _DASH_FRAME+=("$_DASH_L")
     return 0
   fi
 
-  local C=$(( boxh - 2 )) r
-  local nsel=${#_DASH_SEL[@]}
+  # 行分配：上方列表框（分类/功能）与预演框共用 总行数 - 概况 1 - 快捷键 1 - 边框 行；
+  # 预演框最少 3 行（不足 20 行时不显示），预演条目多时扩展、把列表框压到"内容所需"乃至下限（列表滚动）；
+  # 未勾选/未预演时预演框保持最小，其余行归列表框
+  local pmin=0 C P=0 r need floor
+  (( rows >= 20 )) && pmin=3
+  local nsel=${#_DASH_SEL[@]} ncat=${#_DASH_CAT_NAME[@]} n=${#_DASH_LIST[@]}
   if (( _DASH_PANE == 0 )); then
-    local ncat=${#_DASH_CAT_NAME[@]} ci
+    need=$(( ncat + 1 )) floor=$(( (ncat < 5 ? ncat : 5) + 1 ))
+  else
+    _dash_detail_need "$inner"
+    need=$(( 2 + n + _DASH_DN )) floor=$(( 3 + (n < 5 ? n : 5) ))
+  fi
+  if (( pmin > 0 )); then
+    _dash_alloc_rows $(( rows - 6 )) "$need" "$floor" "$pmin" 1
+    C=$_DASH_BOX_C P=$_DASH_PLAN_P
+  else
+    C=$(( rows - 4 ))
+  fi
+  if (( _DASH_PANE == 0 )); then
+    local ci
     _dash_box_top "$w" "分类" "已选 ${nsel} 项"; _DASH_FRAME+=("$_DASH_L")
     local cwin=$(( C - 1 ))
     _dash_clamp_cscroll "$cwin"
@@ -877,10 +1007,13 @@ _dash_compose_narrow() {
   else
     _dash_right_title
     _dash_box_top "$w" "$_DASH_T" "已选 ${nsel} 项"; _DASH_FRAME+=("$_DASH_L")
-    local win=$(( C - 3 )) n=${#_DASH_LIST[@]} idx
+    # 列表框被压矮时先收详情行（最少 1 行），再让列表滚动
+    local dl=$_DASH_DN idx
+    while (( dl > 1 && C - 2 - dl < n )); do dl=$(( dl - 1 )); done
+    local win=$(( C - 2 - dl ))
     _dash_clamp_scroll "$win"
     local vis=$(( n - _DASH_SCROLL )); (( vis > win )) && vis=$win; (( vis < 0 )) && vis=0
-    _dash_detail_lines "$inner"
+    _dash_detail_lines "$inner" "$dl"
     for (( r = 0; r < C; r++ )); do
       if (( r == 0 )); then
         _dash_item_header "$inner"; _dash_box_row "$w" "$_DASH_C"
@@ -889,9 +1022,9 @@ _dash_compose_narrow() {
         _dash_item_line "${_DASH_LIST[$idx]}" "$inner"
         _dash_box_row "$w" "$_DASH_C" $(( idx == _DASH_FOCUS ? 1 : 0 ))
       elif (( r == vis + 1 )); then
-        ui_str_repeat "┄" "$inner"; _dash_box_row "$w" "${_DC_BORDER}${_UI_FIT}${_DC_RESET}"
-      elif (( r == vis + 2 )); then
-        _dash_box_row "$w" "$_DASH_D1"
+        _dash_sep_line "$inner" "$vis" "$n"; _dash_box_row "$w" "$_DASH_C"
+      elif (( r <= vis + 1 + dl )); then
+        _dash_box_row "$w" "${_DASH_DETAIL[r - vis - 2]}"
       else
         _dash_blank "$inner"; _dash_box_row "$w" "$_UI_FIT"
       fi
@@ -1404,7 +1537,7 @@ _dash_move() {
 ui_dashboard_handle_key() {
   local key="$1"
   [[ "$key" == "TIMEOUT" ]] && return 0
-  _DASH_MSG=""
+  _DASH_MSG="" _DASH_MSG_SEEN=""
 
   # 覆盖层：日志可滚动，其它键关闭
   if [[ -n "$_DASH_OVERLAY" ]]; then
@@ -1493,6 +1626,7 @@ ui_dashboard_init() {
   _DASH_CAT=0 _DASH_PANE=0 _DASH_FOCUS=0 _DASH_SCROLL=0 _DASH_CSCROLL=0
   _DASH_SEARCH_MODE=0 _DASH_QUERY="" _DASH_OVERLAY="" _DASH_MSG="" _DASH_QUIT=0
   _DASH_SEL=() _DASH_PLAN=() _DASH_PLAN_SIG=""
+  _DASH_MSG_SEEN="" _DASH_MSG_AT=0 _DASH_DN_KEY=""
   _dash_build_model || return 1
   # 默认停在第一个模块分类（一键部署仍是第一项）
   [[ "${_DASH_CAT_KIND[0]}" == "sol" && ${#_DASH_CAT_NAME[@]} -gt 1 ]] && _DASH_CAT=1
@@ -1531,6 +1665,7 @@ ui_dashboard_main() {
     _dash_read_key "$timeout"
     ui_dashboard_handle_key "$_DASH_KEY"
     now=${EPOCHSECONDS:-0}
+    _dash_msg_expire "$now"
     if (( now - _DASH_LAST_SAMPLE >= 2 )); then
       local with_disk=0
       (( now - _DASH_LAST_DISK >= 10 )) && { with_disk=1; _DASH_LAST_DISK=$now; }

@@ -96,9 +96,30 @@ ops_configure_logrotate() {
   fi
 }
 
+# 确保有登录记录数据源（报告"登录与身份审计"一节的来源）
+# - 已有 wtmpdb 或 last：什么都不做（Debian 12 自带 last）
+# - 都没有且为 Debian 13+：安装 wtmpdb 与 libpam-wtmpdb。libpam-wtmpdb 的 PAM 配置由包自带的
+#   pam-auth-update 配置（Default: yes）自动启用，不手改 /etc/pam.d，也不需要重启服务；
+#   sshd 自己写 wtmpdb（pam_wtmpdb 带 skip_if=sshd），PAM 模块负责本地终端、Cockpit 等其余登录
+# - 安装失败或无包可装：只告警，报告照常生成（登录一节显示"无登录数据源"）
+# 返回：始终 0
+ops_ensure_login_source() {
+  ops_login_source >/dev/null && return 0
+  if ! ops_login_source_installable; then
+    log_warning "未找到 last / wtmpdb，报告的登录统计将显示无登录数据源"
+    return 0
+  fi
+  log_info "未找到登录记录数据源，安装 wtmpdb libpam-wtmpdb（安装后才开始记录本地终端与 Cockpit 登录）"
+  if ! apt_install_packages wtmpdb libpam-wtmpdb || ! ops_login_source >/dev/null; then
+    log_warning "wtmpdb 安装失败，报告的登录统计将显示无登录数据源"
+  fi
+  return 0
+}
+
 ops_setup_enable() {
   ops_ensure_report_dirs || return 1
   ops_configure_sysstat
+  ops_ensure_login_source
   ops_configure_logrotate
   return 0
 }
