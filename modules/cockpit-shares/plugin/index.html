@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<!--
+DebNAS 共享管理（Cockpit 插件，纯静态文件，无构建步骤）
+
+样式说明：
+  Cockpit 自 2xx 起不再提供 base1/patternfly.css（Debian 12 backports 337、Debian 13 337/371
+  的 cockpit-bridge 中 base1/ 只有 cockpit.js 与翻译文件），各页面把 PatternFly 6 打包进自己的 CSS。
+  这里复用 Cockpit 自带「账户」页（cockpit-system 包，cockpit 元包必装）的 users.css 取得
+  PatternFly 6 组件样式、设计令牌、字体与深色主题；shares.css 补充本页自用布局，并在
+  PatternFly 6 样式不可用（如 Debian 12 主仓 cockpit 287 为 PatternFly 5）时提供兜底样式。
+-->
+<html lang="zh-CN" id="debnas-shares-page">
+<head>
+    <title>共享管理</title>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link href="../users/users.css" type="text/css" rel="stylesheet" />
+    <link href="../../static/branding.css" type="text/css" rel="stylesheet" />
+    <link href="shares.css" type="text/css" rel="stylesheet" />
+    <script src="../base1/cockpit.js"></script>
+    <script src="shares.js"></script>
+</head>
+<body class="pf-v6-m-tabular-nums">
+    <div class="ds-page" id="ds-root">
+        <noscript>需要启用 JavaScript。</noscript>
+    </div>
+</body>
+</html>

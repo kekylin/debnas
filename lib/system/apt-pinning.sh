@@ -4,46 +4,51 @@
 set -euo pipefail
 IFS=$'\n\t'
 
-# 获取库文件目录
-LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# 依赖: core/logging.sh, system/utils.sh（write_file_if_changed，由 bootstrap-core.sh 加载）
 
-# 加载核心模块
-source "$LIB_DIR/core/logging.sh"
-source "$LIB_DIR/system/utils.sh"
+# APT Pinning 配置目录（不设 readonly，允许测试覆盖）
+APT_PREFERENCES_DIR="${APT_PREFERENCES_DIR:-/etc/apt/preferences.d}"
 
-# APT Pinning 配置目录
-APT_PREFERENCES_DIR="/etc/apt/preferences.d"
+# 生成 backports 优先级文件内容（纯函数，不含时间戳，内容只由参数决定，保证幂等）
+# 参数：$1 - 系统代号；其余 - 包名模式（每个生成一个 Pin 块）
+# 输出：stdout 文件内容
+pinning_render() {
+  local os_codename="$1" pkg_group
+  shift
+  printf '%s\n' "# 优先从 backports 安装/更新" "# 系统版本: ${os_codename}"
+  for pkg_group in "$@"; do
+    printf 'Package: %s\nPin: release n=%s-backports\nPin-Priority: 500\n\n' "$pkg_group" "$os_codename"
+  done
+}
 
+# 写入 backports 优先级文件（内容未变则跳过；变化时经 write_file_if_changed 原子替换、集中备份并登记清单）
+# 用法: write_pinning_file <pinning_file> <os_codename> <packages_group_1> [<packages_group_2> ...]
+# 返回：0 已写入或内容未变，1 写入失败
 write_pinning_file() {
-  # 用法: write_pinning_file <pinning_file> <os_codename> <packages_group_1> [<packages_group_2> ...]
   local pinning_file="$1"
   local os_codename="$2"
   shift 2
+  local content rc=0
 
-  mkdir -p "${APT_PREFERENCES_DIR}"
-
-  {
-    echo "# 优先从 backports 安装/更新"
-    echo "# 配置时间: $(date '+%Y-%m-%d %H:%M:%S')"
-    echo "# 系统版本: ${os_codename}"
-    for pkg_group in "$@"; do
-      echo "Package: ${pkg_group}"
-      echo "Pin: release n=${os_codename}-backports"
-      echo "Pin-Priority: 500"
-      echo
-    done
-  } > "${pinning_file}"
-
-  chmod 644 "${pinning_file}"
+  content=$(pinning_render "$os_codename" "$@")
+  write_file_if_changed "$pinning_file" "$content" "644" 1 || rc=$?
+  if [[ "$rc" -eq 2 ]]; then
+    return 1
+  fi
+  return 0
 }
 
-# 写入 Cockpit 相关组件的 APT Pinning（始终覆盖为最新）
+# 写入 Cockpit 相关组件的 APT Pinning（始终从 backports 安装最新版）
 configure_cockpit_pinning() {
   local os_codename="$1"
   local pinning_file="${APT_PREFERENCES_DIR}/cockpit-backports.pref"
   write_pinning_file "${pinning_file}" "${os_codename}" \
-    "cockpit cockpit-*"
-  log_success "Cockpit APT Pinning 配置已写入: ${pinning_file}"
+    "cockpit" \
+    "cockpit-*" \
+    "pcp" \
+    "python3-pcp" \
+    "tuned" || return 1
+  log_success "Cockpit 源优先级已配置"
   return 0
 }
 
@@ -54,30 +59,38 @@ configure_component_pinning() {
   local packages="$3"
   local pinning_file="${APT_PREFERENCES_DIR}/${component}-backports.pref"
 
-  log_info "写入 ${component} APT Pinning 配置..."
-  write_pinning_file "${pinning_file}" "${os_codename}" "${packages}"
-  log_success "${component} APT Pinning 配置已写入: ${pinning_file}"
+  log_info "写入 ${component} 源优先级..."
+  write_pinning_file "${pinning_file}" "${os_codename}" "${packages}" || return 1
+  log_success "${component} 源优先级已配置"
   return 0
 }
 
 # 应用 APT Pinning 配置
 apply_pinning_config() {
-  log_info "正在应用 APT Pinning 配置..."
-  
+  log_info "应用源优先级..."
+
   if ! apt update; then
-    log_error "软件源更新失败，APT Pinning 配置可能未生效"
+    log_error "apt update 失败，源优先级可能未生效"
     return 1
   fi
-  
-  log_success "APT Pinning 配置已生效"
+
+  log_success "源优先级已生效"
   return 0
 }
 
-# 检查 APT Pinning 配置状态
+# 判断 APT Pinning 配置文件是否存在（只读、不打日志，供 module_status / module_plan 使用）
+# 参数：$1 - 配置文件路径
+# 返回：0 存在，1 不存在
+pinning_file_exists() {
+  [[ -f "${1:-}" ]]
+}
+
+# 检查 APT Pinning 配置状态（带日志）
+# deprecated：只读判断请用 pinning_file_exists（本函数会输出 INFO/WARN 日志）
 check_pinning_status() {
   local pinning_file="$1"
-  
-  if [[ -f "${pinning_file}" ]]; then
+
+  if pinning_file_exists "${pinning_file}"; then
     log_info "APT Pinning 配置文件存在: ${pinning_file}"
     return 0
   else
@@ -89,35 +102,10 @@ check_pinning_status() {
 # 清理 APT Pinning 配置
 cleanup_pinning_config() {
   local pinning_file="$1"
-  
-  if [[ -f "${pinning_file}" ]]; then
-    rm -f "${pinning_file}"
-    log_info "已清理 APT Pinning 配置: ${pinning_file}"
-    return 0
-  fi
-  
-  return 0
-}
 
-# 显示所有 APT Pinning 配置状态
-show_all_pinning_status() {
-  log_info "检查所有 APT Pinning 配置状态..."
-  
-  local found_configs=0
-  
-  for config_file in "${APT_PREFERENCES_DIR}"/*.pref; do
-    if [[ -f "${config_file}" ]]; then
-      echo "配置文件: ${config_file}"
-      echo "内容预览:"
-      head -5 "${config_file}" | sed 's/^/  /'
-      echo ""
-      found_configs=$((found_configs + 1))
-    fi
-  done
-  
-  if [[ $found_configs -eq 0 ]]; then
-    log_info "未发现任何 APT Pinning 配置文件"
-  else
-    log_info "共发现 ${found_configs} 个 APT Pinning 配置文件"
+  if [[ -n "${pinning_file}" && -f "${pinning_file}" ]]; then
+    rm -f -- "${pinning_file}"
+    log_info "已清理 APT Pinning 配置: ${pinning_file}"
   fi
+  return 0
 }

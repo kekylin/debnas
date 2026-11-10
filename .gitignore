@@ -1,22 +1,30 @@
-# 忽略敏感配置文件
+# 敏感配置
 config/.env
 
-# 忽略临时文件和备份
+# 临时文件
 *.bak
 *.swp
 *.tmp
 *.log
 tmp/
 
-# 忽略系统和编辑器文件
+# 系统文件
 .DS_Store
 Thumbs.db
+
+# 项目开发文件（不入库，减少用户下载体积）
+CLAUDE.md
+docs/
+tests/
+
+# 开发工具 / IDE 配置（不入库）
+.claude/
+.cursor/
 .idea/
 .vscode/
-
-# 忽略开发环境和文档目录
-.cursor/
-.github/
 devdocs/
-docs/
 old-projects/
+
+
+# 发布产物（tools/release.sh 输出，不入库）
+dist/

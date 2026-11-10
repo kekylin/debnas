@@ -1,25 +1,66 @@
 #!/bin/bash
-# 功能：DebNAS 公共模块加载入口，统一 set/IFS/常用库加载
+# bootstrap.sh — DebNAS 统一库加载入口
+# 加载全部库文件（含 bootstrap-core.sh + 所有 system/ 库）
+# 所有 bin/ 入口脚本和 modules/ 模块统一使用此文件
 
 set -euo pipefail
 IFS=$'\n\t'
 
-# 获取脚本根目录
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-
-# 加载核心常量、日志、依赖、工具库
-source "${SCRIPT_DIR}/lib/core/constants.sh"
-source "${SCRIPT_DIR}/lib/core/logging.sh"
-source "${SCRIPT_DIR}/lib/system/dependency.sh"
-source "${SCRIPT_DIR}/lib/system/utils.sh"
-source "${SCRIPT_DIR}/lib/system/urls.sh"
-
-# 可选加载 UI 组件
-if [[ -f "${SCRIPT_DIR}/lib/ui/menu.sh" ]]; then
-  source "${SCRIPT_DIR}/lib/ui/menu.sh"
-fi
-if [[ -f "${SCRIPT_DIR}/lib/ui/styles.sh" ]]; then
-  source "${SCRIPT_DIR}/lib/ui/styles.sh"
+# 防止重复加载
+if [[ "${_DEBNAS_BOOTSTRAPPED:-0}" -eq 1 ]]; then
+  return 0 2>/dev/null || true
 fi
 
-# 用法：在主脚本头部 source 本文件即可自动加载所有基础依赖
+# 获取项目根目录
+if [[ "${BASH_SOURCE[0]}" == */* ]]; then
+  DEBNAS_ROOT="$(cd "${BASH_SOURCE[0]%/*}/.." && pwd)"
+else
+  DEBNAS_ROOT="$(cd .. && pwd)"
+fi
+export DEBNAS_ROOT
+_DEBNAS_ROOT="$DEBNAS_ROOT"  # 向后兼容旧代码
+
+# ==================== 早期标志解析 ====================
+_parse_early_flags() {
+  local arg
+  for arg in "$@"; do
+    case "$arg" in
+      --cron)    export DEBNAS_CRON_MODE=1 ;;
+      --dry-run) export DEBNAS_DRY_RUN=1 ;;
+      --yes|-y)  export DEBNAS_FORCE_YES=1 ;;
+    esac
+  done
+}
+_parse_early_flags "$@"
+unset -f _parse_early_flags
+
+# ==================== 加载核心 + 基础系统库 ====================
+source "${_DEBNAS_ROOT}/lib/bootstrap-core.sh"
+
+# ==================== 扩展 System layer ====================
+source "${_DEBNAS_ROOT}/lib/system/args.sh"
+source "${_DEBNAS_ROOT}/lib/system/state.sh"
+source "${_DEBNAS_ROOT}/lib/system/feature.sh"
+source "${_DEBNAS_ROOT}/lib/system/cron.sh"
+source "${_DEBNAS_ROOT}/lib/system/config.sh"
+source "${_DEBNAS_ROOT}/lib/system/installer.sh"
+source "${_DEBNAS_ROOT}/lib/system/migration.sh"
+
+# ==================== UI layer（cron 模式下跳过） ====================
+if [[ "${DEBNAS_CRON_MODE:-0}" -eq 0 ]]; then
+  source "${_DEBNAS_ROOT}/lib/ui/styles.sh"
+  source "${_DEBNAS_ROOT}/lib/ui/header.sh"
+  source "${_DEBNAS_ROOT}/lib/ui/footer.sh"
+  source "${_DEBNAS_ROOT}/lib/ui/layout.sh"
+  source "${_DEBNAS_ROOT}/lib/ui/menu.sh"
+  source "${_DEBNAS_ROOT}/lib/ui/log.sh"
+  source "${_DEBNAS_ROOT}/lib/ui/progress.sh"
+  source "${_DEBNAS_ROOT}/lib/ui/dialog.sh"
+fi
+
+# ==================== Module Registry ====================
+source "${_DEBNAS_ROOT}/lib/system/module-registry.sh"
+source "${_DEBNAS_ROOT}/lib/system/module-probe.sh"
+
+# ==================== 完成标记 ====================
+_DEBNAS_BOOTSTRAPPED=1

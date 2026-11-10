@@ -1,0 +1,48 @@
+# DebNAS 全局默认配置
+# 此文件为默认模板，运行时配置存储在 /etc/debnas/debnas.conf
+# 安装时由 install.sh 复制到运行时目录
+
+# 网络环境: cn（国内镜像）或 global（国际镜像）
+region=cn
+
+# 界面语言: zh（中文）或 en（英文）
+lang=zh
+
+# 是否启用文件日志（0=禁用，1=启用）
+file_logging=1
+
+# ---- 安全相关开关（可选，取消注释后生效）----
+# 是否把首个普通用户加入 sudo 组（basic-tools，1=加入[默认]，0=不加入）
+#add_user_to_sudo=1
+# 是否把首个普通用户加入 docker 组（docker-ce，docker 组等同 root；1=加入[默认]，0=不加入）
+#add_user_to_docker=1
+# Cockpit 是否位于反向代理之后（1=信任 X-Forwarded-For/Proto 头；直连时请保持 0）
+#cockpit_behind_proxy=0
+# 登录邮件是否通过 ip-api.com（明文 HTTP，第三方）查询来源 IP 地理位置（1=启用，默认关闭）
+#login_mail_geoip=0
+# fail2ban 白名单（ignoreip）是否加入本机直连的私有网段（1=加入，默认 0=仅 127.0.0.1/8 与 ::1）
+# 加入后局域网内的设备爆破 SSH/Cockpit 不会被封；docker0、br-*、virbr*、lxcbr*、podman*、wg* 等虚拟/VPN 接口网段始终不加入
+#fail2ban_ignore_lan=0
+
+# ---- 文件共享管理界面（cockpit-shares 模块，一键方案默认包含）----
+# 二选一：debnas=DebNAS 自研「共享管理」插件[默认]；45drives=45Drives cockpit-file-sharing + cockpit-identities
+# 两者共用 Samba 注册表与 /etc/exports.d/cockpit-file-sharing.exports，切换后共享不丢失；不会同时安装
+file_sharing_ui=debnas
+# 是否安装 NFS 服务端 nfs-kernel-server（1=安装，0=不安装，留空=已安装则保持、交互时询问、非交互不装）
+file_sharing_nfs=
+
+# ---- 第三方软件源地址（留空=官方地址；可填可信镜像，公钥指纹仍按代码内固定值校验）----
+# 45Drives 仓库（cockpit-45drives），官方：https://repo.45drives.com/enterprise/debian
+repo_45drives_url=
+# 45Drives 公钥下载地址，官方：https://repo.45drives.com/key/gpg.asc
+repo_45drives_key_url=
+# Tailscale 仓库（tailscale），官方：https://pkgs.tailscale.com/stable/debian
+repo_tailscale_url=
+# Tailscale 公钥下载地址，官方：https://pkgs.tailscale.com/stable/debian/<系统代号>.noarmor.gpg
+repo_tailscale_key_url=
+
+# ---- 集中备份（write_file_if_changed 修改系统文件前备份到 /var/backups/debnas）----
+# 是否启用（1=启用[默认]，0=关闭）
+#backup_enabled=1
+# 保留最近多少次运行的备份目录（original/ 首次原件不受影响）
+#backup_keep=20
