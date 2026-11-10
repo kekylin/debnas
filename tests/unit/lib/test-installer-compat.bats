@@ -224,11 +224,12 @@ _run_cmd_update() {
 
 # ==================== 打包规则（.gitignore / .gitattributes / ci.yml） ====================
 
-@test "仓库: tests/ 与 docs/ 不再被 .gitignore 排除（CI 要跑 tests/run.sh），tests/reports/ 仍忽略" {
+@test "仓库: tests/ 不被 .gitignore 排除（CI 要跑 tests/run.sh）；docs/ 按项目约定不入库；tests/reports/ 仍忽略" {
   local gi="${DEBNAS_ROOT}/.gitignore"
   [[ -f "$gi" ]] || skip "发布包内没有 .gitignore"
-  run grep -cxE '(/)?(tests|docs)/?' "$gi"
+  run grep -cxE '(/)?tests/?' "$gi"
   [[ "$output" == "0" ]]
+  grep -qx 'docs/' "$gi"
   grep -qx 'tests/reports/' "$gi"
   grep -qx 'CLAUDE.md' "$gi"
 }
@@ -237,7 +238,7 @@ _run_cmd_update() {
   local ga="${DEBNAS_ROOT}/.gitattributes"
   [[ -f "$ga" ]] || skip "发布包内没有 .gitattributes"
   local p
-  for p in /tests /docs /tools /.github /.gitattributes /.gitignore; do
+  for p in /tests /tools /.github /.gitattributes /.gitignore; do
     grep -qE "^${p//./\\.}[[:space:]]+export-ignore$" "$ga"
   done
   # 部署目录与信任根不得被排除
