@@ -278,7 +278,7 @@ _nm_guard_run() {
           printf "%s\n" "uuid-auto:eth0:/run/NetworkManager/system-connections/Wired connection 1.nmconnection" \
             "uuid-user:eth0:/etc/NetworkManager/system-connections/mine.nmconnection" \
             "uuid-docker:docker0:/run/NetworkManager/system-connections/docker0.nmconnection" ;;
-        *"DHCP4.OPTION device show eth0"*) printf "DHCP4.OPTION[1]:dhcp_lease_time = 7200\nDHCP4.OPTION[2]:ip_address = 10.1.1.19\n" ;;
+        *"DHCP4.OPTION device show eth0"*) printf "DHCP4.OPTION[1]:dhcp_lease_time = 7200\nDHCP4.OPTION[2]:ip_address = 10.9.9.19\n" ;;
         *"-f UUID connection show"*) printf "uuid-auto\nuuid-user\nuuid-docker\n" ;;
         *"connection delete uuid"*) echo "nmcli $*" >> "$T/calls" ;;
       esac
@@ -289,8 +289,8 @@ _nm_guard_run() {
       local IFS=" "
       case "$*" in
         *"addr show dev eth0"*)
-          printf "%s\n" "2: eth0    inet 10.1.1.17/24 metric 100 brd 10.1.1.255 scope global dynamic eth0\\       valid_lft 4073sec" \
-            "2: eth0    inet 10.1.1.19/24 brd 10.1.1.255 scope global ${IP_ADDR_FLAGS} eth0\\       valid_lft 4286sec" ;;
+          printf "%s\n" "2: eth0    inet 10.9.9.17/24 metric 100 brd 10.9.9.255 scope global dynamic eth0\\       valid_lft 4073sec" \
+            "2: eth0    inet 10.9.9.19/24 brd 10.9.9.255 scope global ${IP_ADDR_FLAGS} eth0\\       valid_lft 4286sec" ;;
         *"addr del"*) echo "ip $*" >> "$T/calls" ;;
       esac
     }
@@ -350,9 +350,9 @@ _NETWORKD_ETH0='  1 lo      loopback carrier    unmanaged
   # 只删 /run 下自动生成的连接，用户落盘的连接与其他网卡的连接不动
   grep -q 'connection delete uuid uuid-auto' "$NM_TMP/calls"
   ! grep -q 'uuid-user\|uuid-docker' "$NM_TMP/calls" || false
-  # 只删 NM 的地址，networkd 的 10.1.1.17 不动
-  grep -qx 'ip -4 addr del 10.1.1.19/24 dev eth0' "$NM_TMP/calls"
-  ! grep -q '10.1.1.17' "$NM_TMP/calls" || false
+  # 只删 NM 的地址，networkd 的 10.9.9.17 不动
+  grep -qx 'ip -4 addr del 10.9.9.19/24 dev eth0' "$NM_TMP/calls"
+  ! grep -q '10.9.9.17' "$NM_TMP/calls" || false
   # 不用 reload（运行中改 unmanaged 会把网卡 down 掉）
   ! grep -q 'reload' "$NM_TMP/calls" || false
   rm -rf "$NM_TMP"
@@ -378,7 +378,7 @@ _NETWORKD_ETH0='  1 lo      loopback carrier    unmanaged
 
 @test "cockpit: NM 的地址仍有连接在用时不删（避免断开连在该地址上的 SSH）" {
   _nm_guard_init connected
-  NETWORKD_LIST="$_NETWORKD_ETH0" SS_OUT="0 0 10.1.1.19:22 10.1.1.66:5555" run _nm_guard_run "$NM_TMP" 'configure_nm_networkd_guard'
+  NETWORKD_LIST="$_NETWORKD_ETH0" SS_OUT="0 0 10.9.9.19:22 10.9.9.66:5555" run _nm_guard_run "$NM_TMP" 'configure_nm_networkd_guard'
   [[ "$status" -eq 0 ]]
   [[ "$output" == *"仍有连接在使用"* ]]
   ! grep -q 'addr del' "$NM_TMP/calls" || false

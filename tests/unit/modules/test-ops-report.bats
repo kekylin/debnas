@@ -347,24 +347,24 @@ M
   [[ "$(grep -c '<td>-</td><td>-</td></tr>' <<< "$output")" -eq 1 ]]
 }
 
-# last -F（Debian 12 util-linux 2.38，10.1.1.7 实测输出）
+# last -F（Debian 12 util-linux 2.38，10.9.9.7 实测输出）
 LAST_D12_SAMPLE='guiuser  :0           :0               Tue Nov 10 00:50:02 2026   gone - no logout
 alonguse tty2                          Tue Nov 10 00:33:22 2026   gone - no logout
-dnadmin  web console  ::ffff:10.1.1.66 Tue Nov 10 00:16:42 2026 - Tue Nov 10 00:18:22 2026  (00:01)
-debnas   pts/0        10.1.1.66        Tue Nov 10 00:00:02 2026 - Tue Nov 10 00:08:22 2026  (00:08)
+dnadmin  web console  ::ffff:10.9.9.66 Tue Nov 10 00:16:42 2026 - Tue Nov 10 00:18:22 2026  (00:01)
+debnas   pts/0        10.9.9.66        Tue Nov 10 00:00:02 2026 - Tue Nov 10 00:08:22 2026  (00:08)
 root     tty1                          Mon Nov  9 23:26:42 2026 - Mon Nov  9 23:43:22 2026  (00:16)
 reboot   system boot  6.1.0-18-amd64   Mon Nov  9 20:23:22 2026   still running
 
 wtmp begins Mon Nov  9 20:23:22 2026'
 
-# wtmpdb last -F（Debian 13 wtmpdb 0.73，10.1.1.16 实测输出；-f 指定库文件时末行以文件路径开头）
-LAST_D13_SAMPLE='debnas   pts/0        10.1.1.66        Tue Nov 10 01:56:22 2026 - Tue Nov 10 01:56:23 2026  (00:00)
+# wtmpdb last -F（Debian 13 wtmpdb 0.73，10.9.9.16 实测输出；-f 指定库文件时末行以文件路径开头）
+LAST_D13_SAMPLE='debnas   pts/0        10.9.9.66        Tue Nov 10 01:56:22 2026 - Tue Nov 10 01:56:23 2026  (00:00)
 root     tty1                          Tue Nov 10 00:56:32 2026 - Tue Nov 10 00:58:12 2026  (00:01)
 debnas   tty2                          Mon Nov  9 23:56:32 2026 - still logged in          
-dnadmin  web console  ::ffff:10.1.1.66 Mon Nov  9 23:26:32 2026 - Mon Nov  9 23:43:12 2026  (00:16)
+dnadmin  web console  ::ffff:10.9.9.66 Mon Nov  9 23:26:32 2026 - Mon Nov  9 23:43:12 2026  (00:16)
 alonguse ssh          2001:db8:85a3::8 Mon Nov  9 23:18:12 2026 - Mon Nov  9 23:19:52 2026  (00:01)
 root     seat0        :0               Mon Nov  9 23:11:32 2026 - Mon Nov  9 23:13:12 2026  (00:01)
-svc                   10.1.1.9         Mon Nov  9 22:00:00 2026 - Mon Nov  9 22:00:05 2026  (00:00)
+svc                   10.9.9.9         Mon Nov  9 22:00:00 2026 - Mon Nov  9 22:00:05 2026  (00:00)
 reboot   system boot  6.12.115+deb13.1 Mon Nov  9 20:00:00 2026 - still running
 
 /tmp/w.db begins Mon Nov  9 20:00:00 2026'
@@ -379,8 +379,8 @@ login_parse() {
   [[ "${#lines[@]}" -eq 5 ]]
   [[ "${lines[0]}" == "guiuser|:0|local|Tue Nov 10 00:50:02 2026|00|2026-11-10" ]]
   [[ "${lines[1]}" == "alonguse|tty2|local|Tue Nov 10 00:33:22 2026|00|2026-11-10" ]]
-  [[ "${lines[2]}" == "dnadmin|web console|10.1.1.66|Tue Nov 10 00:16:42 2026|00|2026-11-10" ]]
-  [[ "${lines[3]}" == "debnas|pts/0|10.1.1.66|Tue Nov 10 00:00:02 2026|00|2026-11-10" ]]
+  [[ "${lines[2]}" == "dnadmin|web console|10.9.9.66|Tue Nov 10 00:16:42 2026|00|2026-11-10" ]]
+  [[ "${lines[3]}" == "debnas|pts/0|10.9.9.66|Tue Nov 10 00:00:02 2026|00|2026-11-10" ]]
   [[ "${lines[4]}" == "root|tty1|local|Mon Nov 9 23:26:42 2026|23|2026-11-09" ]]
 }
 
@@ -390,21 +390,21 @@ login_parse() {
   [[ "${#lines[@]}" -eq 7 ]]
   [[ "${lines[1]}" == "root|tty1|local|Tue Nov 10 00:56:32 2026|00|2026-11-10" ]]
   [[ "${lines[2]}" == "debnas|tty2|local|Mon Nov 9 23:56:32 2026|23|2026-11-09" ]]
-  [[ "${lines[3]}" == "dnadmin|web console|10.1.1.66|Mon Nov 9 23:26:32 2026|23|2026-11-09" ]]
+  [[ "${lines[3]}" == "dnadmin|web console|10.9.9.66|Mon Nov 9 23:26:32 2026|23|2026-11-09" ]]
   [[ "${lines[4]}" == "alonguse|ssh|2001:db8:85a3::8|Mon Nov 9 23:18:12 2026|23|2026-11-09" ]]
   [[ "${lines[5]}" == "root|seat0|local|Mon Nov 9 23:11:32 2026|23|2026-11-09" ]]
-  [[ "${lines[6]}" == "svc||10.1.1.9|Mon Nov 9 22:00:00 2026|22|2026-11-09" ]]
+  [[ "${lines[6]}" == "svc||10.9.9.9|Mon Nov 9 22:00:00 2026|22|2026-11-09" ]]
   [[ "$output" != *"begins"* && "$output" != *"reboot"* ]]
 }
 
 @test "ops-report: [F3] 不截断用户名的输出（-w）退回分词，web console 仍是一个终端名" {
   run login_parse 'alongusername_x tty2                          Tue Nov 10 00:33:22 2026   gone - no logout
 alongusername_x web console  2001:db8:85a3::8a2e:370:7334 Mon Nov  9 23:18:12 2026 - Mon Nov  9 23:19:52 2026  (00:01)
-alongusername_x pts/3        10.1.1.66 Mon Nov  9 22:18:12 2026 - Mon Nov  9 22:19:52 2026  (00:01)'
+alongusername_x pts/3        10.9.9.66 Mon Nov  9 22:18:12 2026 - Mon Nov  9 22:19:52 2026  (00:01)'
   [[ "$status" -eq 0 ]]
   [[ "${lines[0]}" == "alongusername_x|tty2|local|Tue Nov 10 00:33:22 2026|00|2026-11-10" ]]
   [[ "${lines[1]}" == "alongusername_x|web console|2001:db8:85a3::8a2e:370:7334|Mon Nov 9 23:18:12 2026|23|2026-11-09" ]]
-  [[ "${lines[2]}" == "alongusername_x|pts/3|10.1.1.66|Mon Nov 9 22:18:12 2026|22|2026-11-09" ]]
+  [[ "${lines[2]}" == "alongusername_x|pts/3|10.9.9.66|Mon Nov 9 22:18:12 2026|22|2026-11-09" ]]
 }
 
 @test "ops-report: [F3] 登录来源统计与最后活动时间不再出现 console / 错位的时间" {
@@ -422,8 +422,8 @@ alongusername_x pts/3        10.1.1.66 Mon Nov  9 22:18:12 2026 - Mon Nov  9 22:
     printf "%s\n" "$OPS_LOGIN_IP_LAST" | sort | paste -sd "," -' _ "$MODULE_DIR"
   [[ "$status" -eq 0 ]]
   [[ "${lines[0]}" == "N:5" ]]
-  [[ "${lines[1]}" == "10.1.1.66 2,local 3" ]]
-  [[ "${lines[2]}" == "10.1.1.66 Tue Nov 10 00:16:42 2026,local Tue Nov 10 00:50:02 2026" ]]
+  [[ "${lines[1]}" == "10.9.9.66 2,local 3" ]]
+  [[ "${lines[2]}" == "10.9.9.66 Tue Nov 10 00:16:42 2026,local Tue Nov 10 00:50:02 2026" ]]
 }
 
 # 生成假的 uname / dpkg-query：$1 目录 $2 uname -r $3 uname -v $4 dpkg-query 的行为（shell 片段，$pkg 为被查包名）
@@ -580,7 +580,7 @@ login_note() {
   run login_note "$p" 13
   [[ "$output" == *"SRC:wtmpdb"* && "$output" == *"NOTE:登录数据源（wtmpdb）可用，周期内没有登录记录。"*"此前的登录不会出现在报告里"* ]]
   # 有记录：不加说明
-  printf '#!/bin/sh\necho "debnas   pts/0        10.1.1.66        Tue Nov 10 01:56:22 2026 - Tue Nov 10 01:56:23 2026  (00:00)"\n' > "$p/wtmpdb"
+  printf '#!/bin/sh\necho "debnas   pts/0        10.9.9.66        Tue Nov 10 01:56:22 2026 - Tue Nov 10 01:56:23 2026  (00:00)"\n' > "$p/wtmpdb"
   run login_note "$p" 13
   [[ "$output" == *"SRC:wtmpdb"* && "${lines[1]}" == "NOTE:" ]]
   # 说明经 ops_html_escape 输出到登录一节
