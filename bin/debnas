@@ -231,12 +231,21 @@ cmd_update() {
 		if [[ -n "$want_tag" ]]; then
 			tag="$want_tag"
 		else
-			if ! tag=$(installer_latest_tag "$region" "$tmp_dir"); then
+			# 最新版本号优先取已签名的指针（main 分支 LATEST + LATEST.asc，用已安装的发布公钥验签）；
+			# 返回 2 = 指针存在但校验未通过，拒绝自动更新
+			local latest_rc=0
+			tag=$(installer_latest_tag "$region" "$tmp_dir" "$keyring" "$fpr") || latest_rc=$?
+			if [[ "$latest_rc" -eq 2 ]]; then
+				log_error "拒绝自动更新。确认来源可信后可用 --tag <版本> 指定版本（代码包仍校验发布签名）"
+				rm -rf -- "${tmp_dir:?}"
+				return 1
+			elif [[ "$latest_rc" -ne 0 ]]; then
 				log_error "无法获取最新发布版本号（网络不可达或维护者尚未发布签名版本），可用 --tag 指定"
 				rm -rf -- "${tmp_dir:?}"
 				return 1
 			fi
-			# 自动发现的版本号来自未签名的 install.sh，只允许升级不允许降级（显式 --tag 可降级）
+			# 自动发现的版本号只允许升级不允许降级（显式 --tag 可降级）：指针未签名时防伪造，
+			# 已签名时防重放旧指针
 			if [[ -n "$installed_tag" ]]; then
 				if [[ "$tag" == "$installed_tag" ]]; then
 					log_success "已是最新版本：${tag}"
@@ -288,6 +297,10 @@ cmd_update() {
 	# 在此直接调用 migration_run 永远检测不到版本变化，新版本的迁移步骤也不会被执行
 	if ! (unset _DEBNAS_BOOTSTRAPPED _DEBNAS_CORE_LOADED; bash -c 'source "$1/lib/bootstrap.sh" && migration_run' _ "/opt/debnas") 2>/dev/null; then
 		log_warning "版本迁移存在问题，请运行 debnas doctor 检查"
+	fi
+	# 刷新全局命令包装脚本：同样由"新代码"生成内容（旧版包装脚本或软链接在此被替换）
+	if ! (unset _DEBNAS_BOOTSTRAPPED _DEBNAS_CORE_LOADED; bash -c 'source "$1/lib/bootstrap.sh" && deploy_install_wrapper "$2" "$1"' _ "/opt/debnas" "/usr/local/bin/debnas") 2>/dev/null; then
+		log_warning "全局命令 /usr/local/bin/debnas 未能刷新，可重新执行 install.sh 修复"
 	fi
 	deploy_unlock
 
@@ -456,6 +469,11 @@ main() {
 	# 上次更新被中断（SIGKILL/断电）留下的部署残留：自动回滚或清理（锁被占用时跳过）
 	if [[ "$_DEBNAS_ROOT" == "/opt/debnas" ]]; then
 		deploy_recover "/opt/debnas" || true
+		# 全局命令包装脚本过期（或仍是旧版软链接）时换成当前版本的内容：执行更新的是旧代码，
+		# 旧版 update 不刷新包装脚本，升级后首次启动在这里补上；内容一致时不写
+		if [[ -e /usr/local/bin/debnas || -L /usr/local/bin/debnas ]]; then
+			deploy_install_wrapper "/usr/local/bin/debnas" "/opt/debnas" 2>/dev/null || true
+		fi
 	fi
 
 	# 获取剩余参数

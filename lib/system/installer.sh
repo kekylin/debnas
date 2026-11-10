@@ -17,11 +17,15 @@ readonly DEBNAS_RELEASE_CN_BASE="https://gitee.com/kekylin/debnas/releases/downl
 # 分支归档（仅 --unsigned 模式使用，内容不做任何校验）
 readonly DEBNAS_BRANCH_GLOBAL_BASE="https://github.com/kekylin/debnas/archive/refs/heads"
 readonly DEBNAS_BRANCH_CN_BASE="https://gitee.com/kekylin/debnas/repository/archive"
-# main 分支的 install.sh：仅用于读取其中的 DEBNAS_RELEASE_TAG（最新稳定版本号）。
-# 该文件本身不受签名保护，因此只采信其中的版本号字符串，代码内容仍由签名把关，
-# 且 cmd_update 对自动发现的版本做防降级检查。
-readonly DEBNAS_INSTALLER_GLOBAL_URL="https://github.com/kekylin/debnas/raw/main/install.sh"
-readonly DEBNAS_INSTALLER_CN_URL="https://gitee.com/kekylin/debnas/raw/main/install.sh"
+# main 分支 raw 地址：取"最新稳定版本"指针 LATEST（一行 tag）与其分离签名 LATEST.asc
+# （由 tools/release.sh --sign-latest 生成，用已安装目录 keys/ 中的发布公钥验签）
+readonly DEBNAS_RAW_GLOBAL_BASE="https://github.com/kekylin/debnas/raw/main"
+readonly DEBNAS_RAW_CN_BASE="https://gitee.com/kekylin/debnas/raw/main"
+# main 分支的 install.sh：LATEST / LATEST.asc 都取不到时（维护者尚未发布已签名指针）的回退来源，
+# 只读取其中的 DEBNAS_RELEASE_TAG。该文件不受签名保护，因此只采信版本号字符串，
+# 代码内容仍由签名把关，且 cmd_update 对自动发现的版本做防降级检查。
+readonly DEBNAS_INSTALLER_GLOBAL_URL="${DEBNAS_RAW_GLOBAL_BASE}/install.sh"
+readonly DEBNAS_INSTALLER_CN_URL="${DEBNAS_RAW_CN_BASE}/install.sh"
 # 发布公钥与主密钥指纹（安装目录内的可信副本，由 tools/release.sh --embed-key 生成）
 readonly DEBNAS_RELEASE_KEY_REL="keys/debnas-release.asc"
 readonly DEBNAS_RELEASE_FPR_REL="keys/debnas-release.fpr"
@@ -126,12 +130,63 @@ installer_download_branch() {
   fi
 }
 
-# 查询最新稳定版本号：读取 main 分支 install.sh 中的 DEBNAS_RELEASE_TAG
+# 校验已下载的"最新稳定版本"指针：LATEST.asc 须是发布密钥对 LATEST 的有效签名，LATEST 须恰为一行合法 tag
+# 参数：$1 - 含 LATEST 与 LATEST.asc 的目录  $2 - 二进制 keyring  $3 - 期望的主密钥指纹（逗号分隔）
+# 输出：tag；返回：0 通过，1 验签失败或内容无效
+installer_verify_latest() {
+  local dir="$1" keyring="$2" fprs="$3" tag
+  release_check_sig "${dir}/LATEST.asc" "${dir}/LATEST" "$keyring" "$fprs" "LATEST" || return 1
+  tag=$(< "${dir}/LATEST")
+  tag="${tag%$'\r'}"
+  if ! release_valid_tag "$tag"; then
+    _release_fail "LATEST 内容无效（应为一行发布版本号）"
+    return 1
+  fi
+  echo "$tag"
+}
+
+# 查询最新稳定版本号
+# 优先取 main 分支的 LATEST + LATEST.asc（同一来源取齐）并用已安装的发布公钥验签，通过才采用；
+# 两个文件都取不到时回退读取 main 分支 install.sh 中的 DEBNAS_RELEASE_TAG（未签名，告警）。
+# 两种来源的结果都只是"候选版本号"：调用方仍须做防降级检查，代码包仍须通过发布签名校验。
 # 参数：$1 - region  $2 - 临时工作目录
-# 输出：tag；返回：0 成功，1 失败
+#       $3 - 二进制 keyring  $4 - 期望的主密钥指纹（逗号分隔）；$3/$4 省略时只走回退办法
+# 输出：tag；返回：0 成功，1 取不到，2 已签名指针存在但校验未通过（调用方应拒绝自动更新）
 installer_latest_tag() {
-  local region="$1" workdir="$2"
+  local region="$1" workdir="$2" keyring="${3:-}" fprs="${4:-}"
   local file="${workdir}/install.sh.remote" tag
+  if [[ -n "$keyring" && -n "$fprs" ]]; then
+    local -a bases=("$DEBNAS_RAW_GLOBAL_BASE" "$DEBNAS_RAW_CN_BASE")
+    [[ "$region" == "cn" ]] && bases=("$DEBNAS_RAW_CN_BASE" "$DEBNAS_RAW_GLOBAL_BASE")
+    local base got=0 ptr="${workdir}/latest.d"
+    mkdir -p -- "$ptr" || return 1
+    for base in "${bases[@]}"; do
+      rm -f -- "${ptr:?}/LATEST" "${ptr:?}/LATEST.asc"
+      if wget -q --timeout=30 --tries=3 -O "${ptr}/LATEST" "${base}/LATEST" 2>/dev/null; then
+        if wget -q --timeout=30 --tries=3 -O "${ptr}/LATEST.asc" "${base}/LATEST.asc" 2>/dev/null; then
+          got=2
+          break
+        fi
+        got=1
+      fi
+    done
+    if (( got == 2 )); then
+      if tag=$(installer_verify_latest "$ptr" "$keyring" "$fprs"); then
+        rm -rf -- "${ptr:?}"
+        echo "$tag"
+        return 0
+      fi
+      rm -rf -- "${ptr:?}"
+      log_error "版本指针 LATEST 的签名校验未通过（文件可能被篡改）"
+      return 2
+    fi
+    rm -rf -- "${ptr:?}"
+    if (( got == 1 )); then
+      log_error "取到了版本指针 LATEST，但取不到它的签名 LATEST.asc，不予采用"
+      return 2
+    fi
+    log_warning "未取到已签名的版本指针（LATEST / LATEST.asc），回退读取 main 分支 install.sh 中的版本号（该来源未签名，只用于升级）"
+  fi
   if [[ "$region" == "cn" ]]; then
     installer_fetch "$file" "$DEBNAS_INSTALLER_CN_URL" "$DEBNAS_INSTALLER_GLOBAL_URL" || return 1
   else
@@ -186,6 +241,7 @@ installer_marker_write() {
 # >>> DEBNAS-RELEASE-VERIFY-BEGIN（单一来源：lib/system/installer.sh；install.sh 中的同名区块由 tools/release.sh 同步生成，勿手改）
 # 发布产物校验：debnas update（lib）与自包含引导脚本 install.sh 共用这一份代码。
 # 只依赖 bash、awk、coreutils（base64/sha256sum）与 gpgv；错误经 _release_fail 输出。
+# 换钥过渡期：keyring 可含新旧多把公钥，期望指纹为逗号分隔列表，任一把签的产物都能通过。
 
 # 输出校验错误：已加载 lib 日志时用 log_error；install.sh 不加载 lib，按其 [FAIL] 格式写 stderr
 _release_fail() {
@@ -219,23 +275,100 @@ release_discard() {
 
 # 把 ASCII armor 公钥（stdin）转换为 gpgv 可用的二进制 keyring
 # 纯 awk + coreutils base64 实现，不依赖 gpg 完整包（gpgv 不接受 armor 格式的 keyring）
+# 文本中可以有多个公钥块（换钥过渡期新旧两把并存），逐块解码后依次拼接
 # 参数：$1 - 输出 keyring 文件；stdin - armor 文本
-# 返回：0 成功；1 文本中没有恰好一个公钥块或解码失败
+# 返回：0 成功；1 文本中没有公钥块、块不完整或解码失败
 release_dearmor() {
-  local out="$1" body
-  # mawk 不支持 {n} 区间，CRC24 行（= 加 4 个 base64 字符）逐字符匹配
+  local out="$1" body line blk=""
+  # mawk 不支持 {n} 区间，CRC24 行（= 加 4 个 base64 字符）逐字符匹配；每块结束输出一行 "-" 作分隔
   body=$(awk '
-    /^-----BEGIN PGP PUBLIC KEY BLOCK-----/ { inblk = 1; n++; next }
-    /^-----END PGP PUBLIC KEY BLOCK-----/   { inblk = 0; next }
+    /^-----BEGIN PGP PUBLIC KEY BLOCK-----/ { if (inblk) bad = 1; inblk = 1; n++; next }
+    /^-----END PGP PUBLIC KEY BLOCK-----/   { if (!inblk) bad = 1; inblk = 0; print "-"; next }
     !inblk { next }
     { gsub(/[ \t\r]/, "") }
     /^=[A-Za-z0-9+\/][A-Za-z0-9+\/][A-Za-z0-9+\/][A-Za-z0-9+\/]$/ { next }
     /:/ { next }
     NF { print }
-    END { if (n != 1) exit 1 }') || return 1
+    END { if (n < 1 || inblk || bad) exit 1 }') || return 1
   [[ -n "$body" ]] || return 1
-  printf '%s\n' "$body" | base64 -d > "$out" 2>/dev/null || return 1
+  : > "$out" || return 1
+  while IFS= read -r line; do
+    if [[ "$line" != "-" ]]; then
+      blk+="${line}"$'\n'
+      continue
+    fi
+    [[ -n "$blk" ]] || return 1
+    printf '%s' "$blk" | base64 -d >> "$out" 2>/dev/null || return 1
+    blk=""
+  done <<<"$body"
   [[ -s "$out" ]]
+}
+
+# 规范化期望的签名者指纹（去空白、转大写）并校验格式，结果写入全局 _RELEASE_FPRS
+# 参数：$1 - 指纹（40/64 位十六进制；多个用逗号分隔）
+_release_norm_fprs() {
+  _RELEASE_FPRS="${1:-}"
+  _RELEASE_FPRS="${_RELEASE_FPRS//[[:space:]]/}"
+  _RELEASE_FPRS="${_RELEASE_FPRS^^}"
+  [[ "$_RELEASE_FPRS" =~ ^([0-9A-F]{40}|[0-9A-F]{64})(,([0-9A-F]{40}|[0-9A-F]{64}))*$ ]]
+}
+
+# gpgv 验证分离签名并核对签名者指纹（SHA256SUMS 与版本指针 LATEST 共用）
+# 参数：$1 - 签名文件（.asc）  $2 - 被签名的文件  $3 - 二进制 keyring（可含多把公钥）
+#       $4 - 期望的签名者主密钥指纹（逗号分隔的多个指纹任一匹配即通过）
+#       $5 - 错误信息里的文件显示名（默认取 $2 的文件名）
+# 返回：0 签名有效且签名者在期望指纹之内；1 其余情况
+release_check_sig() {
+  local sig="${1:-}" data="${2:-}" keyring="${3:-}" label="${5:-}" expected dir="."
+  [[ -n "$label" ]] || label="${data##*/}"
+  if ! _release_norm_fprs "${4:-}"; then
+    _release_fail "发布公钥指纹无效或未配置"
+    return 1
+  fi
+  expected="$_RELEASE_FPRS"
+  if [[ ! -s "$sig" || ! -s "$data" ]]; then
+    _release_fail "缺少 ${label} 或其签名文件"
+    return 1
+  fi
+  if [[ ! -s "$keyring" ]]; then
+    _release_fail "发布公钥 keyring 不存在: ${keyring}"
+    return 1
+  fi
+  if ! command -v gpgv >/dev/null 2>&1; then
+    _release_fail "缺少命令 gpgv（apt install gpgv）"
+    return 1
+  fi
+  # gpgv 只把含 / 的 --keyring 参数当作路径
+  [[ "$keyring" == /* ]] || keyring="${PWD}/${keyring}"
+  [[ "$data" == */* ]] && dir="${data%/*}"
+
+  # 临时 homedir，不读写任何用户 keyring
+  local work rc=0
+  work=$(mktemp -d "${dir}/.verify.XXXXXX") || return 1
+  gpgv --homedir "$work" --keyring "$keyring" --status-fd 3 "$sig" "$data" \
+    3>"${work}/status" 2>"${work}/stderr" || rc=$?
+
+  local bad signer
+  bad=$(awk '$1 == "[GNUPG:]" && $2 ~ /^(BADSIG|ERRSIG|EXPSIG|EXPKEYSIG|REVKEYSIG|NO_PUBKEY)$/ { print $2; exit }' "${work}/status")
+  # VALIDSIG <签名密钥指纹> ... <主密钥指纹>：任一与期望指纹（之一）相同即视为匹配
+  signer=$(awk -v want="$expected" 'BEGIN { n = split(want, w, ","); for (i = 1; i <= n; i++) ok[w[i]] = 1 }
+    $1 == "[GNUPG:]" && $2 == "VALIDSIG" {
+      a = toupper($3); b = toupper($NF)
+      if ((a in ok) || (b in ok)) { print (b in ok) ? b : a; found = 1; exit }
+      last = b
+    } END { if (!found && last != "") print "MISMATCH:" last }' "${work}/status")
+  if [[ "$rc" -ne 0 || -n "$bad" || -z "$signer" ]]; then
+    _release_fail "${label} 签名验证失败（gpgv 退出码 ${rc}${bad:+，${bad}}）"
+    sed 's/^/    gpgv: /' "${work}/stderr" >&2 || true
+    rm -rf -- "${work:?}"
+    return 1
+  fi
+  rm -rf -- "${work:?}"
+  if [[ "$signer" == MISMATCH:* ]]; then
+    _release_fail "签名者指纹不匹配：期望 ${expected}，实际 ${signer#MISMATCH:}"
+    return 1
+  fi
+  return 0
 }
 
 # 验证发布产物：先 gpgv 验签 SHA256SUMS 并核对签名者指纹，再 sha256sum -c 校验 tar 包
@@ -256,9 +389,7 @@ release_verify() {
 _release_verify_steps() {
   local dir="${1:-}" name="${2:-}" keyring="${3:-}" expected="${4:-}"
 
-  expected="${expected//[[:space:]]/}"
-  expected="${expected^^}"
-  if [[ ! "$expected" =~ ^([0-9A-F]{40}|[0-9A-F]{64})(,([0-9A-F]{40}|[0-9A-F]{64}))*$ ]]; then
+  if ! _release_norm_fprs "$expected"; then
     _release_fail "发布公钥指纹无效或未配置"
     return 1
   fi
@@ -273,55 +404,22 @@ _release_verify_steps() {
       return 1
     fi
   done
-  if [[ ! -s "$keyring" ]]; then
-    _release_fail "发布公钥 keyring 不存在: ${keyring}"
+  if ! command -v sha256sum >/dev/null 2>&1; then
+    _release_fail "缺少命令 sha256sum（apt install coreutils）"
     return 1
   fi
-  for f in gpgv sha256sum; do
-    if ! command -v "$f" >/dev/null 2>&1; then
-      _release_fail "缺少命令 ${f}（apt install gpgv coreutils）"
-      return 1
-    fi
-  done
-  # gpgv 只把含 / 的 --keyring 参数当作路径
-  [[ "$keyring" == /* ]] || keyring="${PWD}/${keyring}"
 
-  # 第 1 步：验签 SHA256SUMS（临时 homedir，不读写任何用户 keyring）
-  local work rc=0
-  work=$(mktemp -d "${dir}/.verify.XXXXXX") || return 1
-  gpgv --homedir "$work" --keyring "$keyring" --status-fd 3 \
-    "${dir}/SHA256SUMS.asc" "${dir}/SHA256SUMS" \
-    3>"${work}/status" 2>"${work}/stderr" || rc=$?
-
-  local bad signer
-  bad=$(awk '$1 == "[GNUPG:]" && $2 ~ /^(BADSIG|ERRSIG|EXPSIG|EXPKEYSIG|REVKEYSIG|NO_PUBKEY)$/ { print $2; exit }' "${work}/status")
-  # VALIDSIG <签名密钥指纹> ... <主密钥指纹>：任一与期望指纹（之一）相同即视为匹配
-  signer=$(awk -v want="$expected" 'BEGIN { n = split(want, w, ","); for (i = 1; i <= n; i++) ok[w[i]] = 1 }
-    $1 == "[GNUPG:]" && $2 == "VALIDSIG" {
-      a = toupper($3); b = toupper($NF)
-      if ((a in ok) || (b in ok)) { print (b in ok) ? b : a; found = 1; exit }
-      last = b
-    } END { if (!found && last != "") print "MISMATCH:" last }' "${work}/status")
-  if [[ "$rc" -ne 0 || -n "$bad" || -z "$signer" ]]; then
-    _release_fail "SHA256SUMS 签名验证失败（gpgv 退出码 ${rc}${bad:+，${bad}}）"
-    sed 's/^/    gpgv: /' "${work}/stderr" >&2 || true
-    rm -rf -- "${work:?}"
-    return 1
-  fi
-  if [[ "$signer" == MISMATCH:* ]]; then
-    _release_fail "签名者指纹不匹配：期望 ${expected}，实际 ${signer#MISMATCH:}"
-    rm -rf -- "${work:?}"
-    return 1
-  fi
+  # 第 1 步：验签 SHA256SUMS 并核对签名者指纹
+  release_check_sig "${dir}/SHA256SUMS.asc" "${dir}/SHA256SUMS" "$keyring" "$expected" "SHA256SUMS" || return 1
 
   # 第 2 步：只取 tar 包对应的那一行做 sha256sum -c（防止清单里其他条目干扰/路径穿越）
-  local hash
+  local hash work
   hash=$(awk -v n="$name" 'NF == 2 && ($2 == n || $2 == "*" n) { print $1 }' "${dir}/SHA256SUMS")
   if [[ ! "$hash" =~ ^[0-9a-f]{64}$ ]]; then
     _release_fail "SHA256SUMS 中没有（或有多条）${name} 的校验和"
-    rm -rf -- "${work:?}"
     return 1
   fi
+  work=$(mktemp -d "${dir}/.verify.XXXXXX") || return 1
   printf '%s  %s\n' "$hash" "$name" > "${work}/check"
   if ! (cd "$dir" && sha256sum --check --strict --status "${work}/check"); then
     _release_fail "SHA256 校验失败：${name} 与已签名的校验和不一致，文件可能被篡改"
@@ -335,7 +433,7 @@ _release_verify_steps() {
 
 # 把 ASCII armor 公钥文件转换为 gpgv 可用的二进制 keyring（不依赖 gpg 完整包）
 # 参数：$1 - armor 公钥文件  $2 - 输出 keyring 文件
-# 返回：0 成功；1 文件中没有恰好一个公钥块或解码失败
+# 返回：0 成功；1 文件中没有公钥块或解码失败（多个公钥块依次拼接，见 release_dearmor）
 installer_dearmor_key() {
   local armor_file="$1" out="$2"
   [[ -f "$armor_file" ]] || return 1
@@ -345,7 +443,8 @@ installer_dearmor_key() {
 # 从安装目录加载发布公钥（已安装的可信副本，不从网络获取）
 # 参数：$1 - 安装目录  $2 - 输出 keyring 文件
 # 输出：主密钥指纹；返回：0 成功，1 公钥/指纹缺失或无效
-# 指纹文件每行一个主密钥指纹（行内空格忽略，空行与 # 注释跳过）；多行用于密钥轮换，输出逗号分隔
+# 指纹文件每行一个主密钥指纹（行内空格忽略，空行与 # 注释跳过）；多行用于密钥轮换，输出逗号分隔；
+# 公钥文件相应含多个公钥块（tools/release.sh --embed-key <新公钥> --keep-old 生成）
 installer_load_release_key() {
   local install_dir="$1" out="$2" fpr="" line
   if [[ -f "${install_dir}/${DEBNAS_RELEASE_FPR_REL}" ]]; then
@@ -405,6 +504,7 @@ installer_deploy() {
 #       - rename 不改写正在执行的 bin/debnas 的 inode（原地覆写会让运行中的 bash 读到错位内容）；
 #       - 上游已删除的旧模块/文件随旧树一起移除。
 #       并发保护：deploy_lock 对 DEBNAS_UPDATE_LOCK（默认 /run/debnas-update.lock）加 flock。
+# 全局命令 /usr/local/bin/debnas 的包装脚本内容也在本区块（deploy_install_wrapper），安装与更新共用。
 
 # 部署输出：已加载 lib 日志时用 log_*；install.sh 不加载 lib，按其 [FAIL]/[WARNING]/[INFO] 格式写 stderr
 # 参数：$1 - error|warn|info  $2 - 消息
@@ -605,5 +705,48 @@ deploy_tree() {
   fi
   rm -rf -- "${old:?}"
   return 0
+}
+
+# 生成全局命令包装脚本（/usr/local/bin/debnas）的内容，写入全局变量 _DEPLOY_WRAPPER（不含末尾换行）
+# install.sh 与 debnas update 都经 deploy_install_wrapper 使用这一份内容
+# 参数：$1 - 安装目录
+_deploy_wrapper_build() {
+  local dir="${1%/}" q_dir q_old
+  printf -v q_dir '%q' "$dir"
+  printf -v q_old '%q' "${dir%/*}/.${dir##*/}.old"
+  printf -v _DEPLOY_WRAPPER '%s\n' \
+    '#!/bin/bash' \
+    '# DebNAS 全局命令入口（由 install.sh / debnas update 生成，勿手改）' \
+    '# 更新在两次 rename 之间被 SIGKILL/断电打断时安装目录会缺失：持锁把旧版本改回后再启动' \
+    "if [[ ! -e ${q_dir} && -d ${q_old} ]] && command -v flock >/dev/null 2>&1; then" \
+    "  flock -n \"\${DEBNAS_UPDATE_LOCK:-/run/debnas-update.lock}\" mv -T ${q_old} ${q_dir} \\" \
+    '    && echo "[WARNING] 检测到被中断的更新，已回滚到旧版本" >&2' \
+    'fi' \
+    "exec bash ${q_dir}/bin/debnas \"\$@\""
+  _DEPLOY_WRAPPER="${_DEPLOY_WRAPPER%$'\n'}"
+}
+
+# 写入/刷新全局命令包装脚本（内容已是最新时不写）
+# 同目录临时文件 + rename：目标是旧版本留下的软链接（指向 bin/debnas）时替换链接本身，
+# 不会顺着链接把 bin/debnas 改写成包装脚本
+# 参数：$1 - 包装脚本路径（/usr/local/bin/debnas）  $2 - 安装目录
+# 返回：0 已是最新或写入成功；1 失败
+deploy_install_wrapper() {
+  local bin="${1:-}" install_dir="${2:-}" tmp
+  [[ -n "$bin" && -n "$install_dir" ]] || return 1
+  _deploy_wrapper_build "$install_dir"
+  if [[ -f "$bin" && ! -L "$bin" && -x "$bin" && "$(< "$bin")" == "$_DEPLOY_WRAPPER" ]]; then
+    return 0
+  fi
+  if ! tmp=$(mktemp "${bin%/*}/.debnas-wrapper.XXXXXX" 2>/dev/null); then
+    _deploy_msg error "无法写入全局命令：${bin}"
+    return 1
+  fi
+  if printf '%s\n' "$_DEPLOY_WRAPPER" > "$tmp" && chmod 755 "$tmp" && mv -fT -- "$tmp" "$bin"; then
+    return 0
+  fi
+  rm -f -- "${tmp:?}"
+  _deploy_msg error "无法写入全局命令：${bin}"
+  return 1
 }
 # <<< DEBNAS-DEPLOY-END
