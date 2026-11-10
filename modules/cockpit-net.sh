@@ -92,6 +92,19 @@ _cnet_other_managers() {
   return 0
 }
 
+# 调用 cockpit 模块里"NetworkManager 不接管 systemd-networkd 网卡"的函数（子 shell 中加载，只取函数、不执行其 main）
+# 参数：$1 - 函数名（configure_nm_networkd_guard / _cockpit_nm_guard_plan / _cockpit_nm_guard_state）
+_cnet_cockpit_call() {
+  local mod="${SCRIPT_DIR}/modules/cockpit.sh"
+  [[ -r "$mod" ]] || return 0
+  (
+    DEBNAS_MODULE_ACTION=status
+    # shellcheck source=/dev/null
+    source "$mod"
+    "$1"
+  )
+}
+
 # 全部阻断项（ifupdown 静态/特殊指令 + netplan/networkd）
 _cnet_blockers() {
   _cnet_static_ifaces
@@ -134,6 +147,14 @@ module_status() {
   static=$(_cnet_blockers)
   if [[ -n "$static" ]]; then
     local first="${static%%$'\n'*}"
+    local guard
+    guard=$(_cnet_cockpit_call _cockpit_nm_guard_state 2>/dev/null) || guard=""
+    case "${guard%%|*}" in
+      conflict | unwritten-conflict)
+        echo "warn|网卡 ${guard#*|} 被 NetworkManager 与 systemd-networkd 同时管理（会多出一个 DHCP 地址）；执行本模块不切换，只让 NetworkManager 放开这些网卡"
+        return 0
+        ;;
+    esac
     echo "warn|存在 NetworkManager 无法安全接管的网络配置（${first}），执行时将跳过切换（网络保持原样）"
     return 0
   fi
@@ -191,6 +212,8 @@ module_plan() {
       [[ -n "$line" ]] && echo "risk|${line%%: *}|${line#*: }：执行时将告警并跳过切换（不报错、不做任何变更）"
     done <<< "$static"
     echo "info|处理方法|ifupdown 静态/特殊配置：先用 nmcli 或 Cockpit 建立等价连接并移除原配置；netplan/networkd 管理的系统（如云镜像）请勿切换，Cockpit 可直接只读查看网络"
+    # netplan/networkd 系统：跳过切换，但会让 NetworkManager 放开 networkd 已管理的网卡
+    [[ -z "$(_cnet_other_managers)" ]] || _cnet_cockpit_call _cockpit_nm_guard_plan 2>/dev/null || true
     return 0
   fi
   local changed=0 active
@@ -250,7 +273,10 @@ main() {
     while IFS= read -r line; do
       log_warning "  ${line}"
     done <<< "$other_managers"
-    log_info "此类系统无需执行本模块；如确需由 NetworkManager 接管，请先把 netplan 的 renderer 改为 NetworkManager 并 netplan apply，确认网络正常后再运行。"
+    # 不切换，但 NetworkManager 既已装上就会自己接管这些网卡（多出一个 DHCP 地址）：让它放开 networkd 管理的网卡
+    _cnet_cockpit_call configure_nm_networkd_guard || true
+    log_info "此类系统无需执行本模块；如确需由 NetworkManager 接管，请先删除 /etc/NetworkManager/conf.d/10-debnas-unmanaged.conf（如有）并 systemctl reload NetworkManager，"
+    log_info "再把 netplan 的 renderer 改为 NetworkManager 并 netplan apply，确认网络正常后再运行。"
     exit 0
   fi
 

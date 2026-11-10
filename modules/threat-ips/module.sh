@@ -43,9 +43,10 @@ check_services() {
     rc=1
   fi
   # cron：已安装但未运行时自动启动
+  # 用 pkg_is_installed 判断：dpkg -l 对"已知但未安装"（un/rc 状态）的包也返回 0，云镜像（无 cron）上会去启动不存在的服务而中止启用
   if service_is_active cron; then
     log_info "Cron 服务已在运行"
-  elif command -v cron &>/dev/null || dpkg -l cron &>/dev/null; then
+  elif command -v cron &>/dev/null || pkg_is_installed cron; then
     log_info "Cron 已安装但未运行，正在自动启动..."
     service_ensure cron started || rc=1
   else
@@ -280,7 +281,7 @@ module_plan() {
     echo "service|firewalld|启用时自动启动"
   fi
   echo "write|${CONFIG_FILE}|启用时写入威胁等级（直接覆盖，不另做备份）；禁用时删除"
-  echo "write|firewalld 永久配置|启用：建 IPSet ${IPSET_NAME_IPV4}/${IPSET_NAME_IPV6}（hash:net）并绑定到 ${ZONE} 区；禁用：解绑并删除（firewall-cmd --permanent，不另做备份）"
+  echo "write|firewalld 永久配置|启用：建 IPSet ${IPSET_NAME_IPV4}/${IPSET_NAME_IPV6}（hash:net）并绑定到 ${ZONE} 区；禁用：解绑并删除（firewall-cmd --permanent，不另做备份；ipsets/*.xml 与 zones/${ZONE}.xml 登记到文件清单）"
   echo "info|威胁情报|启用时联网下载 lists.ipthreat.net 列表（最多 ${MAX_IP_LIMIT} 条/协议族），执行时探测"
   echo "info|${WHITELIST_FILE}|白名单（若存在）、私有网段、本机地址及当前 SSH/登录来源不会被封禁"
   if [[ "$(cron_state threat-ips)" == "on" ]]; then
