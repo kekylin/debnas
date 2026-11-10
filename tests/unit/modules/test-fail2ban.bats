@@ -176,7 +176,7 @@ _f2b_lan() {
   cat > "$tmp/ip" <<'IP'
 #!/bin/sh
 cat <<'R'
-10.1.1.0/24 dev eth0 proto kernel scope link src 10.1.1.12
+10.9.9.0/24 dev eth0 proto kernel scope link src 10.9.9.12
 192.168.50.0/24 dev eth1 proto kernel scope link src 192.168.50.2
 172.17.0.0/16 dev docker0 proto kernel scope link src 172.17.0.1
 172.18.0.0/16 dev br-1a2b3c proto kernel scope link src 172.18.0.1
@@ -214,7 +214,7 @@ IP
 @test "fail2ban: fail2ban_ignore_lan=1 时加入直连私网段并排除虚拟/VPN 接口 (B5)" {
   run _f2b_lan 1
   [[ "$status" -eq 0 ]]
-  [[ "$output" == "ignoreip = 127.0.0.1/8 ::1 10.1.1.0/24 192.168.50.0/24" ]]
+  [[ "$output" == "ignoreip = 127.0.0.1/8 ::1 10.9.9.0/24 192.168.50.0/24" ]]
 }
 
 @test "fail2ban: debnas.conf.default 注释说明 fail2ban_ignore_lan (B5)" {

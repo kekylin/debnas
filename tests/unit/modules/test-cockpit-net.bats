@@ -276,7 +276,7 @@ _contract_plan_ok() {
   tmp=$(mktemp -d)
   mkdir -p "$tmp/interfaces.d" "$tmp/more"
   printf 'auto lo\niface lo inet loopback\nsource interfaces.d/*\nsource-directory %s/more\n' "$tmp" > "$tmp/interfaces"
-  printf 'source %s/interfaces\niface eth0 inet static\n  address 10.1.1.5/24\n' "$tmp" > "$tmp/interfaces.d/eth0"
+  printf 'source %s/interfaces\niface eth0 inet static\n  address 10.9.9.5/24\n' "$tmp" > "$tmp/interfaces.d/eth0"
   printf 'iface br0 inet dhcp\n  bridge_ports eth1\n' > "$tmp/more/br0"
   printf 'iface eth9 inet static\n' > "$tmp/more/skip.conf"
   run _contract_probe eval /dev/null "
