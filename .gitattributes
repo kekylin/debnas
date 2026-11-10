@@ -6,7 +6,6 @@
 # ⚠️ CI 必须用 git 检出（先装 git 再 actions/checkout）：没有 git 时 checkout 改用平台归档接口，
 #    归档同样受 export-ignore 影响，tests/ 会不在工作区里。
 /tests          export-ignore
-/docs           export-ignore
 /tools          export-ignore
 /.github        export-ignore
 /.gitattributes export-ignore

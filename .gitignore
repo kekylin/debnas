@@ -13,10 +13,10 @@ tmp/
 Thumbs.db
 
 # 项目开发文件（不入库）
-# tests/、docs/ 需要入库（CI 要跑 tests/run.sh、tests/check.sh）；发布包体积由 .gitattributes 的
-# export-ignore 控制，不靠 .gitignore
 CLAUDE.md
-# 本地测试报告
+# 开发文档按项目约定不入库（只在维护者本地）
+docs/
+# tests/ 需要入库（CI 要跑 tests/run.sh、tests/check.sh）；发布包体积由 .gitattributes 的 export-ignore 控制
 tests/reports/
 
 # 开发工具 / IDE 配置（不入库）
