@@ -14,7 +14,9 @@
 
 ## [未发布]
 
-### Security（2026-11-10 跟进修复，分支 fix/followup-20261110）
+## [v2026.11.1] - 2026-11-10
+
+### Security
 - `debnas update` 的"最新版本号"改为**已签名的指针**：仓库根新增 `LATEST`（一行 tag）与 `LATEST.asc`（发布密钥的分离签名），update 从 main 分支取这两个文件，用已安装目录 `keys/` 里的公钥与指纹验签（与发布包同一套 `gpgv` 逻辑，抽成公共函数 `release_check_sig`），通过才采用。`LATEST` 取到但验签失败、或缺 `LATEST.asc` → 拒绝自动更新（仍可 `--tag` 指定版本，代码包照常验签）；两个文件都取不到（维护者尚未发布指针）→ 告警并回退读 main 分支 `install.sh` 的版本号。两种来源都保留"只升不降"。此前版本号直接读自未签名的 `install.sh`
 - 全局命令 `/usr/local/bin/debnas` 改为同目录临时文件 + rename 写入：旧安装里它是指向 `bin/debnas` 的软链接时，覆盖安装不再顺着链接把 `bin/debnas` 本身写成包装脚本
 

@@ -47,11 +47,11 @@ su -
 
 Gitee地址（国内用户推荐）
   ```shell
-wget https://gitee.com/kekylin/debnas/raw/v2026.11.0/install.sh && bash install.sh --region cn
+wget https://gitee.com/kekylin/debnas/raw/v2026.11.1/install.sh && bash install.sh --region cn
   ```
 Github地址
   ```shell
-wget https://github.com/kekylin/debnas/raw/v2026.11.0/install.sh && bash install.sh
+wget https://github.com/kekylin/debnas/raw/v2026.11.1/install.sh && bash install.sh
   ```
 - 项目在 Gitee 和 GitHub 同步维护，通过任一地址下载脚本均可使用
 - 不指定 `--region` 默认使用国际源（GitHub 优先，Gitee 备用）
