@@ -1,0 +1,16 @@
+# 发布包内容控制：以下路径不进入 git archive（tools/release.sh 生成的 debnas-<tag>.tar.gz，
+# 以及 GitHub / Gitee 的"下载源码"与分支归档），保持用户下载体积不变。
+# 安装/更新只部署 bin/ lib/ modules/ config/ compose/ keys/ 与 install.sh README.md LICENSE
+# （lib/system/installer.sh 的 deploy_tree），不依赖这里排除的任何路径。
+# ⚠️ keys/ 是 debnas update 的信任根，必须留在包里，不要加到这里。
+# ⚠️ CI 必须用 git 检出（先装 git 再 actions/checkout）：没有 git 时 checkout 改用平台归档接口，
+#    归档同样受 export-ignore 影响，tests/ 会不在工作区里。
+/tests          export-ignore
+/docs           export-ignore
+/tools          export-ignore
+/.github        export-ignore
+/.gitattributes export-ignore
+/.gitignore     export-ignore
+# 版本指针按 raw 地址单独获取；tag 内的副本指向上一个版本，放进包里只会误导
+/LATEST         export-ignore
+/LATEST.asc     export-ignore

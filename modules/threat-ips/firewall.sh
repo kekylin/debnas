@@ -350,6 +350,19 @@ remove_all_ips() {
 }
 
 
+# 把 firewall-cmd --permanent 写出的永久配置登记到文件清单（debnas files 可见）
+# 这些文件由 firewalld 自己写，不经 write_file_if_changed，只登记路径、不改写入方式；
+# 重复登记由 manifest_add 忽略；禁用后记录保留（清单约定：文件删除后显示"已不存在"）
+register_threat_manifest() {
+  declare -F manifest_add >/dev/null 2>&1 || return 0
+  local fw_dir="${_THREAT_FW_DIR:-/etc/firewalld}" f
+  for f in "${fw_dir}/ipsets/${IPSET_NAME_IPV4}.xml" "${fw_dir}/ipsets/${IPSET_NAME_IPV6}.xml" \
+    "${fw_dir}/zones/${ZONE}.xml"; do
+    [[ -f "$f" ]] && manifest_add "$f" "threat-ips"
+  done
+  return 0
+}
+
 filter_and_add_ips() {
   local temp_txt="$1" temp_file_ipv4="$2" temp_file_ipv6="$3"
   local need_reload=0
@@ -382,6 +395,7 @@ filter_and_add_ips() {
 
   sync_ipset_entries "${IPSET_NAME_IPV4}" "${temp_file_ipv4}" "IPv4" || return 1
   sync_ipset_entries "${IPSET_NAME_IPV6}" "${temp_file_ipv6}" "IPv6" || return 1
+  register_threat_manifest
   log_success "威胁 IP 列表已更新（未重载防火墙）"
 }
 

@@ -1,0 +1,742 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DebNAS 服务器运维报告 · 最近 7 天</title>
+  <style>
+    :root {
+      --bg: #FFFFFF;
+      --ink: #1D1D1F;
+      --muted: #6E6E73;
+      --subtle: #86868B;
+      --line: #E8E8ED;
+      --line-soft: #F5F5F7;
+      --accent: #0066CC;
+      --green: #1D7A36;
+      --amber: #D97706;
+      --red: #C7000B;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 0;
+      background: #F5F5F7;
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+      font-size: 13px;
+      line-height: 1.55;
+      -webkit-font-smoothing: antialiased;
+    }
+    .page {
+      max-width: 1080px;
+      margin: 24px auto;
+      background: var(--bg);
+    }
+    .header { padding: 40px 48px 24px; border-bottom: 1px solid var(--line); }
+    .header-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; }
+    .eyebrow { font-size: 11px; font-weight: 600; color: var(--muted); letter-spacing: .04em; }
+    h1 { margin: 8px 0 6px; font-size: 28px; font-weight: 600; line-height: 1.2; letter-spacing: 0; color: var(--ink); }
+    .header-sub { font-size: 13px; color: var(--muted); }
+    .header-meta { display: flex; gap: 32px; text-align: right; flex: none; }
+    .header-meta span { display: block; font-size: 11px; color: var(--subtle); }
+    .header-meta strong { display: block; margin-top: 4px; font-size: 13px; font-weight: 600; color: var(--ink); }
+    .content { padding: 32px 48px 40px; }
+    .content > h2:first-child { margin-top: 0; }
+    .week-overview { margin-top: 2px; }
+    .week-lead { display: grid; grid-template-columns: minmax(0, 1fr) 190px; gap: 32px; align-items: end; padding-bottom: 26px; }
+    .week-lead-copy { border-left: 3px solid var(--accent); padding-left: 16px; }
+    .week-kicker { font-size: 11px; font-weight: 600; color: var(--accent); letter-spacing: .06em; }
+    .week-lead-title { margin-top: 9px; max-width: 700px; font-size: 24px; font-weight: 600; line-height: 1.25; color: var(--ink); }
+    .week-lead-desc { margin: 7px 0 0; max-width: 700px; font-size: 13px; color: var(--muted); }
+    .week-availability { padding-left: 24px; border-left: 1px solid var(--line); }
+    .week-availability span { display: block; font-size: 11px; color: var(--subtle); }
+    .week-availability strong { display: block; margin-top: 4px; font-size: 24px; font-weight: 600; line-height: 1; color: var(--ink); }
+    .week-availability small { display: block; margin-top: 7px; font-size: 11px; color: var(--muted); }
+    .event-pulse { margin: 0; padding: 24px 0 20px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+    .event-pulse-head { display: flex; justify-content: space-between; gap: 24px; align-items: end; }
+    .event-pulse-label { font-size: 11px; font-weight: 600; color: var(--accent); letter-spacing: .06em; }
+    .event-pulse h3 { margin: 7px 0 0; font-size: 15px; font-weight: 600; color: var(--ink); }
+    .event-pulse-plot { margin-top: 18px; }
+    .event-pulse-chart { display: block; width: 100%; height: auto; font-family: inherit; }
+    .event-pulse-chart .pulse-grid { stroke: var(--line-soft); stroke-dasharray: 3 5; vector-effect: non-scaling-stroke; }
+    .event-pulse-chart .pulse-baseline { stroke: var(--line); vector-effect: non-scaling-stroke; }
+    .event-pulse-chart .pulse-axis,
+    .event-pulse-chart .pulse-date { fill: var(--subtle); font-size: 11px; font-weight: 600; }
+    .event-pulse-chart .pulse-axis { font-size: 10px; }
+    .event-pulse-chart .pulse-curve { fill: none; stroke: var(--accent); stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+    .event-pulse-chart .pulse-guide { stroke: var(--line); stroke-dasharray: 2 3; vector-effect: non-scaling-stroke; }
+    .event-pulse-chart .pulse-node { fill: #C7C7CC; stroke: var(--bg); stroke-width: 2; vector-effect: non-scaling-stroke; }
+    .event-pulse-chart .pulse-node.maintenance { fill: var(--accent); }
+    .event-pulse-chart .pulse-node.low { fill: var(--subtle); }
+    .event-pulse-chart .pulse-node.warning { fill: var(--amber); }
+    .event-pulse-chart .pulse-node.critical { fill: var(--red); stroke-width: 2.5; }
+    .event-pulse-chart .pulse-callout { color: var(--accent); }
+    .event-pulse-chart .pulse-callout.low { color: var(--subtle); }
+    .event-pulse-chart .pulse-callout.warning { color: var(--amber); }
+    .event-pulse-chart .pulse-callout.critical { color: var(--red); }
+    .event-pulse-chart .pulse-callout line { stroke: currentColor; stroke-width: 1; vector-effect: non-scaling-stroke; }
+    .event-pulse-chart .pulse-callout text { fill: currentColor; font-size: 12px; font-weight: 600; }
+    .week-focus { display: grid; grid-template-columns: 150px repeat(3, minmax(0, 1fr)); gap: 0; margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--line-soft); }
+    .week-focus-heading { padding-right: 20px; }
+    .week-focus-heading span { font-size: 11px; font-weight: 600; color: var(--subtle); }
+    .week-focus-heading p { margin: 4px 0 0; font-size: 11px; color: var(--muted); line-height: 1.45; }
+    .week-focus-item { display: flex; gap: 10px; align-items: flex-start; padding: 0 16px; border-left: 1px solid var(--line-soft); }
+    .week-focus-index { font-size: 11px; font-weight: 600; color: var(--subtle); }
+    .week-focus-item strong { display: block; font-size: 13px; font-weight: 600; color: var(--ink); }
+    .week-focus-item small { display: block; margin-top: 3px; font-size: 11px; line-height: 1.45; color: var(--muted); }
+    .section-lead { margin: -4px 0 16px; max-width: 760px; font-size: 13px; color: var(--muted); }
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; margin-top: 8px; }
+    .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 8px; }
+    .panel { border: 0; padding: 0; }
+    .network-summary,
+    .time-anomaly-panel,
+    .wide-table-panel { min-width: 0; }
+    .network-summary-table-wrap,
+    .wide-table-wrap { overflow-x: auto; }
+    .network-summary-table,
+    .time-anomaly-table,
+    .source-ip-table { font-size: 11px; }
+    .network-summary-table th,
+    .network-summary-table td,
+    .time-anomaly-table th,
+    .time-anomaly-table td,
+    .source-ip-table th,
+    .source-ip-table td { padding: 8px 6px; white-space: nowrap; }
+    h2 { margin: 40px 0 14px; font-size: 20px; font-weight: 600; color: var(--ink); }
+    h3 { margin: 22px 0 10px; font-size: 15px; font-weight: 600; color: var(--ink); }
+    .chart { width: 100%; height: auto; display: block; margin-top: 6px; }
+    .legend { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 8px; font-size: 11px; color: var(--subtle); }
+    .legend i { width: 8px; height: 8px; border-radius: 0; display: inline-block; margin-right: 5px; }
+    .legend-line { display: inline-block; width: 18px; height: 2px; margin-right: 5px; vertical-align: middle; }
+    .legend-line.solid { background: var(--accent); }
+    .legend-line.dash { border-top: 2px dashed #C7C7CC; height: 0; background: transparent; }
+    table { width: 100%; border-collapse: collapse; margin: 10px 0 16px; font-size: 13px; }
+    th { padding: 9px 12px; border-bottom: 1px solid var(--line); text-align: left; font-size: 11px; font-weight: 600; color: var(--subtle); }
+    td { padding: 10px 12px; border-bottom: 1px solid var(--line-soft); text-align: left; vertical-align: top; }
+    tr:last-child td { border-bottom: 0; }
+    .availability-summary tr:last-child td { border-bottom: 1px solid var(--line); }
+    .warn { color: var(--amber); font-weight: 600; }
+    .good { color: var(--ink); font-weight: 500; }
+    .bad { color: var(--red); font-weight: 600; }
+    .badge { display: inline-block; padding: 3px 10px; border: 1px solid var(--line); border-radius: 0; font-size: 11px; font-weight: 600; color: var(--ink); }
+    .badge-high { color: var(--red); border-color: #EAC5C7; }
+    .badge-medium { color: var(--amber); border-color: #F0D2C2; }
+    .badge-low { color: var(--muted); border-color: var(--line); }
+    .badge-clear { color: var(--muted); border-color: var(--line); }
+    .bar-track { height: 4px; background: var(--line-soft); border-radius: 2px; overflow: hidden; }
+    .bar-fill { height: 100%; }
+    .status-row { display: flex; gap: 36px; flex-wrap: wrap; margin-top: 10px; }
+    .chip { padding: 0; border: 0; background: transparent; font-size: 13px; color: var(--muted); min-width: 0; }
+    .chip strong { display: block; font-size: 20px; font-weight: 600; color: var(--ink); }
+    .metric-group { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-top: 10px; }
+    .metric-group.service-metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .metric-group .metric { padding: 0 0 10px; border: 0; }
+    .metric .k { font-size: 11px; color: var(--subtle); }
+    .metric .v { margin-top: 4px; font-size: 15px; font-weight: 600; color: var(--ink); }
+    ul { margin: 6px 0 12px; padding-left: 20px; }
+    .footer { padding: 20px 48px 24px; border-top: 1px solid var(--line); }
+    .footer-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; }
+    .footer-grid span { display: block; font-size: 11px; color: var(--subtle); }
+    .footer-grid strong { display: block; margin-top: 4px; font-size: 13px; font-weight: 600; color: var(--ink); }
+    .footer-note { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--line-soft); font-size: 11px; color: var(--subtle); }
+    @media (max-width: 860px) {
+      .header, .content, .footer { padding-left: 20px; padding-right: 20px; }
+      .header-top { flex-direction: column; }
+      .header-meta { text-align: left; gap: 18px; }
+      h1 { font-size: 24px; }
+      .week-lead { grid-template-columns: 1fr; gap: 18px; padding-bottom: 20px; }
+      .week-availability { display: grid; grid-template-columns: auto 1fr; column-gap: 12px; align-items: baseline; padding: 14px 0 0; border-top: 1px solid var(--line); border-left: 0; }
+      .week-availability strong { grid-column: 1; margin-top: 4px; }
+      .week-availability small { grid-column: 2; grid-row: 1 / span 2; margin: 0; }
+      .event-pulse-head { display: block; }
+      .week-focus { grid-template-columns: 1fr; gap: 14px; }
+      .week-focus-heading { padding-right: 0; }
+      .week-focus-item { padding: 12px 0 0; border-top: 1px solid var(--line-soft); border-left: 0; }
+      .metric { border-right: 0; border-bottom: 1px solid var(--line); padding: 20px 0; }
+      .metric-group { grid-template-columns: 1fr 1fr; }
+      .footer-grid { grid-template-columns: 1fr 1fr; }
+      .grid-2, .grid-3 { grid-template-columns: 1fr; }
+      .network-summary-table,
+      .time-anomaly-table { min-width: 430px; }
+      .wide-table { width: max-content; min-width: 100%; }
+      .wide-table th,
+      .wide-table td { white-space: nowrap; }
+    }
+    @media (max-width: 620px) {
+      .event-pulse-plot { overflow-x: auto; padding-bottom: 8px; }
+      .event-pulse-chart { min-width: 720px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <div class="header">
+      <div class="header-top">
+        <div>
+          <div class="eyebrow">DebNAS Server Ops Report</div>
+          <h1>服务器运维报告</h1>
+        </div>
+        <div class="header-meta">
+          <div><span>报告周期</span><strong>2026-07-29 ~ 2026-08-04</strong></div>
+        </div>
+      </div>
+      <div class="header-sub">debnas · 192.168.1.10</div>
+    </div>
+
+    <div class="content">
+      <h2>1. 本周概览</h2>
+      <section class="week-overview" aria-labelledby="week-overview-title">
+        <div class="week-lead">
+          <div class="week-lead-copy">
+            <div class="week-kicker">WEEKLY NARRATIVE · 31</div>
+            <div id="week-overview-title" class="week-lead-title">前半周保持平稳，周末出现两个需要确认的信号。</div>
+            <p class="week-lead-desc">周期可用性 99.95%，未发现入侵迹象；一次凌晨登录与 /dev/sdc 的持续增长，让本周在收尾时进入待处理状态。</p>
+          </div>
+          <div class="week-availability">
+            <span>周期可用性</span>
+            <strong>99.95%</strong>
+            <small>167.85 / 168 小时在线</small>
+          </div>
+        </div>
+        <figure class="event-pulse" aria-labelledby="event-pulse-title">
+          <div class="event-pulse-head">
+            <div>
+              <div class="event-pulse-label">EVENT PULSE · 事件影响等级</div>
+              <h3 id="event-pulse-title">一周运行节奏</h3>
+            </div>
+          </div>
+          <div class="event-pulse-plot">
+            <svg xmlns="http://www.w3.org/2000/svg" class="event-pulse-chart" viewBox="0 0 960 310" role="img" aria-labelledby="event-pulse-svg-title event-pulse-svg-desc">
+              <title id="event-pulse-svg-title">最近七天事件脉冲</title>
+              <desc id="event-pulse-svg-desc">纵轴表示事件影响等级，不等同于第 2 章风险评级。07-31 计划维护，08-01 负载峰值，08-02 出现凌晨登录与磁盘 I/O 事件，08-04 有低风险更新待装。</desc>
+
+              <line class="pulse-baseline" x1="68" y1="220" x2="902" y2="220"/>
+              <line class="pulse-grid" x1="68" y1="148" x2="902" y2="148"/>
+              <line class="pulse-grid" x1="68" y1="76" x2="902" y2="76"/>
+              <g class="pulse-axis" text-anchor="end">
+                <text x="52" y="224">低</text>
+                <text x="52" y="152">中</text>
+                <text x="52" y="80">高</text>
+              </g>
+
+              <path class="pulse-curve" d="M80 220 H216 C262 220 304 205 352 148 S442 205 488 184 S572 125 624 76 S714 206 760 220 C820 220 850 220 896 220"/>
+              <g class="pulse-guide">
+                <line x1="352" y1="220" x2="352" y2="148"/>
+                <line x1="488" y1="220" x2="488" y2="184"/>
+                <line x1="624" y1="220" x2="624" y2="76"/>
+              </g>
+
+              <g class="pulse-callout maintenance">
+                <line x1="352" y1="155" x2="352" y2="166"/>
+                <text x="352" y="184" text-anchor="middle">计划维护</text>
+              </g>
+              <g class="pulse-callout warning">
+                <line x1="488" y1="191" x2="488" y2="202"/>
+                <text x="488" y="220" text-anchor="middle">负载峰值</text>
+              </g>
+              <g class="pulse-callout critical">
+                <line x1="624" y1="69" x2="624" y2="60"/>
+                <text x="624" y="42" text-anchor="middle">凌晨登录</text>
+              </g>
+              <g class="pulse-callout warning">
+                <line x1="624" y1="153" x2="624" y2="164"/>
+                <text x="624" y="182" text-anchor="middle">磁盘 I/O 异常</text>
+              </g>
+              <g class="pulse-callout low">
+                <line x1="890" y1="214" x2="848" y2="186"/>
+                <text x="840" y="174" text-anchor="end">更新待装（低风险）</text>
+              </g>
+
+              <g>
+                <circle class="pulse-node maintenance" cx="352" cy="148" r="6"/>
+                <circle class="pulse-node warning" cx="488" cy="184" r="6"/>
+                <circle class="pulse-node critical" cx="624" cy="76" r="7"/>
+                <circle class="pulse-node warning" cx="624" cy="148" r="6"/>
+                <circle class="pulse-node low" cx="896" cy="220" r="6"/>
+              </g>
+
+              <g class="pulse-date" text-anchor="middle">
+                <text x="80" y="278">07-29</text>
+                <text x="216" y="278">07-30</text>
+                <text x="352" y="278">07-31</text>
+                <text x="488" y="278">08-01</text>
+                <text x="624" y="278">08-02</text>
+                <text x="760" y="278">08-03</text>
+                <text x="896" y="278">08-04</text>
+              </g>
+            </svg>
+          </div>
+        </figure>
+        <div class="week-focus">
+          <div class="week-focus-heading">
+            <span>重点跟进</span>
+            <p>从本周事件收束出的三项后续。</p>
+          </div>
+          <div class="week-focus-item">
+            <span class="week-focus-index">01</span>
+            <div><strong>存储容量</strong><small>/dev/sdc 77.5%，预计 72 天</small></div>
+          </div>
+          <div class="week-focus-item">
+            <span class="week-focus-index">02</span>
+            <div><strong>登录异常</strong><small>alice 凌晨登录待确认</small></div>
+          </div>
+          <div class="week-focus-item">
+            <span class="week-focus-index">03</span>
+            <div><strong>安全更新</strong><small>8 个安全更新待装</small></div>
+          </div>
+        </div>
+      </section>
+      <h2>2. 安全与入侵研判</h2>
+      <p class="section-lead">本周期高风险 0 · 中风险 2 · 低风险 1；未发现入侵迹象，1 项凌晨登录和 /dev/sdc 容量增长需要确认。</p>
+      <table>
+        <tr><th>研判项</th><th>风险等级</th><th>结论</th><th>说明</th></tr>
+        <tr><td>异常登录</td><td><span class="badge badge-medium">中风险</span></td><td class="warn">发现 1 项</td><td>alice 凌晨登录待确认</td></tr>
+        <tr><td>/dev/sdc 磁盘</td><td><span class="badge badge-medium">中风险</span></td><td class="warn">关注</td><td>使用率 77.5%；08-02 02:15 出现 67% 繁忙，周期内 1 次</td></tr>
+        <tr><td>安全更新</td><td><span class="badge badge-low">低风险</span></td><td class="warn">待装</td><td>8 个安全更新和 5 个常规更新待装；未发现已利用漏洞告警，已纳入下一维护窗口</td></tr>
+        <tr><td>CPU 持续高占用</td><td><span class="badge badge-clear">正常</span></td><td class="good">未发现</td><td>超过 80% 的最长持续时段不足 5 分钟</td></tr>
+        <tr><td>内存持续高占用</td><td><span class="badge badge-clear">正常</span></td><td class="good">未发现</td><td>峰值 81.4% 为短时，未形成持续压力</td></tr>
+        <tr><td>网络异常出站流量</td><td><span class="badge badge-clear">正常</span></td><td class="good">未发现</td><td>发送流量日均 11.6 GB，无突增时段</td></tr>
+        <tr><td>可疑程序</td><td><span class="badge badge-clear">正常</span></td><td class="good">未发现</td><td>周期平均高占用程序均为已知服务</td></tr>
+        <tr><td>新监听端口</td><td><span class="badge badge-clear">正常</span></td><td class="good">未发现</td><td>周期内无新增监听端口</td></tr>
+      </table>
+
+      <h2>3. 系统可用性</h2>
+      <p class="section-lead">周期可用性 99.95%，仅发生 1 次计划内重启，无意外停机。</p>
+      <table class="availability-summary">
+        <tr><th>周期可用性</th><td class="good">99.95%（在线 167.85 小时 / 168 小时）</td></tr>
+        <tr><th>内核</th><td>6.1.0-26-amd64，周期内未变化</td></tr>
+        <tr><th>重启/关机</th><td>1 次计划内重启（2026-07-31 03:00，系统更新后）</td></tr>
+        <tr><th>停机统计</th><td>计划内 1 次约 5 分钟 · 非计划 0 次 · 意外停电 0 次</td></tr>
+        <tr><th>系统负载</th><td>当前 0.41 / 0.36 / 0.28 · 峰值 0.72（2026-08-01 21:00）</td></tr>
+        <tr><th>OOM / 内核错误</th><td>0 次</td></tr>
+      </table>
+
+      <h3>本周期事件时间线</h3>
+      <table>
+        <tr><th>时间</th><th>事件</th><th>状态</th><th>影响</th></tr>
+        <tr><td>2026-07-31 03:00</td><td>系统更新后计划重启</td><td class="good">已完成</td><td>短暂停机约 5 分钟</td></tr>
+        <tr><td>2026-08-01 21:00</td><td>负载峰值 0.72</td><td>已观察</td><td>无服务影响</td></tr>
+        <tr><td class="warn">2026-08-02 02:18</td><td>alice 凌晨成功登录</td><td class="warn">处理中</td><td>安全事件，待确认</td></tr>
+        <tr><td class="warn">2026-08-04 01:00</td><td>发现 8 个安全更新待装</td><td class="warn">待处理</td><td>风险升高</td></tr>
+      </table>
+
+      <h2>4. 资源使用情况</h2>
+      <p class="section-lead">CPU 与内存处于健康区间，峰值均出现在维护窗口附近。</p>
+      <div class="grid-2">
+        <div class="panel">
+          <h3>CPU 使用率趋势</h3>
+          <svg xmlns="http://www.w3.org/2000/svg" class="chart" viewBox="0 0 480 190" role="img" aria-label="CPU 使用率趋势">
+            <line x1="48" y1="155" x2="455" y2="155" stroke="#D2D2D7"/>
+            <line x1="48" y1="120" x2="455" y2="120" stroke="#E8E8ED" stroke-dasharray="3 3"/>
+            <line x1="48" y1="85" x2="455" y2="85" stroke="#E8E8ED" stroke-dasharray="3 3"/>
+            <line x1="48" y1="50" x2="455" y2="50" stroke="#E8E8ED" stroke-dasharray="3 3"/>
+            <line x1="48" y1="15" x2="455" y2="15" stroke="#E8E8ED" stroke-dasharray="3 3"/>
+            <line x1="48" y1="155" x2="48" y2="15" stroke="#D2D2D7"/>
+            <path fill="none" stroke="#86868B" stroke-width="1.5" stroke-dasharray="5 4" stroke-linecap="round" stroke-linejoin="round" d="M48 135.4 C58.833 134.467 91.333 139.183 113 129.8 C134.667 120.417 156.333 79.567 178 79.1 C199.667 78.633 221.333 118.083 243 127 C264.667 135.917 286.333 132.133 308 132.6 C329.667 133.067 351.333 129.333 373 129.8 C394.667 130.267 427.167 134.467 438 135.4"/>
+            <path fill="none" stroke="#0066CC" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M48 138.2 C58.833 136.8 91.333 143.033 113 129.8 C134.667 116.567 156.333 59.267 178 58.8 C199.667 58.333 221.333 114.467 243 127 C264.667 139.533 286.333 134.467 308 134 C329.667 133.533 351.333 124.9 373 124.2 C394.667 123.5 427.167 128.867 438 129.8"/>
+            <circle cx="178" cy="58.8" r="3.5" fill="#0066CC"/>
+            <text x="186" y="53" fill="#0066CC" font-size="11" font-weight="700">68.7%</text>
+            <g fill="#86868B" font-size="11" text-anchor="end">
+              <text x="43" y="158">0%</text><text x="43" y="123">25%</text>
+              <text x="43" y="88">50%</text><text x="43" y="53">75%</text><text x="43" y="18">100%</text>
+            </g>
+            <g fill="#86868B" font-size="11">
+              <text x="48" y="173">07-29</text><text x="113" y="173">07-30</text><text x="178" y="173">07-31</text>
+              <text x="243" y="173">08-01</text><text x="308" y="173">08-02</text><text x="373" y="173">08-03</text><text x="438" y="173">08-04</text>
+            </g>
+          </svg>
+          <div class="legend"><span><i class="legend-line solid"></i>本周期 CPU 平均 24.3% · 峰值 68.7%</span><span><i class="legend-line dash"></i>上一周期平均 22.1% · 峰值 54.2%</span></div>
+        </div>
+        <div class="panel">
+          <h3>内存使用率趋势</h3>
+          <svg xmlns="http://www.w3.org/2000/svg" class="chart" viewBox="0 0 480 190" role="img" aria-label="内存使用率趋势">
+            <line x1="48" y1="155" x2="455" y2="155" stroke="#D2D2D7"/>
+            <line x1="48" y1="120" x2="455" y2="120" stroke="#E8E8ED" stroke-dasharray="3 3"/>
+            <line x1="48" y1="85" x2="455" y2="85" stroke="#E8E8ED" stroke-dasharray="3 3"/>
+            <line x1="48" y1="50" x2="455" y2="50" stroke="#E8E8ED" stroke-dasharray="3 3"/>
+            <line x1="48" y1="15" x2="455" y2="15" stroke="#E8E8ED" stroke-dasharray="3 3"/>
+            <line x1="48" y1="155" x2="48" y2="15" stroke="#D2D2D7"/>
+            <path fill="none" stroke="#86868B" stroke-width="1.5" stroke-dasharray="5 4" stroke-linecap="round" stroke-linejoin="round" d="M48 87.8 C58.833 86.633 91.333 82.433 113 80.8 C134.667 79.167 156.333 83.033 178 78 C199.667 72.967 221.333 51.067 243 50.6 C264.667 50.133 286.333 70.4 308 75.2 C329.667 80 351.333 78.233 373 79.4 C394.667 80.567 427.167 81.733 438 82.2"/>
+            <path fill="none" stroke="#0066CC" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M48 85 C58.833 84.067 91.333 81.033 113 79.4 C134.667 77.767 156.333 81.6 178 75.2 C199.667 68.8 221.333 42.167 243 41 C264.667 39.833 286.333 62.733 308 68.2 C329.667 73.667 351.333 73.333 373 73.8 C394.667 74.267 427.167 71.467 438 71"/>
+            <circle cx="243" cy="41" r="3.5" fill="#0066CC"/>
+            <text x="250" y="35" fill="#0066CC" font-size="11" font-weight="700">81.4%</text>
+            <g fill="#86868B" font-size="11" text-anchor="end">
+              <text x="43" y="158">0%</text><text x="43" y="123">25%</text>
+              <text x="43" y="88">50%</text><text x="43" y="53">75%</text><text x="43" y="18">100%</text>
+            </g>
+            <g fill="#86868B" font-size="11">
+              <text x="48" y="173">07-29</text><text x="113" y="173">07-30</text><text x="178" y="173">07-31</text>
+              <text x="243" y="173">08-01</text><text x="308" y="173">08-02</text><text x="373" y="173">08-03</text><text x="438" y="173">08-04</text>
+            </g>
+          </svg>
+          <div class="legend"><span><i class="legend-line solid"></i>本周期内存平均 58.1% · 峰值 81.4%</span><span><i class="legend-line dash"></i>上一周期平均 56.0% · 峰值 74.6%</span></div>
+        </div>
+      </div>
+
+      <h3>Swap 使用</h3>
+      <table>
+        <tr><th>项目</th><th>当前</th><th>周期峰值</th></tr>
+        <tr><td>Swap</td><td>0 / 2.0 GB</td><td>0.2 GB</td></tr>
+      </table>
+
+      <h3>关键指标周期对比</h3>
+      <table>
+        <tr><th>指标</th><th>本周期</th><th>变化</th><th>上一周期</th></tr>
+        <tr><td>CPU 平均</td><td>24.3%</td><td class="warn">+2.2pp</td><td>22.1%</td></tr>
+        <tr><td>CPU 峰值</td><td>68.7%</td><td class="warn">+14.5pp</td><td>54.2%</td></tr>
+        <tr><td>内存平均</td><td>58.1%</td><td class="warn">+2.1pp</td><td>56.0%</td></tr>
+        <tr><td>内存峰值</td><td>81.4%</td><td class="warn">+6.8pp</td><td>74.6%</td></tr>
+        <tr><td>周期流量</td><td>299.8 GB</td><td class="warn">+8.4%</td><td>276.5 GB</td></tr>
+        <tr><td>成功登录</td><td>42 次</td><td>-17.6%</td><td>51 次</td></tr>
+        <tr><td>失败登录</td><td>37 次</td><td class="warn">+27.6%</td><td>29 次</td></tr>
+        <tr><td>更新包数</td><td>17 个</td><td>+41.7%</td><td>12 个</td></tr>
+      </table>
+
+      <h3>磁盘容量与 I/O 对比</h3>
+      <div class="grid-2">
+        <div class="panel">
+          <h3>磁盘容量使用率</h3>
+          <svg xmlns="http://www.w3.org/2000/svg" class="chart" viewBox="0 0 480 205" role="img" aria-label="磁盘容量使用情况">
+            <title>磁盘容量使用情况</title>
+            <line x1="112" y1="20" x2="112" y2="151" stroke="#D2D2D7"/>
+            <line x1="194.5" y1="20" x2="194.5" y2="151" stroke="#E8E8ED" stroke-dasharray="3 3"/>
+            <line x1="277" y1="20" x2="277" y2="151" stroke="#E8E8ED" stroke-dasharray="3 3"/>
+            <line x1="359.5" y1="20" x2="359.5" y2="151" stroke="#E8E8ED" stroke-dasharray="3 3"/>
+            <line x1="442" y1="20" x2="442" y2="151" stroke="#E8E8ED" stroke-dasharray="3 3"/>
+            <line x1="409" y1="14" x2="409" y2="151" stroke="#C7000B" stroke-dasharray="4 3"/>
+            <text x="409" y="11" text-anchor="middle" fill="#C7000B" font-size="10" font-weight="600">90%</text>
+            <g fill="#F5F5F7">
+              <rect x="112" y="39" width="330" height="8"/>
+              <rect x="112" y="79" width="330" height="8"/>
+              <rect x="112" y="119" width="330" height="8"/>
+            </g>
+            <rect x="112" y="39" width="163.68" height="8" fill="#0066CC"/>
+            <rect x="112" y="79" width="173.25" height="8" fill="#0066CC" opacity=".72"/>
+            <rect x="112" y="119" width="255.75" height="8" fill="#D97706"/>
+            <g fill="#1D1D1F" font-size="11" text-anchor="end">
+              <text x="102" y="47">sda · 238 GB</text>
+              <text x="102" y="87">sdb · 8.0 TB</text>
+              <text x="102" y="127">sdc · 4.0 TB</text>
+            </g>
+            <g fill="#1D1D1F" font-size="11" font-weight="600">
+              <text x="283" y="47">49.6%</text>
+              <text x="293" y="87">52.5%</text>
+            </g>
+            <text x="375" y="127" fill="#D97706" font-size="11" font-weight="600">77.5%</text>
+            <g fill="#86868B" font-size="11" text-anchor="middle">
+              <text x="112" y="174">0%</text><text x="194.5" y="174">25%</text><text x="277" y="174">50%</text>
+              <text x="359.5" y="174">75%</text><text x="442" y="174">100%</text>
+            </g>
+          </svg>
+          <div class="legend"><span><i style="background:#0066CC"></i>正常范围</span><span><i style="background:#D97706"></i>需要关注</span><span><i class="legend-line dash" style="border-color:#C7000B"></i>90% 阈值</span></div>
+        </div>
+        <div class="panel">
+          <h3>设备 I/O 对比 · 周期累计</h3>
+          <svg xmlns="http://www.w3.org/2000/svg" class="chart" viewBox="0 0 480 205" role="img" aria-label="设备 I/O 周期累计对比">
+            <title>设备 I/O 周期累计对比</title>
+            <text x="112" y="14" fill="#86868B" font-size="11">TB</text>
+            <text x="470" y="14" text-anchor="end" fill="#86868B" font-size="10">峰值繁忙度</text>
+            <line x1="112" y1="20" x2="112" y2="151" stroke="#D2D2D7"/>
+            <line x1="178" y1="20" x2="178" y2="151" stroke="#E8E8ED" stroke-dasharray="3 3"/>
+            <line x1="244" y1="20" x2="244" y2="151" stroke="#E8E8ED" stroke-dasharray="3 3"/>
+            <line x1="310" y1="20" x2="310" y2="151" stroke="#E8E8ED" stroke-dasharray="3 3"/>
+            <line x1="376" y1="20" x2="376" y2="151" stroke="#E8E8ED" stroke-dasharray="3 3"/>
+            <line x1="442" y1="20" x2="442" y2="151" stroke="#E8E8ED" stroke-dasharray="3 3"/>
+            <g fill="#1D1D1F" font-size="11" text-anchor="end">
+              <text x="102" y="47">sda</text><text x="102" y="93">sdb</text><text x="102" y="139">sdc</text>
+            </g>
+            <rect x="112" y="32" width="80.78" height="8" fill="#0066CC"/>
+            <rect x="112" y="45" width="12.67" height="8" fill="#86868B"/>
+            <rect x="112" y="78" width="316.80" height="8" fill="#0066CC"/>
+            <rect x="112" y="91" width="145.20" height="8" fill="#86868B"/>
+            <rect x="112" y="124" width="117.48" height="8" fill="#0066CC"/>
+            <rect x="112" y="137" width="55.44" height="8" fill="#86868B"/>
+            <g font-size="11" font-weight="600">
+              <text x="196.78" y="40" fill="#0066CC">612 GB</text>
+              <text x="128.67" y="53" fill="#86868B">96 GB</text>
+              <text x="432.8" y="80" fill="#0066CC">2.4 TB</text>
+              <text x="261.2" y="99" fill="#86868B">1.1 TB</text>
+              <text x="233.48" y="132" fill="#0066CC">890 GB</text>
+              <text x="171.44" y="145" fill="#86868B">420 GB</text>
+            </g>
+            <g text-anchor="end" font-size="11" font-weight="600">
+              <text x="470" y="47" fill="#86868B">12%</text>
+              <text x="470" y="93" fill="#86868B">41%</text>
+              <text x="470" y="139" fill="#D97706">67%</text>
+            </g>
+            <g fill="#86868B" font-size="11" text-anchor="middle">
+              <text x="112" y="174">0</text><text x="178" y="174">0.5</text><text x="244" y="174">1.0</text>
+              <text x="310" y="174">1.5</text><text x="376" y="174">2.0</text><text x="442" y="174">2.5</text>
+            </g>
+          </svg>
+          <div class="legend"><span><i style="background:#0066CC"></i>读取量</span><span><i style="background:#86868B"></i>写入量</span><span>右侧：峰值繁忙度</span></div>
+        </div>
+      </div>
+
+      <h3>磁盘容量与 I/O 周期明细</h3>
+      <div class="wide-table-wrap">
+        <table class="wide-table">
+          <tr><th>设备</th><th>健康 / 结论</th><th>容量 / 已用</th><th>预计 90%</th><th>周增长</th><th>周期读量</th><th>周期写量</th><th>平均读 / 写</th><th>峰值繁忙度</th><th>最繁忙时段</th></tr>
+          <tr><td>/dev/sda · SSD</td><td class="good">正常</td><td>238 GB / 118 GB</td><td>约 14 个月</td><td>+1.2 GB</td><td>612 GB</td><td>96 GB</td><td>8 / 2 MB/s</td><td>12%</td><td>07-31 03:00</td></tr>
+          <tr><td>/dev/sdb · HDD</td><td class="good">正常</td><td>8.0 TB / 4.2 TB</td><td>约 20 个月</td><td>+38 GB</td><td>2.4 TB</td><td>1.1 TB</td><td>26 / 18 MB/s</td><td>41%</td><td>08-01 21:00</td></tr>
+          <tr><td class="warn">/dev/sdc · HDD</td><td class="warn">关注：使用率 77.5%</td><td class="warn">4.0 TB / 3.1 TB</td><td class="warn">约 72 天</td><td class="warn">+85 GB</td><td>890 GB</td><td>420 GB</td><td>11 / 6 MB/s</td><td class="warn">67%</td><td>08-02 02:15</td></tr>
+        </table>
+      </div>
+
+      <h3>过去 7 天硬件平均利用率 Top 5 程序</h3>
+      <table>
+        <tr><th>程序</th><th>平均 CPU</th><th>平均内存</th><th>峰值 CPU</th><th>采样覆盖</th><th>备注</th></tr>
+        <tr><td>jellyfin</td><td>12.8%</td><td>8.6%</td><td>43.2%</td><td>7/7 天</td><td>周期内重启 2 次</td></tr>
+        <tr><td>postgres</td><td>4.9%</td><td>11.8%</td><td>21.4%</td><td>7/7 天</td><td>正常</td></tr>
+        <tr><td>nginx</td><td>2.6%</td><td>1.7%</td><td>12.8%</td><td>7/7 天</td><td>正常</td></tr>
+        <tr><td class="warn">radarr</td><td>1.8%</td><td>2.9%</td><td>15.6%</td><td>部分</td><td class="warn">周期内失败 3 次</td></tr>
+        <tr><td>tailscaled</td><td>1.1%</td><td>1.3%</td><td>6.2%</td><td>7/7 天</td><td>正常</td></tr>
+      </table>
+
+      <h2>5. 存储与数据安全</h2>
+      <p class="section-lead">各物理硬盘 SMART 均正常，/dev/sdc 容量增长最快。</p>
+      <h3>物理硬盘健康状态</h3>
+      <div class="wide-table-wrap">
+        <table class="wide-table">
+          <tr><th>物理硬盘</th><th>状态</th><th>SMART</th><th>温度</th><th>坏道增量</th></tr>
+          <tr><td>/dev/sda</td><td class="good">正常</td><td class="good">通过</td><td>32°C</td><td>0</td></tr>
+          <tr><td>/dev/sdb</td><td class="good">正常</td><td class="good">通过</td><td>35°C</td><td>0</td></tr>
+          <tr><td>/dev/sdc</td><td class="good">正常</td><td class="good">通过</td><td>36°C</td><td>0</td></tr>
+        </table>
+      </div>
+      <h3>阵列与文件系统</h3>
+      <table>
+        <tr><th>项目</th><th>状态</th></tr>
+        <tr><td>RAID</td><td>md0 正常，4/4 活动盘，无降级记录</td></tr>
+        <tr><td>文件系统</td><td>无只读挂载、无异常卸载、无文件系统错误</td></tr>
+      </table>
+      <h2>6. 网络</h2>
+      <p class="section-lead">总流量 299.8 GB，未发现异常出站流量。</p>
+      <div class="grid-2">
+        <div class="panel">
+          <h3>网络流量 · 每日（GB）</h3>
+          <svg xmlns="http://www.w3.org/2000/svg" class="chart" viewBox="0 0 480 200" role="img" aria-label="每日网络流量">
+            <line x1="48" y1="155" x2="470" y2="155" stroke="#D2D2D7"/>
+            <line x1="48" y1="127" x2="470" y2="127" stroke="#E8E8ED" stroke-dasharray="3 3"/>
+            <line x1="48" y1="99" x2="470" y2="99" stroke="#E8E8ED" stroke-dasharray="3 3"/>
+            <line x1="48" y1="71" x2="470" y2="71" stroke="#E8E8ED" stroke-dasharray="3 3"/>
+            <line x1="48" y1="43" x2="470" y2="43" stroke="#E8E8ED" stroke-dasharray="3 3"/>
+            <line x1="48" y1="15" x2="470" y2="15" stroke="#E8E8ED" stroke-dasharray="3 3"/>
+            <line x1="48" y1="155" x2="48" y2="15" stroke="#D2D2D7"/>
+            <text x="16" y="18" fill="#86868B" font-size="11">GB</text>
+            <g fill="#0066CC">
+              <rect x="52" y="82.2" width="16" height="72.8" rx="3"/><rect x="117" y="62.6" width="16" height="92.4" rx="3"/>
+              <rect x="182" y="37.4" width="16" height="117.6" rx="3"/><rect x="247" y="99" width="16" height="56" rx="3"/>
+              <rect x="312" y="65.4" width="16" height="89.6" rx="3"/><rect x="377" y="48.6" width="16" height="106.4" rx="3"/><rect x="442" y="76.6" width="16" height="78.4" rx="3"/>
+            </g>
+            <g fill="#86868B">
+              <rect x="72" y="127" width="16" height="28" rx="3"/><rect x="137" y="121.4" width="16" height="33.6" rx="3"/>
+              <rect x="202" y="110.2" width="16" height="44.8" rx="3"/><rect x="267" y="135.4" width="16" height="19.6" rx="3"/>
+              <rect x="332" y="124.2" width="16" height="30.8" rx="3"/><rect x="397" y="115.8" width="16" height="39.2" rx="3"/><rect x="462" y="124.2" width="16" height="30.8" rx="3"/>
+            </g>
+            <g fill="#86868B" font-size="11" text-anchor="end">
+              <text x="43" y="158">0</text><text x="43" y="130">10</text><text x="43" y="102">20</text>
+              <text x="43" y="74">30</text><text x="43" y="46">40</text><text x="43" y="18">50</text>
+            </g>
+            <g fill="#86868B" font-size="11">
+              <text x="60" y="178">07-29</text><text x="125" y="178">07-30</text><text x="190" y="178">07-31</text>
+              <text x="255" y="178">08-01</text><text x="320" y="178">08-02</text><text x="385" y="178">08-03</text><text x="450" y="178">08-04</text>
+            </g>
+          </svg>
+          <div class="legend"><span><i style="background:#0066CC"></i>接收</span><span><i style="background:#86868B"></i>发送</span><span>单位：GB</span><span>仅统计物理网卡</span></div>
+        </div>
+        <div class="panel network-summary">
+          <h3>网络阶段汇总</h3>
+          <div class="metric-group">
+            <div class="metric"><div class="k">总接收</div><div class="v">218.4 GB</div></div>
+            <div class="metric"><div class="k">总发送</div><div class="v">81.4 GB</div></div>
+            <div class="metric"><div class="k">总流量</div><div class="v">299.8 GB</div></div>
+            <div class="metric"><div class="k">日均接收</div><div class="v">31.2 GB</div></div>
+            <div class="metric"><div class="k">日均发送</div><div class="v">11.6 GB</div></div>
+            <div class="metric"><div class="k">峰值速率</div><div class="v">112.4 Mbps</div></div>
+          </div>
+          <div class="network-summary-table-wrap wide-table-wrap">
+            <table class="network-summary-table wide-table">
+              <tr><th>接口</th><th>类型</th><th>总流量</th><th>接收</th><th>发送</th><th>峰值</th></tr>
+              <tr><td>eno1</td><td>物理网卡</td><td>263.6 GB</td><td>205.4 GB</td><td>58.2 GB</td><td>112.4 Mbps</td></tr>
+              <tr><td>eno2</td><td>物理网卡</td><td>36.2 GB</td><td>13.0 GB</td><td>23.2 GB</td><td>18.4 Mbps</td></tr>
+              <tr><td>物理网卡合计</td><td>2 个</td><td>299.8 GB</td><td>218.4 GB</td><td>81.4 GB</td><td>112.4 Mbps</td></tr>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <h2>7. 服务与应用状态</h2>
+      <p class="section-lead">34 个 Docker 容器运行中，radarr 是本周期唯一失败服务，另有 2 个容器停止。</p>
+      <div class="metric-group service-metrics">
+        <div class="metric"><div class="k">Docker 运行中</div><div class="v">34 / 36</div></div>
+        <div class="metric"><div class="k">虚拟机</div><div class="v">1 / 1</div></div>
+        <div class="metric"><div class="k">失败服务</div><div class="v warn">1</div></div>
+        <div class="metric"><div class="k">关键服务</div><div class="v">4 / 4</div></div>
+      </div>
+      <h3>服务与应用清单</h3>
+      <div class="wide-table-wrap">
+        <table class="wide-table">
+          <tr><th>名称</th><th>当前状态</th><th>类型</th><th>周期错误</th><th>周期重启</th><th>最近一次启动</th><th>说明</th></tr>
+          <tr><td>ssh</td><td class="good">正常</td><td>systemd</td><td>0</td><td>0</td><td>2026-07-31 03:02</td><td>-</td></tr>
+          <tr><td>nginx</td><td>正常</td><td>systemd</td><td>3</td><td>0</td><td>2026-07-31 03:04</td><td>周期错误 3 次</td></tr>
+          <tr><td>docker</td><td class="good">正常</td><td>systemd</td><td>1</td><td>0</td><td>2026-07-31 03:05</td><td>周期错误 1 次</td></tr>
+          <tr><td>cron</td><td class="good">正常</td><td>systemd</td><td>0</td><td>0</td><td>2026-07-31 03:06</td><td>-</td></tr>
+          <tr><td class="warn">jellyfin</td><td class="warn">需观察</td><td class="warn">Docker</td><td class="warn">4</td><td class="warn">2</td><td>2026-08-03 23:40</td><td class="warn">周期重启 2 次</td></tr>
+          <tr><td class="warn">radarr</td><td class="warn">failed</td><td class="warn">Docker</td><td class="warn">3</td><td class="warn">1</td><td>2026-08-04 08:15</td><td class="warn">周期失败 3 次</td></tr>
+          <tr><td>其他容器</td><td class="warn">2 个停止</td><td>Docker</td><td>-</td><td>-</td><td>-</td><td>未逐一列出</td></tr>
+          <tr><td>DSM</td><td class="good">正常</td><td>虚拟机</td><td>0</td><td>0</td><td>2026-07-31 03:12</td><td>运行 4 天（自 2026-07-31 03:12）</td></tr>
+        </table>
+      </div>
+      <h3>稳定性结论</h3>
+      <p>radarr 是本周期唯一失败服务，周期内失败 3 次；jellyfin 周期内重启 2 次，需观察。</p>
+      <p>关键服务最近启动集中在 2026-07-31 03:02-03:12，与系统计划重启时间一致。</p>
+
+      <h2>8. 登录与安全审计</h2>
+      <p class="section-lead">成功登录 42 次，1 项凌晨登录待确认，失败登录主要来自单一公网 IP。</p>
+
+      <h3>按用户统计</h3>
+      <div class="wide-table-wrap">
+        <table class="wide-table">
+          <tr><th>用户</th><th>成功</th><th>失败</th><th>最后登录</th><th>活跃天数</th><th>活跃占比</th><th>来源数</th><th>最常用时段</th><th>首次登录</th></tr>
+          <tr><td>alice</td><td>21</td><td>0</td><td>2026-08-03 22:31</td><td>7 天</td><td>50.0%</td><td>2</td><td>08:00-10:00</td><td>2026-07-29 08:12</td></tr>
+          <tr><td>bob</td><td>14</td><td>0</td><td>2026-08-04 08:47</td><td>5 天</td><td>33.3%</td><td>1</td><td>18:00-22:00</td><td>2026-07-29 09:05</td></tr>
+          <tr><td>root</td><td>3</td><td>0</td><td>2026-08-01 00:12</td><td>1 天</td><td>7.1%</td><td>1（本地）</td><td>维护窗口</td><td>2026-08-01 00:10</td></tr>
+          <tr><td>jellyfin-service</td><td>4</td><td>0</td><td>2026-08-03 23:59</td><td>7 天</td><td>9.5%</td><td>1</td><td>每小时服务登录</td><td>2026-07-29 00:02</td></tr>
+        </table>
+      </div>
+
+      <div class="grid-2">
+        <div class="panel">
+          <h3>24 小时登录时段分布</h3>
+          <svg xmlns="http://www.w3.org/2000/svg" class="chart" viewBox="0 0 480 200" role="img" aria-label="24 小时登录时段分布">
+            <line x1="24" y1="160" x2="452" y2="160" stroke="#D2D2D7"/>
+            <line x1="24" y1="130" x2="452" y2="130" stroke="#E8E8ED" stroke-dasharray="3 3"/>
+            <line x1="24" y1="100" x2="452" y2="100" stroke="#E8E8ED" stroke-dasharray="3 3"/>
+            <line x1="24" y1="70" x2="452" y2="70" stroke="#E8E8ED" stroke-dasharray="3 3"/>
+            <line x1="24" y1="40" x2="452" y2="40" stroke="#E8E8ED" stroke-dasharray="3 3"/>
+            <line x1="24" y1="160" x2="24" y2="40" stroke="#D2D2D7"/>
+            <text x="12" y="18" fill="#86868B" font-size="11">次数</text>
+            <g fill="#0066CC">
+              <rect x="132" y="130" width="14" height="30" rx="2"/>
+              <rect x="168" y="85" width="14" height="75" rx="2"/><rect x="186" y="100" width="14" height="60" rx="2"/>
+              <rect x="204" y="115" width="14" height="45" rx="2"/><rect x="222" y="130" width="14" height="30" rx="2"/>
+              <rect x="240" y="130" width="14" height="30" rx="2"/><rect x="258" y="130" width="14" height="30" rx="2"/>
+              <rect x="276" y="130" width="14" height="30" rx="2"/><rect x="294" y="130" width="14" height="30" rx="2"/>
+              <rect x="312" y="130" width="14" height="30" rx="2"/><rect x="330" y="130" width="14" height="30" rx="2"/>
+              <rect x="348" y="115" width="14" height="45" rx="2"/><rect x="366" y="100" width="14" height="60" rx="2"/>
+              <rect x="384" y="115" width="14" height="45" rx="2"/><rect x="402" y="130" width="14" height="30" rx="2"/>
+              <rect x="420" y="145" width="14" height="15" rx="2"/>
+            </g>
+            <rect x="60" y="145" width="14" height="15" rx="2" fill="#C7000B"/>
+            <g fill="#86868B" font-size="11" text-anchor="end">
+              <text x="19" y="163">0</text><text x="19" y="133">2</text><text x="19" y="103">4</text>
+              <text x="19" y="73">6</text><text x="19" y="43">8</text>
+            </g>
+            <g fill="#86868B" font-size="11">
+              <text x="24" y="178">00</text><text x="60" y="178">02</text><text x="96" y="178">04</text><text x="132" y="178">06</text>
+              <text x="168" y="178">08</text><text x="204" y="178">10</text><text x="240" y="178">12</text><text x="276" y="178">14</text>
+              <text x="312" y="178">16</text><text x="348" y="178">18</text><text x="384" y="178">20</text><text x="420" y="178">22</text>
+            </g>
+          </svg>
+          <div class="legend"><span><i style="background:#0066CC"></i>成功登录</span><span><i style="background:#C7000B"></i>02:00 异常登录</span></div>
+        </div>
+        <div class="panel time-anomaly-panel">
+          <h3>时段异常登录</h3>
+          <div class="wide-table-wrap">
+            <table class="time-anomaly-table wide-table">
+              <tr><th>时间</th><th>用户</th><th>来源</th><th>判定</th></tr>
+              <tr><td class="warn">2026-08-02 02:18</td><td>alice</td><td>112.65.x.x（公网）</td><td class="warn">凌晨登录，与历史习惯不符</td></tr>
+            </table>
+          </div>
+          <p>建议确认是否本人操作，并检查账户与会话。</p>
+        </div>
+      </div>
+
+      <div class="wide-table-panel">
+        <h3>登录来源 IP 统计</h3>
+        <div class="wide-table-wrap">
+          <table class="source-ip-table wide-table">
+            <tr><th>来源 IP</th><th>类型</th><th>失败</th><th>成功</th><th>最后活动</th></tr>
+            <tr><td>192.168.1.20</td><td>局域网</td><td>0</td><td>18</td><td>2026-08-03 22:31</td></tr>
+            <tr><td>192.168.1.21</td><td>局域网</td><td>0</td><td>13</td><td>2026-08-04 08:47</td></tr>
+            <tr><td>112.65.x.x</td><td>公网</td><td>0</td><td>8</td><td>2026-08-02 20:15</td></tr>
+            <tr><td>localhost</td><td>本地</td><td>0</td><td>3</td><td>2026-08-01 00:12</td></tr>
+            <tr><td class="warn">203.0.113.45</td><td>公网</td><td class="warn">31</td><td>0</td><td class="warn">2026-08-04 00:54 · 已封禁</td></tr>
+            <tr><td class="warn">198.51.100.27</td><td>公网</td><td class="warn">4</td><td>0</td><td class="warn">2026-08-03 04:31 · 已封禁</td></tr>
+            <tr><td class="warn">198.51.100.89</td><td>公网</td><td class="warn">2</td><td>0</td><td class="warn">2026-08-01 23:51 · 已封禁</td></tr>
+            <tr><td colspan="2">来源合计</td><td class="warn">37</td><td>42</td><td>Fail2ban 已封禁 3 个 IP</td></tr>
+          </table>
+        </div>
+      </div>
+
+      <h3>安全配置漂移</h3>
+      <table>
+        <tr><th>对象</th><th>变化</th><th>影响</th><th>最近时间</th></tr>
+        <tr><td>SSH 配置与授权密钥</td><td>无变化</td><td>无</td><td>-</td></tr>
+        <tr><td>防火墙规则</td><td>+3 条 Fail2ban 封禁规则</td><td class="good">已生效</td><td>2026-08-04</td></tr>
+        <tr><td>计划任务</td><td>无变化</td><td>无</td><td>-</td></tr>
+        <tr><td>用户账户</td><td>无新增 / 删除 / 锁定</td><td>无</td><td>-</td></tr>
+      </table>
+
+      <h2>9. 系统维护情况</h2>
+      <p class="section-lead">本周期完成 2 次更新，共安装 17 个软件包。</p>
+      <div class="metric-group">
+        <div class="metric"><div class="k">周期内更新次数</div><div class="v">2 次</div></div>
+        <div class="metric"><div class="k">已安装更新包</div><div class="v">17 个</div></div>
+        <div class="metric"><div class="k">安全更新已装</div><div class="v">9 个</div></div>
+        <div class="metric"><div class="k">常规更新已装</div><div class="v">8 个</div></div>
+        <div class="metric"><div class="k">待装安全更新</div><div class="v">8 个</div></div>
+        <div class="metric"><div class="k">待装常规更新</div><div class="v">5 个</div></div>
+      </div>
+      <h3>系统版本更新</h3>
+      <table>
+        <tr><th>项目</th><th>当前版本</th><th>上一版本</th><th>更新时间</th></tr>
+        <tr><td>操作系统</td><td>Debian 12.9（bookworm）</td><td>Debian 12.8</td><td>2026-07-31 03:00</td></tr>
+        <tr><td>内核</td><td>6.1.0-26-amd64</td><td>6.1.0-25-amd64</td><td>2026-07-31 03:00</td></tr>
+        <tr><td>OpenSSL</td><td>3.0.13-1</td><td>3.0.11-1</td><td>2026-07-31 03:00</td></tr>
+        <tr><td>Docker</td><td>27.0.3-1</td><td>26.1.4-1</td><td>2026-07-31 03:00</td></tr>
+      </table>
+      <h3>更新执行记录</h3>
+      <table>
+        <tr><th>执行时间</th><th>包名</th><th>类型</th><th>旧版本</th><th>新版本</th></tr>
+        <tr><td rowspan="4">2026-07-31 03:00</td><td>linux-image-amd64</td><td>安全</td><td>6.1.0-25-amd64</td><td>6.1.0-26-amd64</td></tr>
+        <tr><td>openssl</td><td>安全</td><td>3.0.11-1</td><td>3.0.13-1</td></tr>
+        <tr><td>docker.io</td><td>常规</td><td>26.1.4-1</td><td>27.0.3-1</td></tr>
+        <tr><td>其他 9 个包</td><td>安全 4 · 常规 5</td><td>-</td><td>-</td></tr>
+        <tr><td rowspan="3">2026-08-02 02:15</td><td>exim4-config</td><td>安全</td><td>4.97-3</td><td>4.97-4</td></tr>
+        <tr><td>curl</td><td>安全</td><td>8.5.0-2</td><td>8.5.0-3</td></tr>
+        <tr><td>其他 3 个包</td><td>安全 1 · 常规 2</td><td>-</td><td>-</td></tr>
+      </table>
+      <h3>其他维护信息</h3>
+      <table>
+        <tr><th>项目</th><th>结果</th></tr>
+        <tr><td>最近更新检查</td><td>2026-08-04 01:00</td></tr>
+        <tr><td>重启需求</td><td class="good">无（内核更新后已重启）</td></tr>
+        <tr><td>Journal 错误摘要</td><td>radarr 3 · nginx 3 · docker 1 · 其他 0</td></tr>
+        <tr><td>SSL 证书</td><td>debnas.example.com 将于 2026-10-12 到期（剩余 69 天）· 风险：正常</td></tr>
+        <tr><td>定时任务</td><td>sys-patches、ops-report、threat-ips 均正常执行</td></tr>
+      </table>
+      <h2>10. 建议与行动项</h2>
+      <p class="section-lead">建议优先处理磁盘容量、登录异常和安全更新。</p>
+      <table>
+        <tr><th>事项</th><th>优先级</th><th>建议动作</th><th>状态</th></tr>
+        <tr><td>/dev/sdc 使用率 77.5%，预计 72 天后达到 90%</td><td><span class="badge badge-medium">中风险</span></td><td>清理或扩容</td><td class="warn">待处理</td></tr>
+        <tr><td>alice 出现凌晨时段异常成功登录</td><td><span class="badge badge-medium">中风险</span></td><td>确认是否本人操作并检查账户安全</td><td class="warn">处理中</td></tr>
+        <tr><td>8 个安全更新和 5 个常规更新未安装</td><td><span class="badge badge-low">低风险</span></td><td>安排维护窗口安装</td><td>待处理</td></tr>
+      </table>
+
+    </div>
+    <div class="footer">
+      <div class="footer-grid">
+        <div><span>数据覆盖</span><strong>2026-06-01 起</strong></div>
+        <div><span>生成时间</span><strong>2026-08-04 21:50</strong></div>
+        <div><span>上一期报告</span><strong>2026-07-28 01:00</strong></div>
+        <div><span>下一期预计</span><strong>2026-08-11 01:00</strong></div>
+      </div>
+      <div class="footer-note">此报告由 DebNAS 自动生成</div>
+    </div>
+  </div>
+</body>
+</html>

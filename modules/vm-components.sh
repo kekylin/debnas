@@ -80,10 +80,10 @@ module_plan() {
   fi
 
   if [[ -r /etc/sysctl.conf ]] && grep -Eq '^[[:space:]]*net\.ipv4\.ip_forward[[:space:]]*=' /etc/sysctl.conf 2>/dev/null; then
-    echo "write|/etc/sysctl.conf|注释其中生效的 net.ipv4.ip_forward 行（sed -i 原地修改，不另做备份）"
+    echo "write|/etc/sysctl.conf|注释其中生效的 net.ipv4.ip_forward 行（原件备份到 /var/backups/debnas/）"
   fi
   if [[ ! -r "$VM_SYSCTL_CONF" ]] || ! grep -qxF 'net.ipv4.ip_forward = 1' "$VM_SYSCTL_CONF" 2>/dev/null; then
-    echo "write|${VM_SYSCTL_CONF}|写入 net.ipv4.ip_forward = 1（原地追加，不另做备份）"
+    echo "write|${VM_SYSCTL_CONF}|写入 net.ipv4.ip_forward = 1（经 sysctl_persist；已有文件时原件备份到 /var/backups/debnas/）"
   fi
   fwd=$(_vm_ip_forward)
   if [[ "$fwd" != "1" ]]; then
@@ -135,7 +135,14 @@ main() {
   # 现无条件注释所有生效行（sed 对已注释行不匹配，幂等）。
   local sysctl_conf="/etc/sysctl.conf" f
   if [[ -f "$sysctl_conf" ]] && grep -Eq '^[[:space:]]*net\.ipv4\.ip_forward[[:space:]]*=' "$sysctl_conf"; then
-    sed -i -E 's|^([[:space:]]*)net\.ipv4\.ip_forward[[:space:]]*=[[:space:]]*|\1# net.ipv4.ip_forward = |' "$sysctl_conf" 2>/dev/null || true
+    # 读出 → 内存中改 → write_file_if_changed 写回（原件备份到 /var/backups/debnas、原子替换、登记文件清单）
+    local sysctl_content sysctl_new sysctl_rc=0
+    sysctl_content=$(cat -- "$sysctl_conf" 2>/dev/null) || sysctl_content=""
+    sysctl_new=$(sed -E 's|^([[:space:]]*)net\.ipv4\.ip_forward[[:space:]]*=[[:space:]]*|\1# net.ipv4.ip_forward = |' <<< "$sysctl_content" 2>/dev/null) || sysctl_new="$sysctl_content"
+    [[ -z "$sysctl_new" ]] || write_file_if_changed "$sysctl_conf" "$sysctl_new" "" 1 || sysctl_rc=$?
+    if [[ "$sysctl_rc" -eq 2 ]]; then
+      log_warning "注释 ${sysctl_conf} 中的 net.ipv4.ip_forward 失败，请手动处理"
+    fi
   fi
 
   # 提示：其他排序在后的 sysctl.d 片段若把 ip_forward 设为 0，重启后仍会覆盖

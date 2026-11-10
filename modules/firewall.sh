@@ -16,9 +16,60 @@ source "${SCRIPT_DIR}/lib/bootstrap.sh"
 
 # ==================== 只读探测契约（docs/ARCHITECTURE.md §4.5） ====================
 
+_FW_CONF="/etc/firewalld/firewalld.conf"
+_FW_ZONES_DIR="/etc/firewalld/zones"
+_FW_SYS_ZONES_DIR="/usr/lib/firewalld/zones"
+
+# 默认区（只读）：firewalld.conf 的 DefaultZone（firewall-cmd --set-default-zone 即写此处），缺省 public；
+# 文件存在但当前用户不可读时问运行中的 firewalld，仍问不到按 public
+# 指向不存在的区（/etc 与 /usr/lib 下均无对应文件）时 firewalld 自身回退 public，这里保持一致
+_fw_default_zone() {
+  local line zone=""
+  if [[ -r "$_FW_CONF" ]]; then
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      if [[ "$line" =~ ^[[:space:]]*DefaultZone[[:space:]]*=[[:space:]]*([A-Za-z0-9_-]+) ]]; then
+        zone="${BASH_REMATCH[1]}"
+      fi
+    done < "$_FW_CONF"
+  elif [[ -e "$_FW_CONF" ]]; then
+    # firewall-cmd --set-default-zone 改写后的 firewalld.conf 为 600，普通用户读不到：改问运行中的 firewalld（D-Bus，免授权）
+    line=$(timeout 1 busctl --system call org.fedoraproject.FirewallD1 /org/fedoraproject/FirewallD1 \
+      org.fedoraproject.FirewallD1 getDefaultZone 2>/dev/null) || line=""
+    [[ "$line" =~ ^s[[:space:]]+\"([A-Za-z0-9_-]+)\" ]] && zone="${BASH_REMATCH[1]}"
+  fi
+  if [[ -n "$zone" && "$zone" != "public" && ! -f "${_FW_ZONES_DIR}/${zone}.xml" \
+    && ! -f "${_FW_SYS_ZONES_DIR}/${zone}.xml" ]]; then
+    zone=""
+  fi
+  printf '%s' "${zone:-public}"
+}
+
+# 某个区当前生效的定义文件（只读）：/etc/firewalld/zones 优先，其次 /usr/lib/firewalld/zones；都没有输出空
+# 参数：$1 - 区名
+_fw_zone_effective_file() {
+  if [[ -f "${_FW_ZONES_DIR}/${1}.xml" ]]; then
+    printf '%s' "${_FW_ZONES_DIR}/${1}.xml"
+  elif [[ -f "${_FW_SYS_ZONES_DIR}/${1}.xml" ]]; then
+    printf '%s' "${_FW_SYS_ZONES_DIR}/${1}.xml"
+  fi
+}
+
+# 在区定义 XML 的最后一个 </zone> 之前插入条目（纯内存计算，不写文件）
+# 参数：$1 - 现有 XML 内容；$2.. - 条目（如 <service name="cockpit"/>）
+# 输出：新内容；返回：1 内容中没有 </zone>（不是可追加的区定义）
+_fw_zone_insert() {
+  local content="$1" entry ins=""
+  shift
+  [[ "$content" == *"</zone>"* ]] || return 1
+  for entry in "$@"; do
+    ins+="  ${entry}"$'\n'
+  done
+  printf '%s' "${content%"</zone>"*}${ins}</zone>${content##*"</zone>"}"
+}
+
 # 当前状态：一行 "状态码|说明"（只读、不联网）
 module_status() {
-  local cfg="/etc/firewalld/zones/public.xml"
+  local zone cfg
   if ! pkg_is_installed firewalld; then
     if command -v ufw &>/dev/null && service_is_active ufw; then
       echo "absent|未安装；UFW 运行中，安装时会停用 UFW"
@@ -31,17 +82,25 @@ module_status() {
     echo "warn|已安装但 firewalld 未运行"
     return 0
   fi
-  if [[ -r "$cfg" ]] && ! grep -q '<service name="cockpit"/>' "$cfg" 2>/dev/null; then
-    echo "partial|运行中 · public 区未放行 cockpit"
+  zone=$(_fw_default_zone)
+  if [[ "$zone" == "trusted" ]]; then
+    echo "warn|运行中 · 默认区为 trusted（放行全部入站，防火墙不起拦截作用）"
     return 0
   fi
-  echo "running|运行中 · public 区已放行 ssh/cockpit"
+  cfg=$(_fw_zone_effective_file "$zone")
+  if [[ -n "$cfg" && -r "$cfg" ]] && ! grep -q '<service name="cockpit"/>' "$cfg" 2>/dev/null; then
+    echo "partial|运行中 · ${zone} 区未放行 cockpit"
+    return 0
+  fi
+  echo "running|运行中 · ${zone} 区已放行 ssh/cockpit"
 }
 
 # 预演：每行 "类型|目标|备注"（只读，与 main 的判断逻辑保持一致）
 module_plan() {
   local IFS=$' \n\t'
-  local cfg="/etc/firewalld/zones/public.xml"
+  local zone cfg base
+  zone=$(_fw_default_zone)
+  cfg="${_FW_ZONES_DIR}/${zone}.xml"
   local -a services=(ssh dhcpv6-client cockpit) ports=() missing=()
   local port svc
 
@@ -62,27 +121,33 @@ module_plan() {
   service_is_installed smbd && services+=(samba)
   service_is_installed nfs-server && services+=(nfs mountd rpc-bind)
 
-  if [[ ! -f "$cfg" ]]; then
+  [[ "$zone" == "public" ]] || echo "info|默认区|firewalld 默认区为 ${zone}（非 public），放行规则写入 ${zone} 区"
+  if [[ "$zone" == "trusted" ]]; then
+    echo "risk|${zone} 区|默认区 trusted 放行全部入站，无需也不写入放行规则；防火墙不起拦截作用，建议改回 public（firewall-cmd --set-default-zone=public）"
+  elif [[ ! -f "$cfg" && "$zone" == "public" ]]; then
     echo "write|${cfg}|新建 public 区（放行 ${services[*]}${ports[*]:+ 及端口 ${ports[*]}}）"
   else
-    grep -q '<service name="cockpit"/>' "$cfg" 2>/dev/null || missing+=("cockpit")
+    # 已有区文件，或以 /usr/lib/firewalld/zones 的系统定义为基础：只补缺失项（dhcpv6-client 不强行补回）
+    base=$(_fw_zone_effective_file "$zone")
     for svc in "${services[@]}"; do
-      [[ "$svc" == "dhcpv6-client" || "$svc" == "cockpit" ]] && continue
-      grep -qF "<service name=\"${svc}\"/>" "$cfg" 2>/dev/null || missing+=("$svc")
+      [[ "$svc" == "dhcpv6-client" ]] && continue
+      grep -qF "<service name=\"${svc}\"/>" "$base" 2>/dev/null || missing+=("$svc")
     done
     for port in "${ports[@]}"; do
-      grep -qF "<port protocol=\"tcp\" port=\"${port}\"/>" "$cfg" 2>/dev/null || missing+=("${port}/tcp")
+      grep -qF "<port protocol=\"tcp\" port=\"${port}\"/>" "$base" 2>/dev/null || missing+=("${port}/tcp")
     done
-    if [[ ${#missing[@]} -gt 0 ]]; then
-      echo "write|${cfg}|追加 ${missing[*]}（sed -i 原地修改，不另做备份）"
+    if [[ ${#missing[@]} -eq 0 ]]; then
+      echo "info|${base}|规则已齐全，不改动"
+    elif [[ -f "$cfg" ]]; then
+      echo "write|${cfg}|追加 ${missing[*]}（原件备份到 /var/backups/debnas/）"
     else
-      echo "info|${cfg}|规则已齐全，不改动"
+      echo "write|${cfg}|新建：以 ${base} 为基础追加 ${missing[*]}"
     fi
   fi
   for port in "${ports[@]}"; do
     echo "port|${port}/tcp|放行自定义 SSH 端口"
   done
-  echo "port|${services[*]}|public 区放行服务（cockpit=9090）"
+  [[ "$zone" == "trusted" ]] || echo "port|${services[*]}|${zone} 区放行服务（cockpit=9090）"
 
   if service_is_active firewalld; then
     echo "service|firewalld|已运行：新规则仅追加到运行时（不 reload，保留 fail2ban 规则）"
@@ -94,12 +159,19 @@ module_plan() {
     local conn_ip="${SSH_CONNECTION%% *}" conn_port="${SSH_CONNECTION##* }"
     echo "risk|SSH|当前连接来自 ${conn_ip}，服务端端口 ${conn_port} 在放行列表内，不会断连"
   fi
-  echo "risk|入站|启用后 public 区未放行的入站端口将被拦截（其他自建服务需另行放行）"
+  [[ "$zone" == "trusted" ]] || echo "risk|入站|启用后 ${zone} 区未放行的入站端口将被拦截（其他自建服务需另行放行）"
+  return 0
 }
 
 main() {
-  # 定义配置文件路径，便于后续统一管理
-  local -r CONFIG_FILE="/etc/firewalld/zones/public.xml"
+  # 放行规则写入 firewalld 实际的默认区（用户可能已改成 home/internal 等，写 public 不生效）
+  # 运行中以 firewall-cmd 的回答为准，否则读 firewalld.conf 的 DefaultZone（缺省 public）
+  local zone=""
+  if service_is_active firewalld && command -v firewall-cmd &> /dev/null; then
+    zone=$(firewall-cmd --get-default-zone 2> /dev/null) || zone=""
+  fi
+  [[ "$zone" =~ ^[A-Za-z0-9_-]+$ ]] || zone=$(_fw_default_zone)
+  local -r CONFIG_FILE="${_FW_ZONES_DIR}/${zone}.xml"
   
   log_info "安装 Firewalld..."
   
@@ -152,29 +224,45 @@ main() {
 </zone>'
   # 上方模板展开后包含 <service name="ssh"/>、<service name="dhcpv6-client"/>、<service name="cockpit"/>
 
-  local config_changed=0
-  if [[ ! -f "$CONFIG_FILE" ]]; then
+  local config_changed=0 base_file current new_content wrc=0
+  local -a to_add=()
+  if [[ "$zone" != "public" ]]; then
+    log_info "firewalld 默认区为 ${zone}（非 public），放行规则写入 ${zone} 区"
+  fi
+  if [[ "$zone" == "trusted" ]]; then
+    # trusted 区放行全部入站：无需放行规则，也不替用户改默认区
+    log_warning "默认区 trusted 放行全部入站，无需写入放行规则；防火墙不起拦截作用，建议改回 public（firewall-cmd --set-default-zone=public）"
+  elif [[ ! -f "$CONFIG_FILE" && "$zone" == "public" ]]; then
     log_info "配置防火墙规则..."
     if write_file_if_changed "$CONFIG_FILE" "$firewall_config"; then
       config_changed=1
     fi
   else
-    # 如已存在，检查并补充 cockpit 配置（插到 </zone> 之前，不依赖 <forward/> 是否存在）
-    if ! grep -q '<service name="cockpit"/>' "$CONFIG_FILE"; then
-      log_info "添加 cockpit 服务配置..."
-      sed -i '/<\/zone>/i \  <service name="cockpit"/>' "$CONFIG_FILE"
-      config_changed=1
-    fi
-    # 补充自定义 SSH 端口与已安装的共享服务
+    # 区文件已存在：在其基础上补缺；不存在（非 public 默认区，含 drop/block）：以 /usr/lib/firewalld/zones 的系统定义为基础
+    # 读出 → 内存中插到 </zone> 之前（不依赖 <forward/> 是否存在）→ write_file_if_changed 写回（备份、原子替换、登记清单）
+    base_file=$(_fw_zone_effective_file "$zone")
+    current=$(cat -- "$base_file" 2> /dev/null) || current=""
     for entry in "${zone_entries[@]}"; do
-      # dhcpv6-client 属于默认项，用户可能有意删除，不强行补回
+      # dhcpv6-client 属于默认项，用户可能有意删除（或该区本就不含），不强行补回
       [[ "$entry" == *'"dhcpv6-client"'* ]] && continue
-      if ! grep -qF "$entry" "$CONFIG_FILE"; then
-        log_info "添加防火墙规则：${entry}"
-        sed -i "/<\/zone>/i \  ${entry}" "$CONFIG_FILE"
-        config_changed=1
+      if [[ "$current" != *"$entry"* ]]; then
+        log_info "添加防火墙规则（${zone} 区）：${entry}"
+        to_add+=("$entry")
       fi
     done
+    if [[ ${#to_add[@]} -gt 0 ]]; then
+      if new_content=$(_fw_zone_insert "$current" "${to_add[@]}"); then
+        write_file_if_changed "$CONFIG_FILE" "$new_content" || wrc=$?
+        if [[ $wrc -eq 0 ]]; then
+          config_changed=1
+        elif [[ $wrc -eq 2 ]]; then
+          log_error "写入 ${CONFIG_FILE} 失败，放行规则未生效"
+          exit "${ERROR_GENERAL}"
+        fi
+      else
+        log_warning "${base_file:-${CONFIG_FILE}} 不是可识别的区定义（缺少 </zone>），未写入放行规则，请手动检查"
+      fi
+    fi
   fi
 
   # 安装 firewalld，保障系统安全
@@ -187,14 +275,32 @@ main() {
   # 已在运行时把新增规则同步到运行时配置；不用 --reload，避免清掉 fail2ban 的运行时规则
   if [[ $config_changed -eq 1 && $was_active -eq 1 ]] && command -v firewall-cmd &> /dev/null; then
     for svc in "${services[@]}"; do
-      firewall-cmd --zone=public --query-service="$svc" &> /dev/null \
-        || firewall-cmd --zone=public --add-service="$svc" &> /dev/null \
+      firewall-cmd --zone="$zone" --query-service="$svc" &> /dev/null \
+        || firewall-cmd --zone="$zone" --add-service="$svc" &> /dev/null \
         || log_warning "运行时放行服务 ${svc} 失败（重启 firewalld 后生效）"
     done
     for port in "${ports[@]}"; do
-      firewall-cmd --zone=public --query-port="${port}/tcp" &> /dev/null \
-        || firewall-cmd --zone=public --add-port="${port}/tcp" &> /dev/null \
+      firewall-cmd --zone="$zone" --query-port="${port}/tcp" &> /dev/null \
+        || firewall-cmd --zone="$zone" --add-port="${port}/tcp" &> /dev/null \
         || log_warning "运行时放行端口 ${port}/tcp 失败（重启 firewalld 后生效）"
+    done
+    # firewalld 运行中不会重读区文件：其内存里的永久配置仍是旧的，之后任何 firewall-cmd --permanent
+    # 操作都会用旧内容重写该文件、丢掉上面写入的条目。把本次新增项逐个补进它的永久配置
+    #（它会重写同一文件，内容等价；原件已由 write_file_if_changed 备份并登记清单）
+    local -a perm_sync=("${to_add[@]}")
+    [[ ${#perm_sync[@]} -gt 0 ]] || perm_sync=("${zone_entries[@]}")
+    for entry in "${perm_sync[@]}"; do
+      if [[ "$entry" =~ ^\<service\ name=\"([^\"]+)\"/\>$ ]]; then
+        svc="${BASH_REMATCH[1]}"
+        firewall-cmd --permanent --zone="$zone" --query-service="$svc" &> /dev/null \
+          || firewall-cmd --permanent --zone="$zone" --add-service="$svc" &> /dev/null \
+          || log_warning "同步 firewalld 永久配置失败：服务 ${svc}（区文件已写入，重启 firewalld 后生效）"
+      elif [[ "$entry" =~ port=\"([0-9]+)\" ]]; then
+        port="${BASH_REMATCH[1]}"
+        firewall-cmd --permanent --zone="$zone" --query-port="${port}/tcp" &> /dev/null \
+          || firewall-cmd --permanent --zone="$zone" --add-port="${port}/tcp" &> /dev/null \
+          || log_warning "同步 firewalld 永久配置失败：端口 ${port}/tcp（区文件已写入，重启 firewalld 后生效）"
+      fi
     done
   fi
   

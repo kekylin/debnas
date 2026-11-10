@@ -6,18 +6,28 @@ on:
   pull_request:
     branches: [main, dev]
 
+# 说明：
+# - 每个 job 都在 actions/checkout 之前先装 git。容器里没有 git 时 checkout 会改用平台的归档接口下载源码，
+#   而归档受 .gitattributes 的 export-ignore 影响（tests/、docs/、tools/、.github/ 不在里面），
+#   后面的 tests/run.sh 就找不到了。
+# - 容器内以 root 运行；测试不联网（wget 等均为 Mock），缺 gpg / jq / unshare 等工具的用例自动 skip。
+#   bats-unit 额外装 gnupg、jq，让发布签名校验等用例实际执行而不是被跳过。
+
 jobs:
   shellcheck:
     name: ShellCheck
     runs-on: ubuntu-latest
     container: debian:bookworm-slim
     steps:
+      - name: Install git (checkout 需要，见文件头说明)
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq git
+
       - uses: actions/checkout@v4
 
       - name: Install ShellCheck
-        run: |
-          apt-get update -qq
-          apt-get install -y -qq shellcheck
+        run: apt-get install -y -qq shellcheck
 
       - name: Run ShellCheck (error severity)
         run: bash tests/run.sh static
@@ -31,12 +41,15 @@ jobs:
         debian: [bookworm, trixie]
     container: debian:${{ matrix.debian }}-slim
     steps:
+      - name: Install git (checkout 需要，见文件头说明)
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq git
+
       - uses: actions/checkout@v4
 
       - name: Install dependencies
-        run: |
-          apt-get update -qq
-          apt-get install -y -qq shellcheck bats
+        run: apt-get install -y -qq shellcheck bats
 
       - name: Run quality gate
         run: bash tests/check.sh
@@ -50,6 +63,11 @@ jobs:
         debian: [bookworm, trixie]
     container: debian:${{ matrix.debian }}-slim
     steps:
+      - name: Install git (checkout 需要，见文件头说明)
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq git
+
       - uses: actions/checkout@v4
 
       - name: Check bash -n on all files
@@ -64,12 +82,15 @@ jobs:
         debian: [bookworm, trixie]
     container: debian:${{ matrix.debian }}-slim
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Install BATS
+      - name: Install git (checkout 需要，见文件头说明)
         run: |
           apt-get update -qq
-          apt-get install -y -qq bats
+          apt-get install -y -qq git
+
+      - uses: actions/checkout@v4
+
+      - name: Install BATS and optional test tools
+        run: apt-get install -y -qq bats gnupg gpgv jq
 
       - name: Run unit tests
         run: bash tests/run.sh unit
@@ -79,12 +100,15 @@ jobs:
     runs-on: ubuntu-latest
     container: debian:bookworm-slim
     steps:
+      - name: Install git (checkout 需要，见文件头说明)
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq git
+
       - uses: actions/checkout@v4
 
       - name: Install BATS
-        run: |
-          apt-get update -qq
-          apt-get install -y -qq bats
+        run: apt-get install -y -qq bats
 
       - name: Run integration tests
         run: bash tests/run.sh integration

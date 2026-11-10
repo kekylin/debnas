@@ -294,6 +294,9 @@ module_status() {
     sysstat_desc="sysstat 未运行"
   fi
 
+  # 登录数据源缺失时在说明里点明（可用时不占篇幅）
+  ops_login_source >/dev/null || sysstat_desc+=" · 无登录数据源"
+
   case "$cron" in
     on)
       if [[ "$sysstat_desc" != "sysstat 运行中" ]]; then
@@ -334,6 +337,15 @@ module_plan() {
   command -v sar >/dev/null 2>&1 || missing+=("sysstat")
   command -v smartctl >/dev/null 2>&1 || missing+=("smartmontools")
   [[ ${#missing[@]} -gt 0 ]] && echo "pkg|${missing[*]}|前置检查自动安装（失败时报告相应部分降级）"
+  # 登录数据源：Debian 12 自带 last；Debian 13 需要 wtmpdb
+  if ! ops_login_source >/dev/null; then
+    if ops_login_source_installable; then
+      echo "pkg|wtmpdb libpam-wtmpdb|登录记录数据源；PAM 配置由包自带的 pam-auth-update 自动启用（失败时报告登录一节显示无登录数据源）"
+      echo "info|登录记录|安装后才开始记录本地终端与 Cockpit 登录，此前的登录不会出现在报告里（带终端的 SSH 登录由 sshd 直接记录）"
+    else
+      echo "info|登录记录|未找到 last / wtmpdb，报告登录一节将显示无登录数据源"
+    fi
+  fi
 
   # sysstat 配置（启用与每次生成报告都会执行 ops_setup_enable）
   if [[ -r "$OPS_SYSSTAT_DEFAULT" ]] && grep -qx 'ENABLED="true"' "$OPS_SYSSTAT_DEFAULT" 2>/dev/null; then
