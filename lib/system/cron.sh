@@ -129,6 +129,38 @@ _set_crontab() {
   fi
 }
 
+# 注册定时任务前确保 cron 可用：crontab 命令存在、cron 服务在运行并开机自启
+# 说明：Debian 云镜像等最小化系统不带 cron；原先此时 crontab 写入失败只报"注册失败"，
+#       或条目写进去了但 cron 服务没在跑、任务永远不执行
+# 返回：0 可用；1 无法安装/启动（已输出明确错误）
+# 依赖：apt_install_packages（apt.sh）、service_ensure（service.sh），均由 bootstrap-core.sh 加载
+_cron_ensure_ready() {
+  if ! command -v crontab &>/dev/null; then
+    if [[ "${EUID:-$(id -u)}" -ne 0 ]] || ! declare -F apt_install_packages >/dev/null 2>&1; then
+      log_error "未安装 cron（缺少 crontab 命令），无法注册定时任务；请先以 root 执行：apt install cron"
+      return 1
+    fi
+    log_info "未安装 cron，正在安装（定时任务需要）..."
+    if ! apt_install_packages cron || ! command -v crontab &>/dev/null; then
+      log_error "cron 安装失败，无法注册定时任务；请手动执行 apt install cron 后重试"
+      return 1
+    fi
+  fi
+  # 服务状态只在 root + systemd 下处理；已在运行且已自启时不输出任何内容
+  [[ "${EUID:-$(id -u)}" -eq 0 ]] && command -v systemctl &>/dev/null || return 0
+  declare -F service_ensure >/dev/null 2>&1 || return 0
+  if ! systemctl is-active --quiet cron 2>/dev/null; then
+    if ! service_ensure cron started; then
+      log_error "cron 服务未运行且启动失败，定时任务不会执行；请检查：systemctl status cron"
+      return 1
+    fi
+  fi
+  if ! systemctl is-enabled --quiet cron 2>/dev/null; then
+    service_ensure cron enabled || log_warning "cron 服务未能设为开机自启，重启后定时任务不会执行"
+  fi
+  return 0
+}
+
 # ==================== 公共接口 ====================
 
 # 注册模块的 cron 定时任务
@@ -156,6 +188,9 @@ cron_register() {
   if ! cron_validate_schedule "$schedule"; then
     return 1
   fi
+
+  # cron 未安装/未运行时先装好并启用（失败则明确报错，不留下一个不会执行的条目）
+  _cron_ensure_ready || return 1
 
   # 构建 cron 命令（传递 DEBNAS_CRON_MODE=1 告知模块以非交互模式运行）
   local cron_cmd="${schedule} DEBNAS_CRON_MODE=1 ${DEBNAS_BIN} run ${module_name} ${marker}"
@@ -213,6 +248,8 @@ cron_register_variant() {
   if ! cron_validate_schedule "$schedule"; then
     return 1
   fi
+
+  _cron_ensure_ready || return 1
 
   cron_cmd="${schedule} DEBNAS_CRON_MODE=1 ${DEBNAS_BIN} run ${module_name} ${command_args} ${marker}"
   local current_crontab
