@@ -40,8 +40,12 @@ comment_out_sysctl_conf_key() {
     return 0
   fi
 
-  sed -i -E "s|^([[:space:]]*)(${key_re}[[:space:]]*=.*)$|\\1# \\2|" "$conf" 2>/dev/null || true
-  if LC_ALL=C grep -qE "$key_regex" "$conf" 2>/dev/null; then
+  # 读出 → 内存中改 → write_file_if_changed 写回（原件备份到 /var/backups/debnas、原子替换、登记文件清单）
+  local content new_content rc=0
+  content=$(cat -- "$conf" 2>/dev/null) || content=""
+  new_content=$(sed -E "s|^([[:space:]]*)(${key_re}[[:space:]]*=.*)$|\\1# \\2|" <<< "$content" 2>/dev/null) || new_content="$content"
+  write_file_if_changed "$conf" "$new_content" "" 1 || rc=$?
+  if [[ "$rc" -eq 2 ]] || LC_ALL=C grep -qE "$key_regex" "$conf" 2>/dev/null; then
     log_warning "尝试注释 ${conf} 中的 ${key} 失败"
     return 1
   fi
@@ -245,7 +249,7 @@ module_plan() {
       dup+="${dup:+、}${key}"
     fi
   done
-  [[ -n "$dup" ]] && echo "write|/etc/sysctl.conf|永久启/停时注释掉重复项 ${dup}（sed -i 原地修改，不另做备份）"
+  [[ -n "$dup" ]] && echo "write|/etc/sysctl.conf|永久启/停时注释掉重复项 ${dup}（原件备份到 /var/backups/debnas/）"
   echo "service|systemd-sysctl|永久启/停后重启以应用配置"
   return 0
 }

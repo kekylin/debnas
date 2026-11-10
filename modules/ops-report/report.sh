@@ -581,55 +581,97 @@ ops_physical_disk_usage() {
   done < <(lsblk -dnbo NAME,SIZE,TYPE 2>/dev/null || true)
 }
 
+# 磁盘容量预测：按"基线快照 → 当前"的使用率增速线性外推到 90% 告警线
+# 快照文件 disk-usage.snapshot 每行 "盘名|使用率|采集时刻(epoch)"；每块盘每天保留一条、最多保留 400 天。
+# 基线取报告周期内（周期天数 + 1 天余量）最早、且距今不少于 1 天的一条：
+#   同一天内重复生成报告不会把基线冲掉，也不会拿几分钟的间隔外推出离谱的增速
+# 输出 OPS_DISK_FORECAST：每行 "盘名|当前使用率|基线天数|日增速(百分点/天)|距 90% 天数"
+#   没有可用基线时后三列为空；增速 <= 0 或已达 90% 时最后一列为空
 ops_collect_disk_trend() {
   OPS_DISK_FORECAST=""
   [[ -n "${OPS_SNAPSHOT_DIR:-}" ]] || return 0
   mkdir -p "$OPS_SNAPSHOT_DIR" 2>/dev/null || true
 
   local snapshot="${OPS_SNAPSHOT_DIR}/disk-usage.snapshot"
-  local now_ts
+  local now_ts period="${OPS_REPORT_DAYS:-7}"
   now_ts=$(date '+%s')
-  local -A old_pct=()
-  local line name pct ts
+  [[ "$period" =~ ^[0-9]+$ ]] || period=7
+  local min_ts=$((now_ts - (period + 1) * 86400)) keep_ts=$((now_ts - 400 * 86400)) today=$((now_ts / 86400))
+  local -A base_pct=() base_ts=()
+  local -a kept=()
+  local name pct ts
   if [[ -f "$snapshot" ]]; then
     while IFS='|' read -r name pct ts; do
-      [[ -n "$name" ]] || continue
-      old_pct["$name"]="${pct}|${ts}"
+      [[ "$name" =~ ^[a-zA-Z0-9_]+$ && "$pct" =~ ^[0-9]+$ && "$ts" =~ ^[0-9]+$ ]] || continue
+      [[ "$ts" -gt "$keep_ts" && "$ts" -le "$now_ts" ]] || continue
+      # 当天已有的样本由本次采集替换
+      [[ $((ts / 86400)) -eq "$today" ]] || kept+=("${name}|${pct}|${ts}")
+      if [[ "$ts" -ge "$min_ts" && $((now_ts - ts)) -ge 86400 ]] \
+        && [[ -z "${base_ts[$name]:-}" || "$ts" -lt "${base_ts[$name]:-0}" ]]; then
+        base_pct[$name]="$pct"
+        base_ts[$name]="$ts"
+      fi
     done < "$snapshot"
   fi
 
-  local forecast_rows=""
+  local forecast_rows="" span growth eta
   while IFS='|' read -r name _ _ pct _; do
     [[ "$name" =~ ^[a-zA-Z0-9_]+$ ]] || continue
     [[ "$pct" =~ ^[0-9]+$ ]] || continue
-    local old="${old_pct["$name"]:-}"
-    if [[ -n "$old" ]]; then
-      local old_pct_val old_ts elapsed growth forecast="待基线"
-      IFS='|' read -r old_pct_val old_ts <<< "$old"
-      elapsed=$((now_ts - old_ts))
-      if [[ "$elapsed" -gt 0 && "$old_pct_val" =~ ^[0-9]+$ ]]; then
-        growth=$(awk -v c="$pct" -v o="$old_pct_val" -v e="$elapsed" \
-          'BEGIN { if (e > 0) printf "%.2f", (c - o) * 86400 / e; else print "0.00" }')
-        if awk -v g="$growth" 'BEGIN { exit !(g > 0) }' && [[ "$pct" -lt 90 ]]; then
-          local days
-          days=$(awk -v g="$growth" 'BEGIN { printf "%.0f", (90 - '"$pct"') / g }')
-          forecast="约 ${days} 天"
-        fi
-        forecast_rows="${forecast_rows:+${forecast_rows}
-}${name}|${forecast}|${growth}"
-      fi
+    span="" growth="" eta=""
+    if [[ -n "${base_ts[$name]:-}" ]]; then
+      IFS=' ' read -r span growth eta < <(awk -v c="$pct" -v o="${base_pct[$name]}" \
+        -v e="$((now_ts - ${base_ts[$name]}))" 'BEGIN {
+          g = (c - o) * 86400 / e
+          eta = (g > 0 && c < 90) ? sprintf("%.0f", (90 - c) / g) : "-"
+          printf "%.0f %.2f %s\n", e / 86400, g, eta
+        }')
+      [[ "$eta" == "-" ]] && eta=""
     fi
-  done <<< "${OPS_DISK_USAGE_LINES}"
-  # shellcheck disable=SC2034  # 容量预测已计算但报告暂未渲染（保留快照基线，见设计文档 7.3）
+    forecast_rows="${forecast_rows:+${forecast_rows}
+}${name}|${pct}|${span}|${growth}|${eta}"
+    kept+=("${name}|${pct}|${now_ts}")
+  done <<< "${OPS_DISK_USAGE_LINES:-}"
   OPS_DISK_FORECAST="$forecast_rows"
 
   local tmp="${snapshot}.tmp"
-  : > "$tmp"
-  while IFS='|' read -r name _ _ pct _; do
-    [[ "$name" =~ ^[a-zA-Z0-9_]+$ ]] || continue
-    printf '%s|%s|%s\n' "$name" "$pct" "$now_ts" >> "$tmp"
-  done <<< "${OPS_DISK_USAGE_LINES}"
+  if [[ ${#kept[@]} -gt 0 ]]; then
+    printf '%s\n' "${kept[@]}" > "$tmp"
+  else
+    : > "$tmp"
+  fi
   mv "$tmp" "$snapshot" 2>/dev/null || true
+}
+
+# 运行中内核对应的 Debian 包版本（stdout 一行）
+# 包名是 linux-image-$(uname -r)（形如 linux-image-6.1.0-18-amd64，带架构后缀）；元包 linux-image-amd64 的版本
+# 是"最新已安装内核"，重启前与运行中的内核不一致，cloud/rt 等风味的元包名也不同，所以不查元包。
+# 查不到（容器、PVE 等非 Debian 内核）时取 uname -v 里的版本串（"… Debian 6.1.76-1 (2024-02-01)" → 6.1.76-1），
+# 仍取不到则输出 uname -r
+ops_kernel_pkg_version() {
+  local rel ver=""
+  rel=$(uname -r 2>/dev/null || true)
+  if [[ -n "$rel" ]] && command -v dpkg-query >/dev/null 2>&1; then
+    # dpkg-query 对"已知但未安装"的包也返回 0（Version 为空），按安装状态过滤
+    ver=$(dpkg-query -W -f='${db:Status-Status} ${Version}\n' "linux-image-${rel}" 2>/dev/null \
+      | awk '$1 == "installed" && $2 != "" { print $2; exit }' || true)
+  fi
+  if [[ -z "$ver" ]]; then
+    ver=$(uname -v 2>/dev/null \
+      | awk '{ for (i = 2; i <= NF; i++) if ($i ~ /^\(/ && $(i - 1) ~ /^[0-9]+[.][0-9]/) { print $(i - 1); exit } }' || true)
+  fi
+  printf '%s\n' "${ver:-${rel:-未知}}"
+}
+
+# 最近一次内核元包升级：stdout 一行 "升级前版本|时间"，没有记录时无输出
+# 参数：$1 - dpkg 日志（可选，默认 /var/log/dpkg.log）
+# 元包名随风味/架构变化（linux-image-amd64、linux-image-cloud-amd64、linux-image-arm64 …）；
+# dpkg.log 行格式："日期 时间 upgrade 包名:架构 旧版本 新版本"，上一版本是第 5 列
+ops_kernel_prev_upgrade() {
+  local log="${1:-/var/log/dpkg.log}"
+  [[ -f "$log" ]] || return 0
+  awk '$3 == "upgrade" && $4 ~ /^linux-image-([a-z]+-)?(amd64|arm64|686|686-pae)(:|$)/ { prev = $5; at = $1 " " $2 }
+    END { if (prev != "") print prev "|" at }' "$log" 2>/dev/null || true
 }
 
 # 输出安全源索引里的包名（去重，每行一个）
@@ -706,9 +748,7 @@ ops_collect_updates() {
   docker_version="未安装"
   if command -v dpkg-query >/dev/null 2>&1; then
     os_version=$(dpkg-query -W -f='${Version}' base-files 2>/dev/null || echo "未知")
-    kernel_version=$(dpkg-query -W -f='${Version}' linux-image-amd64 2>/dev/null \
-      || dpkg-query -W -f='${Version}' "linux-image-$(uname -r 2>/dev/null | sed 's/-amd64$//')" 2>/dev/null \
-      || echo "${OPS_KERNEL:-未知}")
+    kernel_version=$(ops_kernel_pkg_version)
     ssl_version=$(dpkg-query -W -f='${Version}' openssl 2>/dev/null || echo "未安装")
     docker_version=$(dpkg-query -W -f='${Version}' docker.io 2>/dev/null || true)
     if [[ -z "$docker_version" ]] && command -v docker >/dev/null 2>&1; then
@@ -718,12 +758,7 @@ ops_collect_updates() {
   fi
 
   local prev_kernel="" prev_time=""
-  if [[ -f /var/log/dpkg.log ]]; then
-    prev_kernel=$(grep 'linux-image-amd64' /var/log/dpkg.log 2>/dev/null \
-      | grep ' upgrade ' | tail -1 | awk '{print $6}' || true)
-    prev_time=$(grep 'linux-image-amd64' /var/log/dpkg.log 2>/dev/null \
-      | grep ' upgrade ' | tail -1 | awk '{print $1, $2}' || true)
-  fi
+  IFS='|' read -r prev_kernel prev_time <<< "$(ops_kernel_prev_upgrade /var/log/dpkg.log)"
   OPS_SYSTEM_VERSION_LINES=$(printf '操作系统|Debian %s|无数据|-\n内核|%s|%s|%s\nOpenSSL|%s|无数据|-\nDocker|%s|无数据|-\n' \
     "$os_version" "$kernel_version" "${prev_kernel:-无数据}" "${prev_time:--}" \
     "$ssl_version" "$docker_version")
@@ -1867,6 +1902,33 @@ ops_render_disk_capacity_chart() {
   fi
 }
 
+# 磁盘容量预测表（三列：磁盘 / 当前使用率 / 预测），数据来自 ops_collect_disk_trend 的 OPS_DISK_FORECAST
+ops_render_disk_forecast_table() {
+  local out="" name pct span growth eta text cls
+  while IFS='|' read -r name pct span growth eta; do
+    [[ -n "$name" ]] || continue
+    cls=""
+    if [[ "$pct" =~ ^[0-9]+$ && "$pct" -ge 90 ]]; then
+      text="已达 90% 告警线"; cls=' class="warn"'
+    elif [[ ! "$span" =~ ^[0-9]+$ ]]; then
+      text="数据不足（需要相隔 1 天以上的两次报告）"; cls=' class="muted"'
+    elif [[ ! "$eta" =~ ^[0-9]+$ ]]; then
+      text="近 ${span} 天无增长"
+    else
+      if [[ "$eta" -lt 1 ]]; then eta="不足 1 天"; else eta="约 ${eta} 天"; fi
+      text="按近 ${span} 天增速（+${growth}%/天），${eta}后达到 90%"
+      [[ "$eta" == "不足 1 天" || "${eta//[!0-9]/}" -le 30 ]] && cls=' class="warn"'
+    fi
+    out="${out}
+<tr><td>$(ops_html_escape "$name")</td><td>$(ops_html_escape "${pct}%")</td><td${cls}>$(ops_html_escape "$text")</td></tr>"
+  done <<< "${OPS_DISK_FORECAST:-}"
+  if [[ -z "$out" ]]; then
+    echo '<tr><td colspan="3" class="muted">数据不足</td></tr>'
+  else
+    printf '%s' "$out"
+  fi
+}
+
 ops_render_disk_io_chart() {
   local name avg_rd avg_wr max_util
   local -i row=0 y=32
@@ -1955,13 +2017,15 @@ ops_render_service_list_table() {
     esac
     type="systemd"
     [[ "$name" == "DSM" ]] && type="虚拟机"
-    note="-"
+    # 错误与重启两条信息都保留，用"；"连接；都没有时显示 "-"
+    note=""
     if [[ "$errors" =~ ^[0-9]+$ ]] && [[ "$errors" -gt 0 ]]; then
       note="周期错误 ${errors} 次"
     fi
     if [[ "$restarts" =~ ^[0-9]+$ ]] && [[ "$restarts" -gt 0 ]]; then
-      note="${note:+- }周期重启 ${restarts} 次"
+      note="${note:+${note}；}周期重启 ${restarts} 次"
     fi
+    [[ -n "$note" ]] || note="-"
     out="${out}
 <tr><td${cls}>$(ops_html_escape "$name")</td><td${cls}>$(ops_html_escape "$state")</td><td>${type}</td><td>${errors:-0}</td><td>${restarts:-0}</td><td>$(ops_html_escape "$start")</td><td>$(ops_html_escape "$note")</td></tr>"
   done <<< "${OPS_SERVICE_STABILITY}"
@@ -2131,6 +2195,7 @@ ops_render_anomaly_table() {
   security_state="未发现"; security_note="无待装安全更新"
   service_state="未发现"; service_note="无失败服务"
   login_state="无数据"; login_note="无登录日志数据"
+  [[ -z "${OPS_LOGIN_SOURCE:-}" && -n "${OPS_LOGIN_SOURCE_NOTE:-}" ]] && login_note="无登录数据源（未安装 wtmpdb / last）"
   local net_days="${OPS_SYSSTAT_SAMPLE_DAYS:-0}"
   [[ "$net_days" -gt 0 ]] || net_days="${OPS_REPORT_DAYS:-7}"
   if [[ "$OPS_CPU_AVG" =~ ^[0-9.]+$ ]] && awk -v v="$OPS_CPU_AVG" 'BEGIN { exit !(v >= 80) }'; then
@@ -2380,6 +2445,7 @@ ${report_css}
 
       <h2>2. 登录与身份审计</h2>
       <p class="section-lead">成功登录 ${OPS_LOGIN_SUCCESS_COUNT} 次，失败 ${OPS_LOGIN_FAIL_COUNT} 次，封禁 $(ops_ban_label "${OPS_FAIL_BAN_COUNT:-未启用}")；${OPS_ABNORMAL_LOGIN_COUNT:-0} 项异常登录待确认$(ops_html_escape "$fail_source_summary")。</p>
+$([[ -z "${OPS_LOGIN_SOURCE_NOTE:-}" ]] || printf '      <p class="muted">%s</p>\n' "$(ops_html_escape "$OPS_LOGIN_SOURCE_NOTE")")
       <h3>按用户统计</h3>
       <div class="wide-table-wrap">
         <table class="wide-table">
@@ -2494,6 +2560,11 @@ ${report_css}
           $(ops_render_disk_io_chart)
         </div>
       </div>
+      <h3>磁盘容量预测</h3>
+      <table>
+        <tr><th>磁盘</th><th>当前使用率</th><th>预测（按使用率增速线性外推）</th></tr>
+        $(ops_render_disk_forecast_table)
+      </table>
 
       <h2>7. 存储与数据安全</h2>
       <p class="section-lead">${OPS_HEALTH_RAID_STATE}；$(ops_html_escape "$OPS_HEALTH_SMART_SUMMARY")</p>

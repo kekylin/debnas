@@ -2,16 +2,26 @@
 # tools/release.sh — DebNAS 发布脚本（维护者使用，不随安装部署）
 #
 # 用法:
-#   bash tools/release.sh --embed-key <公钥文件>   # 配置/轮换发布公钥（写 keys/ 与 install.sh 内嵌区块）
+#   bash tools/release.sh --embed-key <公钥文件>   # 配置发布公钥（写 keys/ 与 install.sh 内嵌区块，只留这一把）
+#   bash tools/release.sh --embed-key <新公钥文件> --keep-old
+#                                                  # 换钥过渡：新公钥 + 现有 keys/ 里的旧公钥并存
 #   bash tools/release.sh --bump <tag>             # 把 install.sh 默认版本、lib/system/args.sh 的
 #                                                  # DEBNAS_VERSION 与 README 安装命令改为 <tag>
 #   bash tools/release.sh --sync-verify            # 把 lib/system/installer.sh 的共用区块同步到 install.sh
-#   bash tools/release.sh --check-keys             # 检查 install.sh 内嵌公钥与 keys/ 是否一致
-#   bash tools/release.sh <tag> <GPG 密钥 ID>       # 生成发布产物到 dist/<tag>/、签名并自检
+#   bash tools/release.sh --check-keys             # 检查 install.sh 内嵌公钥与 keys/ 是否一致（支持多把）
+#   bash tools/release.sh <tag> <GPG 密钥 ID>       # 生成发布产物到 dist/<tag>/、签名并自检，
+#                                                  # 并生成版本指针 LATEST / LATEST.asc
+#   bash tools/release.sh --sign-latest <tag> <GPG 密钥 ID>
+#                                                  # 单独（重新）生成版本指针 LATEST / LATEST.asc
 #
 # 共用代码单一来源：lib/system/installer.sh 中的 DEBNAS-RELEASE-VERIFY（发布产物校验）与
-#   DEBNAS-DEPLOY（安装目录整树替换 + 更新锁）区块；install.sh 必须自包含，其中的同名区块由
-#   --embed-key / --bump / --sync-verify 同步生成，构建发布时检查 tag 内两份是否一致。
+#   DEBNAS-DEPLOY（安装目录整树替换 + 更新锁 + 全局命令包装脚本）区块；install.sh 必须自包含，
+#   其中的同名区块由 --embed-key / --bump / --sync-verify 同步生成，构建发布时检查 tag 内两份是否一致。
+#
+# 版本指针：仓库根的 LATEST（一行 tag）与 LATEST.asc（发布密钥对它的分离签名）。debnas update 从
+#   main 分支 raw 地址取这两个文件，用已安装目录 keys/ 里的公钥验签后才采用其中的版本号；
+#   两个文件都取不到时回退读 main 分支 install.sh 的 DEBNAS_RELEASE_TAG（未签名，只升不降）。
+#   它们不进发布包（.gitattributes export-ignore）：tag 打出来时仓库里的 LATEST 还是上一个版本。
 #
 # ==================== 首次发布流程（完整步骤） ====================
 # 1. 生成发布密钥（在可信、最好离线的机器上；主密钥只做认证，日常签名用子密钥）:
@@ -26,9 +36,6 @@
 #      bash tools/release.sh --embed-key /tmp/debnas-release.asc
 #    写 keys/debnas-release.asc、keys/debnas-release.fpr 与 install.sh 内嵌区块；核对打印的指纹后提交
 #    （git add keys/ install.sh && git commit），并把指纹公布在 README/项目主页供用户交叉核对。
-#    keys/debnas-release.fpr 每行一个主密钥指纹，debnas update 任一匹配即通过（为换钥留的口子）；
-#    目前 --embed-key 只写单把公钥、构建时要求 keys/ 与内嵌公钥逐字节一致，平滑换钥尚无完整流程，
-#    换钥按下方第 9 条让用户重跑 install.sh。
 # 3. 改版本号（先 bump 再打 tag，tag 内 install.sh 默认安装的才是它自己这个版本）:
 #      bash tools/release.sh --bump vX.Y.Z      # install.sh 默认版本 + args.sh DEBNAS_VERSION + README
 #      git commit -am "chore(release): vX.Y.Z"
@@ -38,6 +45,7 @@
 #      bash tools/release.sh vX.Y.Z <签名密钥 ID 或指纹>
 #    检查工作区干净、tag 为附注 tag、tag 内 install.sh 与 lib 共用区块一致、内嵌公钥与 tag 内 keys/ 一致、
 #    签名密钥属于内嵌公钥；产物输出到 dist/vX.Y.Z/，并用 tag 内 install.sh 的验证函数走一遍用户侧验证。
+#    正式版本（非 rc/beta）还会在工作区生成 LATEST / LATEST.asc（先不要提交推送，见第 8 步）。
 # 6. 推送并上传四个文件（debnas-vX.Y.Z.tar.gz、install.sh、SHA256SUMS、SHA256SUMS.asc）:
 #      git push && git push origin vX.Y.Z（以及 Gitee 远端：git push gitee main vX.Y.Z）
 #      GitHub：gh release create vX.Y.Z --verify-tag dist/vX.Y.Z/*（或网页 Releases 上传）
@@ -46,18 +54,40 @@
 #    Gitee 附件路径 https://gitee.com/kekylin/debnas/releases/download/<tag>/<file> 是推测格式，
 #    首次发布必须实测；不一致时同步修改 install.sh 的 RELEASE_CN_BASE 与
 #    lib/system/installer.sh 的 DEBNAS_RELEASE_CN_BASE，然后从第 3 步重新发版。
-# 8. main 分支上 install.sh 的 DEBNAS_RELEASE_TAG 是 debnas update 发现新版本的来源，务必推送。
+# 8. 两个平台的附件都能下载之后，提交并推送版本指针（用户的 debnas update 由此发现新版本）:
+#      git add LATEST LATEST.asc && git commit -m "chore(release): LATEST → vX.Y.Z" && git push
+#    （以及 Gitee 远端）。先推指针后传附件会让 update 找到一个还下载不到的版本。
+#    main 分支 install.sh 的 DEBNAS_RELEASE_TAG 仍要保持最新：它是取不到 LATEST 时的回退来源，
+#    也是 v2026.11.0 及更早版本发现新版本的唯一来源。
 # 9. 老用户升级：签名发布之前安装的机器没有 keys/ 与 RELEASE 标记，debnas update 会拒绝签名更新。
 #    需过渡一次：重新执行新 tag 的 install.sh（推荐，同时刷新 /usr/local/bin/debnas 包装脚本），
 #    或 debnas update --unsigned（不校验地拉取 main 分支，之后的更新即走签名校验）。请在 CHANGELOG/README 公告。
-# 私钥泄露：立即发布吊销证书，用新密钥 --embed-key 并发版；已安装用户需重新执行新 tag 的 install.sh。
+#
+# ==================== 更换发布密钥（平滑过渡，两个版本完成） ====================
+# 现象：用户机器上的 debnas update 只信任它已安装目录里的 keys/。直接换成新钥发版，
+#   老用户手里只有旧公钥，验不过新钥签的包。所以要先发一个"两把都认"的过渡版。
+# A. 过渡版 vN（仍用旧钥签名）:
+#      gpg --armor --export-options export-minimal --export <新主密钥指纹> > /tmp/new.asc
+#      bash tools/release.sh --embed-key /tmp/new.asc --keep-old
+#    结果：keys/debnas-release.asc 与 install.sh 内嵌区块含新旧两把公钥，keys/debnas-release.fpr 两行，
+#    install.sh 的 DEBNAS_RELEASE_KEY_FPR 为逗号分隔的两个指纹。提交后按上面第 3–8 步发版，
+#    第 5 步与 LATEST 都用**旧钥**签名（老用户只认旧钥）。升级到 vN 的用户从此两把都认。
+# B. 下一个版本 vN+1（改用新钥签名，同时移除旧钥）:
+#      bash tools/release.sh --embed-key /tmp/new.asc          # 不带 --keep-old：只留新钥
+#    提交后发版，第 5 步与 LATEST 用**新钥**签名。已升级到 vN 的用户能验过（它们认新钥）；
+#    还停在 vN 之前的用户验不过，需要先 debnas update --tag vN 再更新，或重新执行 install.sh
+#    —— 在 CHANGELOG / README 公告，并让 vN 存在足够久再发 vN+1。
+#    注意 LATEST 一旦改用新钥签名，vN 之前的用户自动更新会报"LATEST 签名校验未通过"，同样按上面处理。
+# 私钥泄露：没有过渡期可言。立即发布吊销证书，用新密钥 --embed-key（不带 --keep-old）并发版；
+#   已安装用户需重新执行新 tag 的 install.sh。
 #
 # 发布产物（每个 tag）:
-#   debnas-<tag>.tar.gz   git archive --prefix=debnas/ <tag>（内容与 tag 一致）
+#   debnas-<tag>.tar.gz   git archive --prefix=debnas/ <tag>（内容与 tag 一致；tests/、docs/、tools/、
+#                         .github/ 等按 .gitattributes 的 export-ignore 不进包，keys/ 必须在包里）
 #   install.sh            tag 内的 install.sh（供谨慎用户手动核验引导脚本）
 #   SHA256SUMS            以上两个文件的 sha256
 #   SHA256SUMS.asc        对 SHA256SUMS 的 GPG 分离签名（ASCII armor）
-# （维护者本地文档 docs/MAINTENANCE.md「发布流程」有更详细的说明，但不随仓库分发）
+# （docs/MAINTENANCE.md「发布流程」有更详细的说明）
 
 set -euo pipefail
 IFS=$'\n\t'
@@ -68,6 +98,8 @@ INSTALL_SH="${REPO_ROOT}/install.sh"
 README_MD="${REPO_ROOT}/README.md"
 KEY_ASC="${REPO_ROOT}/keys/debnas-release.asc"
 KEY_FPR="${REPO_ROOT}/keys/debnas-release.fpr"
+LATEST_FILE="${REPO_ROOT}/LATEST"
+LATEST_SIG="${REPO_ROOT}/LATEST.asc"
 MARK_BEGIN="# >>> DEBNAS-RELEASE-PUBKEY-BEGIN"
 MARK_END="# <<< DEBNAS-RELEASE-PUBKEY-END"
 LIB_INSTALLER="${REPO_ROOT}/lib/system/installer.sh"
@@ -175,8 +207,10 @@ sync_verify_block() {
 
 # ==================== --embed-key ====================
 
+# 参数：$1 - 新公钥文件（恰好一把主密钥）
+#       $2 - 1 = 保留 keys/ 里现有的旧公钥（换钥过渡期新旧并存；新钥排第一），默认 0 = 只留新钥
 embed_key() {
-  local keyfile="${1:-}"
+  local keyfile="${1:-}" keep_old="${2:-0}"
   [[ -n "$keyfile" && -f "$keyfile" ]] || die "公钥文件不存在: ${keyfile}"
   need_cmd gpg awk base64 cmp
   sync_verify_block
@@ -208,18 +242,48 @@ embed_key() {
   [[ "$caps" == *S* ]] || die "该密钥（含子密钥）没有可用的签名能力"
 
   gpg --homedir "$home" --batch --quiet --import "$keyfile" 2>/dev/null || die "导入公钥失败"
-  local norm="${_TMP}/norm.asc" bin="${_TMP}/norm.gpg"
-  gpg --homedir "$home" --batch --armor --export-options export-minimal --export "$fpr" > "$norm"
-  gpg --homedir "$home" --batch --export-options export-minimal --export "$fpr" > "$bin"
+
+  # 要写入的主密钥指纹：新钥在前；--keep-old 时后接 keys/ 里现有的其他指纹
+  local -a fprs=("$fpr")
+  if [[ "$keep_old" -eq 1 ]]; then
+    [[ -f "$KEY_ASC" && -f "$KEY_FPR" ]] || die "--keep-old 需要现有的 keys/debnas-release.asc 与 keys/debnas-release.fpr"
+    local old_list old old_validity
+    old_list=$(read_fpr_file "$KEY_FPR") || die "现有指纹文件格式错误：${KEY_FPR}"
+    gpg --homedir "$home" --batch --quiet --import "$KEY_ASC" 2>/dev/null || die "导入现有 keys/debnas-release.asc 失败"
+    while IFS= read -r old; do
+      [[ -n "$old" && "$old" != "$fpr" ]] || continue
+      old_validity=$(gpg --homedir "$home" --batch --with-colons --list-keys "$old" 2>/dev/null \
+        | awk -F: '$1 == "pub" { print $2; exit }') || old_validity=""
+      [[ -n "$old_validity" ]] || die "现有 keys/debnas-release.asc 中没有指纹文件列出的公钥 ${old}"
+      case "$old_validity" in
+        r) die "旧密钥 ${old} 已吊销，不能保留（私钥泄露时不要用 --keep-old）" ;;
+        e) warn "旧密钥 ${old} 已过期：它签的产物本来就验不过，保留没有意义" ;;
+      esac
+      fprs+=("$old")
+    done < <(tr ',' '\n' <<<"$old_list")
+    if [[ "${#fprs[@]}" -eq 1 ]]; then
+      warn "现有 keys/ 中没有与新钥不同的旧公钥，--keep-old 无效果"
+    fi
+  fi
+
+  local norm="${_TMP}/norm.asc" bin="${_TMP}/norm.gpg" f
+  : > "$norm"; : > "$bin"
+  for f in "${fprs[@]}"; do
+    gpg --homedir "$home" --batch --armor --export-options export-minimal --export "$f" >> "$norm"
+    gpg --homedir "$home" --batch --export-options export-minimal --export "$f" >> "$bin"
+  done
   [[ -s "$norm" && -s "$bin" ]] || die "导出规范化公钥失败"
+  [[ "$(grep -c '^-----BEGIN PGP PUBLIC KEY BLOCK-----' "$norm" || true)" -eq "${#fprs[@]}" ]] || die "导出规范化公钥失败（公钥块数量不符）"
   if grep -q "'" "$norm"; then
     die "规范化公钥中含单引号，无法内嵌（异常的 armor 头）"
   fi
+  local fpr_csv
+  fpr_csv=$(IFS=','; printf '%s' "${fprs[*]}")
 
   # 写 keys/
   mkdir -p "$(dirname "$KEY_ASC")"
   cat "$norm" > "$KEY_ASC"
-  printf '%s\n' "$fpr" > "$KEY_FPR"
+  printf '%s\n' "${fprs[@]}" > "$KEY_FPR"
 
   # 写 install.sh 内嵌区块（只替换两个标记之间的内容）
   grep -q "^${MARK_BEGIN}" "$INSTALL_SH" || die "install.sh 中找不到内嵌公钥起始标记"
@@ -228,7 +292,8 @@ embed_key() {
   {
     echo "# 发布公钥主密钥指纹（大写十六进制无空格）与 ASCII armor 公钥（与 keys/debnas-release.asc 一致）"
     echo "# 两者为空 = 维护者尚未配置发布公钥，签名安装不可用"
-    printf 'readonly DEBNAS_RELEASE_KEY_FPR="%s"\n' "$fpr"
+    echo "# 换钥过渡期：指纹为逗号分隔的多个（新钥在前），公钥为依次排列的多个公钥块，任一把签的产物都能通过"
+    printf 'readonly DEBNAS_RELEASE_KEY_FPR="%s"\n' "$fpr_csv"
     printf "readonly DEBNAS_RELEASE_PUBKEY='"
     # 去掉末尾换行后接右引号
     printf '%s' "$(cat "$norm")"
@@ -244,11 +309,15 @@ embed_key() {
 
   # 自检：install.sh 内嵌公钥解码结果须与 gpg 导出的二进制完全一致
   bash -c 'source "$1" && dearmor_pubkey "$DEBNAS_RELEASE_PUBKEY" "$2" && [[ "$DEBNAS_RELEASE_KEY_FPR" == "$3" ]]' \
-    _ "$INSTALL_SH" "${_TMP}/embedded.gpg" "$fpr" || die "自检失败：install.sh 内嵌公钥无法解码或指纹不符"
+    _ "$INSTALL_SH" "${_TMP}/embedded.gpg" "$fpr_csv" || die "自检失败：install.sh 内嵌公钥无法解码或指纹不符"
   cmp -s "${_TMP}/embedded.gpg" "$bin" || die "自检失败：内嵌公钥解码结果与原公钥不一致"
 
   ok "已写入 keys/debnas-release.asc、keys/debnas-release.fpr 与 install.sh 内嵌区块"
   ok "主密钥指纹: ${fpr}"
+  if [[ "${#fprs[@]}" -gt 1 ]]; then
+    ok "同时保留旧公钥: $(IFS=' '; printf '%s' "${fprs[*]:1}")"
+    info "过渡版请继续用旧钥签名发布；下一个版本再执行不带 --keep-old 的 --embed-key 移除旧钥并改用新钥签名"
+  fi
   info "请核对指纹无误后提交：git add keys/ install.sh && git commit -m 'chore(release): 配置发布公钥'"
 }
 
@@ -272,21 +341,28 @@ read_fpr_file() {
   printf '%s\n' "$out"
 }
 
-# 检查 install.sh 内嵌公钥与 keys/ 副本一致：两份公钥解码后的二进制完全相同，
-# 内嵌指纹（可为逗号分隔的多把）都在指纹文件中
+# 逗号分隔的指纹列表 → 排序后的逐行列表（用于不计顺序的集合比较）
+sorted_fprs() {
+  tr ',' '\n' <<<"${1:-}" | sort -u
+}
+
+# 检查 install.sh 内嵌公钥与 keys/ 副本一致（单把或换钥过渡期的多把）：
+#   - 内嵌指纹集合 = 指纹文件中的指纹集合；
+#   - 两份公钥解码后的二进制完全相同；
+#   - 本机有 gpg 时：公钥文件里实际包含的主密钥 = 指纹文件列出的主密钥（不多不少）
 # 参数：$1 - install.sh  $2 - keys/debnas-release.asc  $3 - keys/debnas-release.fpr
-# 输出：内嵌指纹；不一致时 die
+# 输出：内嵌指纹（逗号分隔）；不一致时 die
 check_keys() {
-  local inst="$1" asc="$2" fprf="$3" emb_fpr file_fprs f tmpd
+  local inst="$1" asc="$2" fprf="$3" emb_fpr file_fprs tmpd
   [[ -f "$inst" && -f "$asc" && -f "$fprf" ]] || die "缺少文件：${inst} / ${asc} / ${fprf}"
   emb_fpr=$(sed -n 's/^readonly DEBNAS_RELEASE_KEY_FPR="\([^"]*\)"$/\1/p' "$inst" | head -n 1)
   emb_fpr="${emb_fpr//[[:space:]]/}"; emb_fpr="${emb_fpr^^}"
   [[ -n "$emb_fpr" ]] || die "install.sh 未内嵌发布公钥：先 --embed-key 并提交（构建发布时还需重新打 tag）"
+  [[ "$emb_fpr" =~ ^([0-9A-F]{40}|[0-9A-F]{64})(,([0-9A-F]{40}|[0-9A-F]{64}))*$ ]] || die "install.sh 内嵌指纹格式错误：${emb_fpr}"
   file_fprs=$(read_fpr_file "$fprf") || die "指纹文件格式错误（每行一个 40/64 位十六进制主密钥指纹）：${fprf}"
-  local IFS=','
-  for f in $emb_fpr; do
-    [[ ",${file_fprs}," == *",${f},"* ]] || die "install.sh 内嵌指纹 ${f} 不在 keys/debnas-release.fpr 中"
-  done
+  if [[ "$(sorted_fprs "$emb_fpr")" != "$(sorted_fprs "$file_fprs")" ]]; then
+    die "install.sh 内嵌指纹（${emb_fpr}）与 keys/debnas-release.fpr（${file_fprs}）不一致（应由 --embed-key 同时生成）"
+  fi
   tmpd=$(mktemp -d "${TMPDIR:-/tmp}/debnas-keys.XXXXXX")
   if ! bash -c 'source "$1" && dearmor_pubkey "$DEBNAS_RELEASE_PUBKEY" "$2" && release_dearmor "$3" < "$4"' \
       _ "$inst" "${tmpd}/emb.gpg" "${tmpd}/asc.gpg" "$asc"; then
@@ -296,6 +372,16 @@ check_keys() {
   if ! cmp -s "${tmpd}/emb.gpg" "${tmpd}/asc.gpg"; then
     rm -rf -- "${tmpd:?}"
     die "keys/debnas-release.asc 与 install.sh 内嵌公钥不一致（应由 --embed-key 同时生成）"
+  fi
+  if command -v gpg >/dev/null 2>&1; then
+    local actual
+    mkdir -m 700 "${tmpd}/gnupg"
+    actual=$(gpg --homedir "${tmpd}/gnupg" --batch --with-colons --show-keys "${tmpd}/asc.gpg" 2>/dev/null \
+      | awk -F: '$1 == "pub" { p = 1; next } p && $1 == "fpr" { print toupper($10); p = 0 }' | sort -u) || actual=""
+    if [[ "$actual" != "$(sorted_fprs "$file_fprs")" ]]; then
+      rm -rf -- "${tmpd:?}"
+      die "keys/debnas-release.asc 实际包含的主密钥（$(tr '\n' ' ' <<<"$actual")）与 keys/debnas-release.fpr（${file_fprs}）不一致"
+    fi
   fi
   rm -rf -- "${tmpd:?}"
   printf '%s\n' "$emb_fpr"
@@ -318,6 +404,54 @@ bump_tag() {
   sed -i "s/^readonly DEBNAS_VERSION=\"\${DEBNAS_VERSION:-[^\"]*}\"$/readonly DEBNAS_VERSION=\"\${DEBNAS_VERSION:-${tag}}\"/" "$ARGS_SH"
   grep -q "^readonly DEBNAS_VERSION=\"\${DEBNAS_VERSION:-${tag}}\"$" "$ARGS_SH" || die "更新 DEBNAS_VERSION 失败"
   ok "install.sh 默认版本、lib/system/args.sh 的 DEBNAS_VERSION 与 README 安装命令已改为 ${tag}"
+}
+
+# ==================== 版本指针（--sign-latest） ====================
+
+# 正式版本号（v1.2.3 / 2026.11.0）；带 -rc1、~beta 等后缀的预发布版本不应成为"最新稳定版本"
+is_stable_tag() {
+  [[ "${1:-}" =~ ^[vV]?[0-9]+(\.[0-9]+)*$ ]]
+}
+
+# 生成仓库根的 LATEST（一行 tag）与 LATEST.asc（分离签名），并用 lib 的验证函数自检
+# 参数：$1 - tag  $2 - GPG 密钥 ID（主密钥须在 keys/debnas-release.fpr 之内）
+sign_latest() {
+  local tag="${1:-}" keyid="${2:-}"
+  valid_tag "$tag" || die "非法的 tag: ${tag}"
+  [[ -n "$keyid" ]] || die "缺少 GPG 密钥 ID"
+  need_cmd gpg gpgv awk base64
+  [[ -f "$KEY_ASC" && -f "$KEY_FPR" ]] || die "缺少 keys/debnas-release.asc / .fpr：先 --embed-key"
+  if git -C "$REPO_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
+    git -C "$REPO_ROOT" rev-parse -q --verify "refs/tags/${tag}" >/dev/null || die "tag 不存在: ${tag}（LATEST 只能指向已发布的版本）"
+  fi
+
+  local file_fprs sign_fpr
+  file_fprs=$(read_fpr_file "$KEY_FPR") || die "指纹文件格式错误：${KEY_FPR}"
+  sign_fpr=$(gpg --batch --with-colons --list-secret-keys -- "$keyid" 2>/dev/null \
+    | awk -F: '$1 == "sec" { p = 1; next } p && $1 == "fpr" { print toupper($10); exit }') || sign_fpr=""
+  [[ -n "$sign_fpr" ]] || die "本机 keyring 中找不到密钥 ${keyid} 的私钥"
+  [[ ",${file_fprs}," == *",${sign_fpr},"* ]] || die "签名密钥 ${sign_fpr} 不在 keys/debnas-release.fpr（${file_fprs}）中"
+
+  [[ -n "$_TMP" ]] || make_tmp
+  local work="${_TMP}/latest"
+  rm -rf -- "${work:?}"
+  mkdir -p "$work"
+  printf '%s\n' "$tag" > "${work}/LATEST"
+  info "签名 LATEST（可能弹出密码输入）"
+  gpg --local-user "$keyid" --detach-sign --armor --output "${work}/LATEST.asc" "${work}/LATEST" \
+    || die "签名 LATEST 失败"
+
+  # 自检：与 debnas update 相同的验证路径（keys/ 公钥 → keyring → installer_verify_latest）
+  local got
+  got=$(bash -c 'source "$1" && release_dearmor "$2" < "$3" && installer_verify_latest "$4" "$2" "$5"' \
+    _ "$LIB_INSTALLER" "${work}/keyring.gpg" "$KEY_ASC" "$work" "$file_fprs") || die "自检失败：LATEST 无法通过 debnas update 的验证"
+  [[ "$got" == "$tag" ]] || die "自检失败：LATEST 解析结果 '${got}' 与 ${tag} 不符"
+
+  cat "${work}/LATEST" > "$LATEST_FILE"
+  cat "${work}/LATEST.asc" > "$LATEST_SIG"
+  ok "已生成 LATEST（${tag}）与 LATEST.asc（签名者 ${sign_fpr}）"
+  info "确认 ${tag} 的发布附件在 GitHub 与 Gitee 都能下载之后再提交推送："
+  info "  git add LATEST LATEST.asc && git commit -m 'chore(release): LATEST → ${tag}' && git push"
 }
 
 # ==================== 构建发布 ====================
@@ -385,6 +519,8 @@ build_release() {
   git archive --format=tar.gz --prefix=debnas/ -o "${outdir}/${name}" "$tag"
   # 不用 grep -q：提前退出会让 tar 收到 SIGPIPE，在 pipefail 下误判失败
   tar -tzf "${outdir}/${name}" | grep -x 'debnas/bin/debnas' >/dev/null || die "归档内容异常：缺少 debnas/bin/debnas"
+  # keys/ 是 debnas update 的信任根，必须随包分发（.gitattributes 的 export-ignore 不能把它排除掉）
+  tar -tzf "${outdir}/${name}" | grep -x 'debnas/keys/debnas-release.asc' >/dev/null || die "归档内容异常：缺少 debnas/keys/debnas-release.asc（检查 .gitattributes）"
   cp "$tag_install" "${outdir}/install.sh"
   (cd "$outdir" && sha256sum "$name" install.sh > SHA256SUMS)
 
@@ -400,7 +536,20 @@ build_release() {
     _ "$tag_install" "${_TMP}/keyring.gpg" "$check_dir" "$name" || die "自检失败：产物无法通过 install.sh 的验证，请勿上传"
   ok "自检通过"
 
-  # 更新工作区 install.sh 默认版本（main 分支的 install.sh 也是 debnas update 发现新版本的来源）
+  # 版本指针：正式版本生成 LATEST / LATEST.asc（工作区文件，待附件上传后再提交推送）
+  local cur_latest="" latest_note="（本次未生成，如需要：bash tools/release.sh --sign-latest ${tag} <密钥 ID>）"
+  [[ -f "$LATEST_FILE" ]] && cur_latest=$(head -n 1 "$LATEST_FILE")
+  if ! is_stable_tag "$tag"; then
+    info "${tag} 是预发布版本，不更新版本指针 LATEST"
+  elif [[ -n "$cur_latest" && "$cur_latest" != "$tag" \
+      && "$(printf '%s\n%s\n' "${cur_latest#[vV]}" "${tag#[vV]}" | sort -V | tail -n 1)" == "${cur_latest#[vV]}" ]]; then
+    warn "LATEST 当前为 ${cur_latest}，不低于 ${tag}，未改动（确需指向 ${tag}：--sign-latest ${tag} <密钥 ID>）"
+  else
+    sign_latest "$tag" "$keyid"
+    latest_note=""
+  fi
+
+  # 更新工作区 install.sh 默认版本（main 分支的 install.sh 是取不到 LATEST 时发现新版本的回退来源）
   local cur_default
   cur_default=$(sed -n 's/^readonly DEBNAS_RELEASE_TAG="\([^"]*\)"$/\1/p' "$INSTALL_SH" | head -n 1)
   if [[ "$cur_default" != "$tag" ]]; then
@@ -428,7 +577,11 @@ $(ls -l "$outdir")
    wget --timeout=30 -qO- https://github.com/kekylin/debnas/releases/download/${tag}/SHA256SUMS | diff - dist/${tag}/SHA256SUMS
    wget --timeout=30 -qO- https://gitee.com/kekylin/debnas/releases/download/${tag}/SHA256SUMS | diff - dist/${tag}/SHA256SUMS
 
-4) 提交并推送 main 上 install.sh 的默认版本变更（如上一步有提示），用户的 debnas update 才会发现新版本。
+4) 提交并推送 main 上 install.sh 的默认版本变更（如上一步有提示）。
+
+5) 两个平台的附件都核验可下载之后，提交并推送版本指针，用户的 debnas update 才会发现新版本：
+   git add LATEST LATEST.asc && git commit -m "chore(release): LATEST → ${tag}" && git push
+   ${latest_note}
 EOF
 }
 
@@ -437,8 +590,17 @@ EOF
 main() {
   case "${1:-}" in
     --embed-key)
-      [[ $# -eq 2 ]] || die "用法: tools/release.sh --embed-key <公钥文件>"
-      embed_key "$2"
+      if [[ $# -eq 3 && "$3" == "--keep-old" ]]; then
+        embed_key "$2" 1
+      elif [[ $# -eq 2 ]]; then
+        embed_key "$2" 0
+      else
+        die "用法: tools/release.sh --embed-key <公钥文件> [--keep-old]"
+      fi
+      ;;
+    --sign-latest)
+      [[ $# -eq 3 ]] || die "用法: tools/release.sh --sign-latest <tag> <GPG 密钥 ID>"
+      sign_latest "$2" "$3"
       ;;
     --bump)
       [[ $# -eq 2 ]] || die "用法: tools/release.sh --bump <tag>"

@@ -3,8 +3,21 @@
 set -euo pipefail
 IFS=$'\n\t'
 
+# 解析 last -F（Debian 12，wtmp）/ wtmpdb last -F（Debian 13）的登录记录
+# 输入：stdin 原始输出；输出：每条登录一行 "用户\t终端\t来源\t登录时间\t小时\t日期(YYYY-MM-DD)"
+# 两种工具的列格式相同："用户(8) 终端(12) 来源(16) 登录时间 - 注销时间 (时长)"，但终端和来源都可能为空，
+# 终端还可能带空格（Cockpit 的 "web console"），按空白分词会错位。因此：
+#   1. 先定位登录时间（"Tue Nov 10 01:56:22 2026" 第一次出现的位置）
+#   2. 时间之前的部分按固定列宽取 用户/终端/来源（第 9、22 列是空格时）；
+#      列宽对不上（-w 等不截断的输出）时退回分词，并把 "web console" 当成一个终端名
+#   3. 找不到完整时间的行（未带 -F 的短格式）走原来的分词逻辑
+# 来源为空、":0" 这类本机显示、localhost 一律记为 local
 ops_login_parse() {
-  awk 'BEGIN { OFS="\t" }
+  awk 'BEGIN {
+      OFS="\t"
+      ts_re = "(Mon|Tue|Wed|Thu|Fri|Sat|Sun) +(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) +[0-9]+ +[0-9][0-9]:[0-9][0-9]:[0-9][0-9] +[0-9][0-9][0-9][0-9]"
+    }
+    function trim(s) { gsub(/^ +| +$/, "", s); return s }
     function month_num(m) {
       m = toupper(m)
       if (m == "JAN") return 1
@@ -20,6 +33,27 @@ ops_login_parse() {
       if (m == "NOV") return 11
       if (m == "DEC") return 12
       return 0
+    }
+    $2 == "begins" { next }
+    NF >= 6 && $1 !~ /^(reboot|shutdown|runlevel|wtmp|btmp|last|wtmpdb|)$/ && $1 !~ /^\[/ && match($0, ts_re) {
+      pre = substr($0, 1, RSTART - 1)
+      n = split(substr($0, RSTART, RLENGTH), t, / +/)
+      if (RSTART >= 23 && substr($0, 9, 1) == " " && substr($0, 22, 1) == " ") {
+        user = trim(substr(pre, 1, 8))
+        tty = trim(substr(pre, 10, 12))
+        host = trim(substr(pre, 23))
+      } else {
+        n = split(pre, p, / +/)
+        user = p[1]
+        if (p[2] == "web" && p[3] == "console") { tty = "web console"; host = p[4] }
+        else { tty = p[2]; host = p[3] }
+      }
+      if (user == "") next
+      if (host ~ /^::ffff:/) host = substr(host, 8)
+      if (host == "" || host ~ /^:/ || host == "localhost") host = "local"
+      split(t[4], a, ":")
+      print user, tty, host, t[1] " " t[2] " " t[3] " " t[4] " " t[5], a[1], t[5] "-" sprintf("%02d", month_num(t[2])) "-" sprintf("%02d", t[3])
+      next
     }
     NF >= 7 && $1 !~ /^(reboot|shutdown|wtmp|btmp|last|wtmpdb|)$/ && $1 !~ /^\[/ {
       user = $1
@@ -71,6 +105,26 @@ ops_fail_source_ips() {
     }'
 }
 
+# 登录记录数据源：stdout 输出 wtmpdb / last，都没有时无输出并返回 1（只读，供 module_status/module_plan 与采集共用）
+# Debian 12：util-linux 的 last 读 /var/log/wtmp；Debian 13：wtmp 已移除，改由 wtmpdb 包提供 wtmpdb（及 last 链接）
+ops_login_source() {
+  if command -v wtmpdb >/dev/null 2>&1; then
+    echo "wtmpdb"
+  elif command -v last >/dev/null 2>&1; then
+    echo "last"
+  else
+    return 1
+  fi
+}
+
+# 当前系统能否自动补装登录数据源（Debian 13 及以上才有 wtmpdb 包）
+# 返回：0 可以，1 不可以
+ops_login_source_installable() {
+  local ver
+  ver=$(get_system_version 2>/dev/null || true)
+  [[ "$ver" =~ ^([0-9]+) ]] && [[ "${BASH_REMATCH[1]}" -ge 13 ]]
+}
+
 # 登录日志最早记录日期，写入 OPS_LOGIN_DATA_START（module.sh 数据覆盖状态显示）
 # shellcheck disable=SC2034  # OPS_LOGIN_DATA_START 在 module.sh 中读取
 ops_login_data_start() {
@@ -107,6 +161,8 @@ ops_collect_security() {
   OPS_FAIL_BAN_COUNT="未启用"
   OPS_SECURITY_EVENTS=""
   OPS_SECURITY_ISSUE=0
+  OPS_LOGIN_SOURCE=$(ops_login_source || true)
+  OPS_LOGIN_SOURCE_NOTE=""
 
   local raw_login=""
   if command -v wtmpdb >/dev/null 2>&1; then
@@ -123,6 +179,18 @@ ops_collect_security() {
   OPS_LOGIN_USERS=$(printf '%s\n' "$parsed" | awk -F '\t' '$1 != "" {print $1}' \
     | sort -u | tr '\n' ',' | sed 's/,$//' || true)
   [[ -n "$OPS_LOGIN_USERS" ]] || OPS_LOGIN_USERS="无数据"
+  # 没有数据源 / 有数据源但没有记录：给报告一条明确说明，而不是留空
+  if [[ -z "$OPS_LOGIN_SOURCE" ]]; then
+    if ops_login_source_installable; then
+      OPS_LOGIN_SOURCE_NOTE="无登录数据源：未安装 wtmpdb（自动安装未成功），无法读取登录记录，成功登录统计不可用。可手动执行 apt install wtmpdb libpam-wtmpdb 后重新生成报告。"
+    else
+      OPS_LOGIN_SOURCE_NOTE="无登录数据源：系统中没有 last 或 wtmpdb 命令，无法读取登录记录，成功登录统计不可用。"
+    fi
+  elif [[ "${OPS_LOGIN_SUCCESS_COUNT:-0}" -eq 0 ]]; then
+    OPS_LOGIN_SOURCE_NOTE="登录数据源（${OPS_LOGIN_SOURCE}）可用，周期内没有登录记录。"
+    [[ "$OPS_LOGIN_SOURCE" == "wtmpdb" ]] \
+      && OPS_LOGIN_SOURCE_NOTE+="wtmpdb 刚安装时属正常：本地终端与 Cockpit 登录从安装 libpam-wtmpdb 之后才开始记录，此前的登录不会出现在报告里。"
+  fi
 
   OPS_LOGIN_USER_STATS=$(printf '%s\n' "$parsed" | awk -F '\t' '
     $1 != "" {
