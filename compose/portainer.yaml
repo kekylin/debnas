@@ -1,0 +1,26 @@
+# @name: Portainer
+# @description: Web-based Docker management UI (HTTPS)
+# @category: 管理面板
+# @web_port: 9443
+services:
+  portainer-ce:
+    ports:
+      # 9000 (HTTP) 已移除，仅保留 HTTPS 端口 9443
+      # 注意：首次访问者设置管理员密码，部署后请立即登录初始化（超时未初始化 Portainer 会自动锁定，需重启容器）
+      - 8000:8000
+      - 9443:9443
+    container_name: portainer
+    restart: always
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /opt/docker/portainer:/data
+    image: portainer/portainer-ce:2.27.1
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '1.0'
+    network_mode: bridge
+networks:
+  bridge:
+    external: true

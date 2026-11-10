@@ -40,31 +40,27 @@ readonly -A MIRROR_NAMES
 
 # ==================== Debian APT 镜像源配置 ====================
 
+# shellcheck disable=SC2034  # 被 modules/sources.sh、modules/sys-check.sh 使用
 readonly APT_OFFICIAL_MIRROR="https://deb.debian.org"
+# shellcheck disable=SC2034  # 被 modules/sources.sh、modules/sys-check.sh 使用
 readonly APT_OFFICIAL_MIRROR_NAME="Debian 官方"
+# shellcheck disable=SC2034  # 被 modules/sources.sh、modules/sys-check.sh 使用
 readonly -a APT_MIRRORS=("${MIRRORS[@]}")
 
 # ==================== Docker 镜像源配置 ====================
 
 # Docker 官方下载地址（用于安装 Docker）
+# shellcheck disable=SC2034  # 被 modules/docker-ce.sh 使用
 readonly DOCKER_OFFICIAL_MIRROR="https://download.docker.com/linux/debian"
+# shellcheck disable=SC2034  # 被 modules/docker-ce.sh 使用
 readonly -a DOCKER_FALLBACK_MIRRORS=("${MIRRORS[@]}")
 
 # Docker 镜像加速地址（用于配置 daemon.json 的 registry-mirrors）
+# shellcheck disable=SC2034  # 被 modules/docker-mirror.sh 使用
 readonly -a DOCKER_REGISTRY_MIRRORS=(
   "https://docker.m.ixdev.cn"
   "https://docker.1ms.run"
   "https://docker.1panel.live"
-)
-
-# ==================== GitHub 配置 ====================
-
-readonly GITHUB_OFFICIAL_URL="https://github.com"
-readonly GITHUB_OFFICIAL_NAME="GitHub 官方"
-readonly -a GITHUB_PROXY_ENDPOINTS=(
-  "https://ghfast.top"
-  "https://hubproxy.jiaozi.live"
-  "https://gh-proxy.top"
 )
 
 # ==================== 公共接口函数 ====================
@@ -74,29 +70,6 @@ readonly -a GITHUB_PROXY_ENDPOINTS=(
 get_mirror_name() {
   local mirror_url="$1"
   echo "${MIRROR_NAMES[$mirror_url]:-$mirror_url}"
-}
-
-# 获取 GitHub 官方地址
-get_github_official_url() {
-  echo "${GITHUB_OFFICIAL_URL}"
-}
-
-# 获取 GitHub 代理镜像站列表
-# 设计说明：使用函数封装，便于未来添加过滤或排序逻辑
-get_github_proxy_endpoints() {
-  local endpoint
-  for endpoint in "${GITHUB_PROXY_ENDPOINTS[@]}"; do
-    echo "$endpoint"
-  done
-}
-
-# 获取 Docker 镜像加速地址列表
-# 设计说明：使用函数封装，便于未来添加过滤或排序逻辑
-get_docker_registry_mirrors() {
-  local mirror
-  for mirror in "${DOCKER_REGISTRY_MIRRORS[@]}"; do
-    echo "$mirror"
-  done
 }
 
 # ==================== 网络探测函数 ====================

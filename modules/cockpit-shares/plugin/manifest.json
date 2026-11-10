@@ -1,0 +1,14 @@
+{
+    "name": "debnas-shares",
+    "menu": {
+        "index": {
+            "label": "共享管理",
+            "order": 75,
+            "keywords": [
+                {
+                    "matches": ["samba", "smb", "cifs", "nfs", "share", "shares", "export", "exports", "time machine", "共享", "文件共享"]
+                }
+            ]
+        }
+    }
+}

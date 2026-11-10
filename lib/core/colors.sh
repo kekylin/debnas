@@ -1,33 +1,34 @@
 #!/bin/bash
 # 功能：核心颜色定义库
+# shellcheck disable=SC2034  # COLOR_* 由 core/logging.sh、ui/*.sh、bin/menu.sh 在 source 后引用
 
 set -euo pipefail
 IFS=$'\n\t'
 
 # 检查是否禁用颜色输出
 # 日志统一输出到 stderr（fd 2），因此检测 fd 2 的终端属性
-if [[ "${NO_COLOR:-0}" -eq 1 ]] || [[ ! -t 2 ]]; then
+# NO_COLOR 规范：任意非空值即禁用颜色（此处保留 "0" 表示不禁用以兼容旧用法）。
+# 使用字符串比较而非 -eq：-eq 会对变量做算术求值，NO_COLOR='a[$(cmd)]' 会执行命令。
+if [[ -n "${NO_COLOR:-}" && "${NO_COLOR}" != "0" ]] || [[ ! -t 2 ]]; then
   # 禁用颜色时的空字符串
   COLOR_RESET=""
   # 基础颜色（全部使用普通字体，非粗体）
-  COLOR_BLACK=""
   COLOR_RED=""
   COLOR_GREEN=""
   COLOR_YELLOW=""
   COLOR_BLUE=""
-  COLOR_MAGENTA=""
   COLOR_CYAN=""
   COLOR_WHITE=""
+  COLOR_DIM=""
 else
   # 启用颜色时的ANSI转义序列（全部使用普通字体，非粗体）
   COLOR_RESET=$'\e[0m'         # 重置颜色
   # 基础颜色（全部使用普通字体，非粗体）
-  COLOR_BLACK=$'\e[0;30m'      # 黑色（普通字体）
   COLOR_RED=$'\e[0;31m'        # 红色（普通字体）
   COLOR_GREEN=$'\e[0;32m'      # 绿色（普通字体）
   COLOR_YELLOW=$'\e[0;33m'     # 黄色（普通字体）
   COLOR_BLUE=$'\e[0;34m'       # 蓝色（普通字体）
-  COLOR_MAGENTA=$'\e[0;35m'    # 紫色（普通字体）
   COLOR_CYAN=$'\e[0;36m'       # 青色（普通字体）
   COLOR_WHITE=$'\e[0;37m'      # 白色（普通字体）
+  COLOR_DIM=$'\e[0;90m'        # 亮黑 = 灰色（辅助文字/Footer/版本号）
 fi 

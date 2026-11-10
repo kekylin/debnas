@@ -1,0 +1,90 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev, 'refactor/**']
+  pull_request:
+    branches: [main, dev]
+
+jobs:
+  shellcheck:
+    name: ShellCheck
+    runs-on: ubuntu-latest
+    container: debian:bookworm-slim
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ShellCheck
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq shellcheck
+
+      - name: Run ShellCheck (error severity)
+        run: bash tests/run.sh static
+
+  smoke:
+    name: Smoke Test (${{ matrix.debian }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        debian: [bookworm, trixie]
+    container: debian:${{ matrix.debian }}-slim
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq shellcheck bats
+
+      - name: Run quality gate
+        run: bash tests/check.sh
+
+  syntax:
+    name: Bash Syntax (${{ matrix.debian }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        debian: [bookworm, trixie]
+    container: debian:${{ matrix.debian }}-slim
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check bash -n on all files
+        run: bash tests/run.sh syntax
+
+  bats-unit:
+    name: BATS Unit Tests (${{ matrix.debian }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        debian: [bookworm, trixie]
+    container: debian:${{ matrix.debian }}-slim
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install BATS
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq bats
+
+      - name: Run unit tests
+        run: bash tests/run.sh unit
+
+  integration:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    container: debian:bookworm-slim
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install BATS
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq bats
+
+      - name: Run integration tests
+        run: bash tests/run.sh integration

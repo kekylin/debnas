@@ -1,0 +1,37 @@
+# ==================== 常量定义 ====================
+
+# 数据与日志位于 DebNAS 自有目录（旧版 /var/lib/firewalld-ipthreat、/var/log/firewalld-ipthreat.log
+# 由 lib/system/migration.sh 的 migration_layout_threat_ips 迁移）
+DATA_DIR="${DEBNAS_VAR_DIR:-/var/lib/debnas}/threat-ips"
+LOG_DIR="${DEBNAS_LOG_ROOT:-/var/log/debnas}"
+CONFIG_FILE="${DATA_DIR}/ipthreat.conf"
+CRON_SCRIPT_PATH="${DATA_DIR}/firewalld_ipthreat.sh"
+LOG_FILE="${LOG_DIR}/threat-ips.log"
+
+DEFAULT_THREAT_LEVEL=50
+DEFAULT_UPDATE_CRON="0 0 * * *"
+ZONE="drop"
+IPSET_NAME_IPV4="ipthreat_block_ipv4"
+IPSET_NAME_IPV6="ipthreat_block_ipv6"
+
+# 用户白名单（每行一个 IP 或 CIDR，# 开头为注释）：命中的威胁条目不会被封禁
+WHITELIST_FILE="/etc/debnas/conf.d/threat-ips-whitelist.conf"
+# 拒绝过宽的威胁条目（IPv4 掩码小于 /16、IPv6 前缀小于 /32），防止一条记录封掉大片地址
+declare -i MIN_IPV4_PREFIX=16
+declare -i MIN_IPV6_PREFIX=32
+# 解析告警最多逐条显示的条数（其余只汇总条数）
+declare -i MAX_PARSE_WARNINGS=20
+
+# hash:net 类型支持 CIDR，MAX_IP_LIMIT 表示 CIDR 条目数限制（非单个 IP 数量）
+declare -i MAX_IP_LIMIT=65536
+# IP 范围格式限制：威胁情报列表主要使用 CIDR，IP 范围格式较少且通常较小
+declare -i MAX_RANGE_SIZE=256
+
+get_threat_list_url() {
+  local threat_level="${1:-${DEFAULT_THREAT_LEVEL}}"
+  printf "%s%s%s" \
+    "https://lists.ipthreat.net/file/ipthreat-lists/" \
+    "threat/threat-" \
+    "${threat_level}.txt.gz"
+}
+
