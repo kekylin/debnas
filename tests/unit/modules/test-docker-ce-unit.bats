@@ -185,3 +185,58 @@ fn_body() {
 @test "docker-ce-unit: 使用 get_system_codename 获取系统代号" {
   fn_body write_docker_apt_source | grep -q 'get_system_codename'
 }
+
+# ==================== 源地址解析（行为） ====================
+
+@test "docker-ce-unit: is_official_debian_source 只认 Debian 官方域名" {
+  run bash -c '
+    DEBNAS_MODULE_ACTION=status
+    source "$1/modules/docker-ce.sh" >/dev/null 2>&1
+    is_official_debian_source "http://deb.debian.org/debian" && echo OFFICIAL
+    is_official_debian_source "https://mirror.example/debian" || echo OTHER
+  ' _ "${DEBNAS_ROOT}"
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == *"OFFICIAL"*"OTHER"* ]]
+}
+
+@test "docker-ce-unit: extract_mirror_from_sources 从 DEB822 取主机名" {
+  local d
+  d=$(mktemp -d)
+  printf 'Types: deb\nURIs: https://mirror.example/debian\nSuites: bookworm\n' > "$d/debian.sources"
+  run bash -c '
+    DEBNAS_MODULE_ACTION=status
+    DOCKER_SOURCES_DIR="$2"
+    source "$1/modules/docker-ce.sh" >/dev/null 2>&1
+    extract_mirror_from_sources
+  ' _ "${DEBNAS_ROOT}" "$d"
+  rm -rf "$d"
+  [[ "$status" -eq 0 && "$output" == "https://mirror.example" ]]
+}
+
+@test "docker-ce-unit: extract_mirror_from_sources 回退传统 sources.list" {
+  local d
+  d=$(mktemp -d)
+  mkdir -p "$d/sources.list.d"
+  printf 'deb http://legacy.example/debian bookworm main\n' > "$d/sources.list"
+  run bash -c '
+    DEBNAS_MODULE_ACTION=status
+    DOCKER_SOURCES_DIR="$2/sources.list.d"
+    source "$1/modules/docker-ce.sh" >/dev/null 2>&1
+    extract_mirror_from_sources
+  ' _ "${DEBNAS_ROOT}" "$d"
+  rm -rf "$d"
+  [[ "$status" -eq 0 && "$output" == "http://legacy.example" ]]
+}
+
+@test "docker-ce-unit: 无系统源时 extract_mirror_from_sources 返回 1" {
+  local d
+  d=$(mktemp -d)
+  run bash -c '
+    DEBNAS_MODULE_ACTION=status
+    DOCKER_SOURCES_DIR="$2"
+    source "$1/modules/docker-ce.sh" >/dev/null 2>&1
+    extract_mirror_from_sources
+  ' _ "${DEBNAS_ROOT}" "$d"
+  rm -rf "$d"
+  [[ "$status" -eq 1 ]]
+}

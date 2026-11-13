@@ -344,3 +344,75 @@ _restore_env() {
   [[ "$body" == *'log_error "apt update 失败，已从备份恢复原软件源'* ]]
   [[ "$body" == *'[[ -f "$DEB822_PATH" ]] && _SOURCES_DEB822_EXISTED=1'* ]]
 }
+
+# ==================== DEB822 / 传统源解析（行为） ====================
+
+@test "sources: _sources_deb822_field 跳过注释并读取首个字段" {
+  local d
+  d=$(mktemp -d)
+  cat > "$d/debian.sources" <<'INNEREOF'
+Types: deb
+# URIs: http://comment.example/debian
+URIs: http://mirror.example/debian
+Suites: bookworm
+INNEREOF
+  run bash -c '
+    DEBNAS_MODULE_ACTION=status
+    source "$1/modules/sources.sh" >/dev/null 2>&1
+    _sources_deb822_field uris "$2"
+  ' _ "${DEBNAS_ROOT}" "$d/debian.sources"
+  rm -rf "$d"
+  [[ "$status" -eq 0 && "$output" == "http://mirror.example/debian" ]]
+}
+
+@test "sources: _sources_legacy_uri 取第一条 deb 行的 URI" {
+  local d
+  d=$(mktemp -d)
+  cat > "$d/sources.list" <<'INNEREOF'
+# deb http://comment.example/debian bookworm main
+deb http://first.example/debian bookworm main
+deb-src http://src.example/debian bookworm main
+deb [arch=amd64] http://second.example/debian bookworm main
+INNEREOF
+  run bash -c '
+    DEBNAS_MODULE_ACTION=status
+    source "$1/modules/sources.sh" >/dev/null 2>&1
+    TRADITIONAL_PATH="$2"
+    _sources_legacy_uri
+  ' _ "${DEBNAS_ROOT}" "$d/sources.list"
+  rm -rf "$d"
+  [[ "$status" -eq 0 && "$output" == "http://first.example/debian" ]]
+}
+
+@test "sources: build_deb822_content 为 stable 生成标准源与安全源" {
+  local d
+  d=$(mktemp -d)
+  printf '12.5\n' > "$d/debian_version"
+  run bash -c '
+    DEBNAS_MODULE_ACTION=status
+    source "$1/modules/sources.sh" >/dev/null 2>&1
+    CODENAME=bookworm
+    SOURCES_DEBIAN_VERSION_FILE="$2"
+    DEB822_PATH="$2.none"; TRADITIONAL_PATH="$2.none2"
+    build_deb822_content "https://m.example"
+  ' _ "${DEBNAS_ROOT}" "$d/debian_version"
+  rm -rf "$d"
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == *"URIs: https://m.example/debian"* ]]
+  [[ "$output" == *"Suites: bookworm bookworm-updates bookworm-backports"* ]]
+  [[ "$output" == *"URIs: https://m.example/debian-security"* ]]
+  [[ "$output" == *"Suites: bookworm-security"* ]]
+}
+
+@test "sources: build_deb822_content 为 sid 只生成 sid 源" {
+  run bash -c '
+    DEBNAS_MODULE_ACTION=status
+    source "$1/modules/sources.sh" >/dev/null 2>&1
+    CODENAME=sid
+    build_deb822_content "https://m.example"
+  ' _ "${DEBNAS_ROOT}"
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == *"Suites: sid"* ]]
+  [[ "$output" != *"Security Repository"* ]]
+  [[ "$output" != *"sid-security"* ]]
+}

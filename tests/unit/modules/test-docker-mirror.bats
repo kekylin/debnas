@@ -346,3 +346,50 @@ _run_main() {
   [[ "$output" == *"write|$d/daemon.json|新建"* ]]
   rm -rf "$d"
 }
+
+# ==================== daemon.json 合并（行为） ====================
+
+@test "docker-mirror: array_to_json_array 生成 JSON 数组" {
+  run bash -c '
+    DEBNAS_MODULE_ACTION=status
+    source "$1/modules/docker-mirror.sh" >/dev/null 2>&1
+    array_to_json_array "https://a.example" "https://b.example"
+  ' _ "${DEBNAS_ROOT}"
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == *'"https://a.example",'* ]]
+  [[ "$output" == *'"https://b.example"'* ]]
+}
+
+@test "docker-mirror: 空 daemon.json 时创建 registry-mirrors" {
+  local d
+  d=$(mktemp -d)
+  run bash -c '
+    DEBNAS_MODULE_ACTION=status
+    source "$1/modules/docker-mirror.sh" >/dev/null 2>&1
+    DAEMON_JSON="$2/daemon.json"
+    build_merged_daemon_json "https://a.example" "https://b.example"
+  ' _ "${DEBNAS_ROOT}" "$d"
+  rm -rf "$d"
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == *'"registry-mirrors"'* ]]
+  [[ "$output" == *'"https://a.example"'* ]]
+  [[ "$output" == *'"https://b.example"'* ]]
+}
+
+@test "docker-mirror: _dm_missing_mirrors 只列未配置镜像" {
+  local d
+  d=$(mktemp -d)
+  printf '{"registry-mirrors": ["https://a.example"]}\n' > "$d/daemon.json"
+  run bash -c '
+    DEBNAS_MODULE_ACTION=status
+    source "$1/modules/docker-mirror.sh" >/dev/null 2>&1
+    DAEMON_JSON="$2/daemon.json"
+    DOCKER_MIRRORS=("https://a.example" "https://b.example" "https://c.example")
+    _dm_missing_mirrors
+  ' _ "${DEBNAS_ROOT}" "$d"
+  rm -rf "$d"
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == *"https://b.example"* ]]
+  [[ "$output" == *"https://c.example"* ]]
+  [[ "$output" != *"https://a.example"* ]]
+}
