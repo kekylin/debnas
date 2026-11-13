@@ -49,11 +49,11 @@ MODULE_DIR="${DEBNAS_ROOT}/modules/ops-report"
 }
 
 @test "ops-report: 研判表/页眉/失败来源等系统数据经 HTML 转义后输出" {
-  grep -q 'ops_html_escape "\$login_note"' "$MODULE_DIR/report.sh"
-  grep -q 'ops_html_escape "\$proc_note"' "$MODULE_DIR/report.sh"
-  grep -q 'ops_html_escape "\$fail_source_summary"' "$MODULE_DIR/report.sh"
-  grep -q 'ops_html_escape "\$(hostname' "$MODULE_DIR/report.sh"
-  grep -q 'ops_html_escape "\$OPS_HEALTH_SMART_SUMMARY"' "$MODULE_DIR/report.sh"
+  grep -q 'ops_html_escape "\$login_note"' "$MODULE_DIR/report-render.sh"
+  grep -q 'ops_html_escape "\$proc_note"' "$MODULE_DIR/report-render.sh"
+  grep -q 'ops_html_escape "\$fail_source_summary"' "$MODULE_DIR/report-render.sh"
+  grep -q 'ops_html_escape "\$(hostname' "$MODULE_DIR/report-render.sh"
+  grep -q 'ops_html_escape "\$OPS_HEALTH_SMART_SUMMARY"' "$MODULE_DIR/report-render.sh"
 }
 
 @test "ops-report: 监听端口只减少时不因 pipefail 终止" {
@@ -330,8 +330,8 @@ M
   [[ "$output" == *"不足 1 天后达到 90%"* ]]
   [[ "$output" == *"&lt;b&gt;x"* && "$output" != *"<b>x"* ]]
   [[ "$output" == *'<td colspan="3" class="muted">数据不足</td>'* ]]
-  grep -q '\$(ops_render_disk_forecast_table)' "$MODULE_DIR/report.sh"
-  grep -q '<h3>磁盘容量预测</h3>' "$MODULE_DIR/report.sh"
+  grep -q '\$(ops_render_disk_forecast_table)' "$MODULE_DIR/report-render.sh"
+  grep -q '<h3>磁盘容量预测</h3>' "$MODULE_DIR/report-render.sh"
 }
 
 @test "ops-report: [F2] 服务清单说明列同时保留周期错误与周期重启" {
@@ -586,7 +586,7 @@ login_note() {
   run login_note "$p" 13
   [[ "$output" == *"SRC:wtmpdb"* && "${lines[1]}" == "NOTE:" ]]
   # 说明经 ops_html_escape 输出到登录一节
-  grep -q 'ops_html_escape "\$OPS_LOGIN_SOURCE_NOTE"' "$MODULE_DIR/report.sh"
+  grep -q 'ops_html_escape "\$OPS_LOGIN_SOURCE_NOTE"' "$MODULE_DIR/report-render.sh"
 }
 
 # 在指定 PATH 下探测 module_status / module_plan；$2 status|plan，$3 系统版本

@@ -19,9 +19,9 @@ export NO_COLOR=1
   [[ "$schedule" == "0 1 * * 1" ]]
 }
 
-@test "ops-report: 七个模块文件存在且语法有效" {
+@test "ops-report: 八个模块文件存在且语法有效" {
   local f
-  for f in module.sh setup.sh health.sh report.sh security.sh services.sh notify.sh; do
+  for f in module.sh setup.sh health.sh report.sh report-render.sh security.sh services.sh notify.sh; do
     [[ -f "$MODULE_DIR/$f" ]]
     run bash -n "$MODULE_DIR/$f"
     [[ "$status" -eq 0 ]]
@@ -78,24 +78,24 @@ export NO_COLOR=1
 }
 
 @test "ops-report: 按模拟报告样式输出核心结构" {
-  grep -q '安全体检结论' "$MODULE_DIR/report.sh"
-  grep -q '登录与身份审计' "$MODULE_DIR/report.sh"
-  grep -q 'badge-medium' "$MODULE_DIR/report.sh"
-  grep -q 'week-overview' "$MODULE_DIR/report.sh"
-  grep -q 'event-pulse' "$MODULE_DIR/report.sh"
-  grep -q '主机与进程安全' "$MODULE_DIR/report.sh"
-  grep -q 'Swap 使用' "$MODULE_DIR/report.sh"
-  grep -q '时段异常登录' "$MODULE_DIR/report.sh"
-  grep -q '资源使用情况' "$MODULE_DIR/report.sh"
-  grep -q '安全更新已装' "$MODULE_DIR/report.sh"
-  grep -q '物理网卡合计' "$MODULE_DIR/report.sh"
-  grep -q '系统版本更新' "$MODULE_DIR/report.sh"
-  grep -q '维护与更新' "$MODULE_DIR/report.sh"
+  grep -q '安全体检结论' "$MODULE_DIR/report-render.sh"
+  grep -q '登录与身份审计' "$MODULE_DIR/report-render.sh"
+  grep -q 'badge-medium' "$MODULE_DIR/report-render.sh"
+  grep -q 'week-overview' "$MODULE_DIR/report-render.sh"
+  grep -q 'event-pulse' "$MODULE_DIR/report-render.sh"
+  grep -q '主机与进程安全' "$MODULE_DIR/report-render.sh"
+  grep -q 'Swap 使用' "$MODULE_DIR/report-render.sh"
+  grep -q '时段异常登录' "$MODULE_DIR/report-render.sh"
+  grep -q '资源使用情况' "$MODULE_DIR/report-render.sh"
+  grep -q '安全更新已装' "$MODULE_DIR/report-render.sh"
+  grep -q '物理网卡合计' "$MODULE_DIR/report-render.sh"
+  grep -q '系统版本更新' "$MODULE_DIR/report-render.sh"
+  grep -q '维护与更新' "$MODULE_DIR/report-render.sh"
   grep -q 'OPS_LOGIN_USER_STATS' "$MODULE_DIR/security.sh"
-  grep -q 'ops_render_trend_chart' "$MODULE_DIR/report.sh"
-  grep -q 'ops_render_network_chart' "$MODULE_DIR/report.sh"
-  grep -q 'ops_render_login_hours_chart' "$MODULE_DIR/report.sh"
-  grep -q 'ops_render_anomaly_table' "$MODULE_DIR/report.sh"
+  grep -q 'ops_render_trend_chart' "$MODULE_DIR/report-render.sh"
+  grep -q 'ops_render_network_chart' "$MODULE_DIR/report-render.sh"
+  grep -q 'ops_render_login_hours_chart' "$MODULE_DIR/report-render.sh"
+  grep -q 'ops_render_anomaly_table' "$MODULE_DIR/report-render.sh"
   ! grep -q 'report-template.html' "$MODULE_DIR/report.sh"
 }
 
@@ -167,7 +167,7 @@ export NO_COLOR=1
   grep -q 'OPS_SYSSTAT_SAMPLE_DAYS' "$MODULE_DIR/report.sh"
   grep -q 'OPS_SERVICE_STABILITY' "$MODULE_DIR/services.sh"
   grep -q 'OPS_DISK_IO_SUMMARY' "$MODULE_DIR/report.sh"
-  grep -q 'ops_render_system_version_table' "$MODULE_DIR/report.sh"
+  grep -q 'ops_render_system_version_table' "$MODULE_DIR/report-render.sh"
   grep -q 'OPS_JOURNAL_ERROR_COUNT' "$MODULE_DIR/services.sh"
 }
 
@@ -182,17 +182,17 @@ export NO_COLOR=1
 
 @test "ops-report: 周期/估算/当前状态口径明确" {
   grep -q '待周期数据' "$MODULE_DIR/report.sh"
-  grep -q '待基线' "$MODULE_DIR/report.sh"
-  grep -q '当前状态' "$MODULE_DIR/report.sh"
+  grep -q '待基线' "$MODULE_DIR/report-render.sh"
+  grep -q '当前状态' "$MODULE_DIR/report-render.sh"
   grep -q 'OPS_LAST_UPDATE_CHECK' "$MODULE_DIR/report.sh"
   grep -q 'OPS_REBOOT_REQUIRED' "$MODULE_DIR/report.sh"
 }
 
 @test "ops-report: 按新版结构与样式输出" {
-  grep -q 'report-style.css' "$MODULE_DIR/report.sh"
-  grep -q 'ops_render_html_report' "$MODULE_DIR/report.sh"
-  grep -q '服务器\$(ops_period_label_cn' "$MODULE_DIR/report.sh"
-  grep -q 'footer-grid' "$MODULE_DIR/report.sh"
+  grep -q 'report-style.css' "$MODULE_DIR/report-render.sh"
+  grep -q 'ops_render_html_report' "$MODULE_DIR/report-render.sh"
+  grep -q '服务器\$(ops_period_label_cn' "$MODULE_DIR/report-render.sh"
+  grep -q 'footer-grid' "$MODULE_DIR/report-render.sh"
 }
 
 @test "ops-report: 报告文件名包含周期标识" {
@@ -208,11 +208,11 @@ export NO_COLOR=1
 }
 
 @test "ops-report: 事件脉冲复刻与健康结论细分" {
-  grep -q 'pulse-legend' "$MODULE_DIR/report.sh"
+  grep -q 'pulse-legend' "$MODULE_DIR/report-render.sh"
   grep -q 'OPS_HEALTH_FS_ERRORS' "$MODULE_DIR/health.sh"
   grep -q 'OPS_HEALTH_KERNEL_ERRORS' "$MODULE_DIR/health.sh"
-  grep -q '检测到文件系统错误' "$MODULE_DIR/report.sh"
-  grep -q '检测到内核错误' "$MODULE_DIR/report.sh"
+  grep -q '检测到文件系统错误' "$MODULE_DIR/report-render.sh"
+  grep -q '检测到内核错误' "$MODULE_DIR/report-render.sh"
 }
 
 @test "ops-report: 同日多事件使用独立标注位不重叠" {
@@ -299,16 +299,16 @@ export NO_COLOR=1
 }
 
 @test "ops-report: 曲线/磁盘标注/服务清单/登录时段/来源IP修正" {
-  grep -q 'path_points = sprintf("M%.1f %.1f"' "$MODULE_DIR/report.sh"
+  grep -q 'path_points = sprintf("M%.1f %.1f"' "$MODULE_DIR/report-render.sh"
   grep -q 'OPS_DOCKER_RUNNING_COUNT' "$MODULE_DIR/services.sh"
   grep -q 'period = sprintf("%02d:00-%02d:00"' "$MODULE_DIR/security.sh"
-  grep -q 'last_label' "$MODULE_DIR/report.sh"
+  grep -q 'last_label' "$MODULE_DIR/report-render.sh"
 }
 
 @test "ops-report: 日期格式与动态图表坐标" {
-  grep -q 'ops_normalize_date' "$MODULE_DIR/report.sh"
-  grep -q 'nice = max' "$MODULE_DIR/report.sh"
-  grep -q 'axis_grid' "$MODULE_DIR/report.sh"
+  grep -q 'ops_normalize_date' "$MODULE_DIR/report-render.sh"
+  grep -q 'nice = max' "$MODULE_DIR/report-render.sh"
+  grep -q 'axis_grid' "$MODULE_DIR/report-render.sh"
 }
 
 @test "ops-report: 已登记到 timer-manager 定时概览" {
@@ -332,10 +332,10 @@ export NO_COLOR=1
 
 @test "ops-report: 磁盘一节展示容量预测，服务说明列不丢信息，内核版本走专用查询函数" {
   source "$MODULE_DIR/report.sh"
-  grep -A6 '\$(ops_render_disk_io_chart)' "$MODULE_DIR/report.sh" | grep -q '磁盘容量预测'
+  grep -A6 '\$(ops_render_disk_io_chart)' "$MODULE_DIR/report-render.sh" | grep -q '磁盘容量预测'
   grep -q 'kernel_version=\$(ops_kernel_pkg_version)' "$MODULE_DIR/report.sh"
   if grep -q "linux-image-amd64 2>/dev/null" "$MODULE_DIR/report.sh"; then false; fi
-  if grep -q 'note="\${note:+- }' "$MODULE_DIR/report.sh"; then false; fi
+  if grep -q 'note="\${note:+- }' "$MODULE_DIR/report-render.sh"; then false; fi
   OPS_DISK_FORECAST="sda|37|7|1.00|53"
   run ops_render_disk_forecast_table
   [[ "$status" -eq 0 ]]
