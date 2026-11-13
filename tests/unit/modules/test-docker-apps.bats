@@ -352,3 +352,76 @@ YAML
   [[ "$output" != *COMPOSE-UP* ]]
   rm -rf "$dir"
 }
+
+# ==================== compose 元数据解析（行为） ====================
+
+@test "docker-apps: _da_parse 读取元数据、镜像、容器名与 docker.sock" {
+  local d
+  d=$(mktemp -d)
+  cat > "$d/app.yaml" <<'INNEREOF'
+# @name: 我的应用
+# @description: 测试描述
+# @require: docker-ce, firewall
+services:
+  web:
+    image: "nginx:latest"
+    container_name: my-web
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+# 注意：首次访问 http://localhost:8080
+INNEREOF
+  run bash -c '
+    DEBNAS_MODULE_ACTION=status
+    source "$1/modules/docker-apps.sh" >/dev/null 2>&1
+    _da_parse "$2/app.yaml" app
+    printf "%s|%s|%s|%s|%s|%s\n" "$DA_NAME" "$DA_DESC" "$DA_REQUIRE" "$DA_IMAGE" "$DA_SOCK" "$DA_NOTE"
+    printf "C:%s\n" "${DA_CONTAINERS[@]}"
+  ' _ "${DEBNAS_ROOT}" "$d"
+  rm -rf "$d"
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == *"我的应用|测试描述|docker-ce, firewall|nginx:latest|1|首次访问 http://localhost:8080"* ]]
+  [[ "$output" == *"C:my-web"* ]]
+}
+
+@test "docker-apps: _da_parse 缺省名称取 key 首字母大写，容器名回退 key" {
+  local d
+  d=$(mktemp -d)
+  printf 'services:\n  app:\n    image: redis\n' > "$d/myapp.yml"
+  run bash -c '
+    DEBNAS_MODULE_ACTION=status
+    source "$1/modules/docker-apps.sh" >/dev/null 2>&1
+    _da_parse "$2/myapp.yml" myapp
+    printf "%s|%s|%s\n" "$DA_NAME" "$DA_IMAGE" "$DA_SOCK"
+    printf "C:%s\n" "${DA_CONTAINERS[@]}"
+  ' _ "${DEBNAS_ROOT}" "$d"
+  rm -rf "$d"
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == *"Myapp|redis|0"* ]]
+  [[ "$output" == *"C:myapp"* ]]
+}
+
+@test "docker-apps: _da_parse 收集多个 container_name" {
+  local d
+  d=$(mktemp -d)
+  cat > "$d/multi.yaml" <<'INNEREOF'
+services:
+  a:
+    image: alpine
+    container_name: one
+  b:
+    image: alpine
+    container_name: "two"
+INNEREOF
+  run bash -c '
+    DEBNAS_MODULE_ACTION=status
+    source "$1/modules/docker-apps.sh" >/dev/null 2>&1
+    _da_parse "$2/multi.yaml" multi
+    echo "N=${#DA_CONTAINERS[@]}"
+    printf "C:%s\n" "${DA_CONTAINERS[@]}"
+  ' _ "${DEBNAS_ROOT}" "$d"
+  rm -rf "$d"
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == *"N=2"* ]]
+  [[ "$output" == *"C:one"* ]]
+  [[ "$output" == *"C:two"* ]]
+}

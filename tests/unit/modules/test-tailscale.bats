@@ -237,3 +237,37 @@ _assert_plan_lines() {
   [[ "$output" == *"risk|第三方软件源|"* ]]
   [[ "$output" == *"tailscale up"* ]]
 }
+
+# ==================== 后端状态解析（行为） ====================
+
+@test "tailscale: _ts_backend_state 解析 BackendState" {
+  local mock="${BATS_TEST_TMPDIR}/mockbin"
+  mkdir -p "$mock"
+  cat > "${mock}/tailscale" <<'INNEREOF'
+#!/bin/sh
+printf '{\n  "BackendState": "Running"\n}\n'
+INNEREOF
+  chmod +x "${mock}/tailscale"
+  run env PATH="${mock}:$PATH" bash -c '
+    DEBNAS_MODULE_ACTION=status
+    source "$1/modules/tailscale.sh" >/dev/null 2>&1
+    _ts_backend_state
+  ' _ "${DEBNAS_ROOT}"
+  [[ "$status" -eq 0 && "$output" == "Running" ]]
+}
+
+@test "tailscale: _ts_backend_state 返回 NeedsLogin" {
+  local mock="${BATS_TEST_TMPDIR}/mockbin"
+  mkdir -p "$mock"
+  cat > "${mock}/tailscale" <<'INNEREOF'
+#!/bin/sh
+printf '{\n  "BackendState": "NeedsLogin"\n}\n'
+INNEREOF
+  chmod +x "${mock}/tailscale"
+  run env PATH="${mock}:$PATH" bash -c '
+    DEBNAS_MODULE_ACTION=status
+    source "$1/modules/tailscale.sh" >/dev/null 2>&1
+    _ts_backend_state
+  ' _ "${DEBNAS_ROOT}"
+  [[ "$status" -eq 0 && "$output" == "NeedsLogin" ]]
+}
