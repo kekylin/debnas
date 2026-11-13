@@ -13,8 +13,8 @@ IFS=$'\n\t'
 # cron 标识前缀（用于在 crontab 中标记 DebNAS 管理的条目）
 readonly CRON_MARKER="# DEBNAS-CRON:"
 
-# DebNAS 可执行文件路径
-readonly DEBNAS_BIN="${DEBNAS_BIN:-/usr/local/bin/debnas}"
+# DebNAS 可执行文件路径（正常由 layout.sh 定义；直接 source 本文件的测试使用默认值）
+: "${DEBNAS_BIN:=/usr/local/bin/debnas}"
 
 # ==================== 内部函数 ====================
 

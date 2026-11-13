@@ -245,4 +245,5 @@ main() {
   log_success "诊断完成 (7 项)"
 }
 
-main "$@"
+# 测试守卫：DEBNAS_DOCTOR_NO_MAIN=1 时只加载检查函数，不执行诊断
+if [[ "${DEBNAS_DOCTOR_NO_MAIN:-0}" -ne 1 ]]; then main "$@"; fi
