@@ -93,7 +93,7 @@ disable_cockpit_ext() {
     # 只删除未注释的 Origins 配置行，保留注释与其他段落
     new_config=$(sed -E '/^[[:space:]]*Origins[[:space:]]*=/d' <<< "$current_config")
     if [[ -z "$new_config" ]]; then
-      # write_file_if_changed 不接受空内容：只剩 Origins 时保留空的 [WebService] 段
+      # 只剩 Origins 时保留空的 [WebService] 段，避免生成空文件
       new_config="[WebService]"
     fi
     local wrc=0

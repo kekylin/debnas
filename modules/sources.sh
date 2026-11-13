@@ -372,7 +372,15 @@ main() {
         return 1
       fi
       ;;
-    1) log_info "源未变更，跳过更新" ;;
+    1)
+      # 内容未变也要清理传统 sources.list，否则会与 DEB822 重复（APT 会告警/重复拉取）
+      if [[ -f "$TRADITIONAL_PATH" ]]; then
+        _backup_file "${TRADITIONAL_PATH}" mv
+        log_info "源未变更，已移除重复的传统 sources.list"
+      else
+        log_info "源未变更，跳过更新"
+      fi
+      ;;
     *)
       log_error "写入 ${DEB822_PATH} 失败"
       return 1

@@ -2,7 +2,7 @@
 # @module: threat-ips
 # @name: 威胁 IP 封禁
 # @category: 安全防护
-# @depends: firewall-cmd,ipset,wget
+# @depends: firewall-cmd,wget
 # @depend_modules: firewall
 # @interactive: true
 # @version: 2.0.0
@@ -262,13 +262,12 @@ module_status() {
 module_plan() {
   local IFS=$' \n\t'
   local -a missing=()
-  local cmd pkg
+  local pkg
   # firewall-cmd 属服务依赖（不自动安装，由 firewall 模块负责），下方单列 risk
-  for cmd in ipset wget; do
-    command -v "$cmd" &>/dev/null && continue
-    pkg="${cmd_to_pkg[$cmd]:-$cmd}"
+  if ! command -v wget &>/dev/null; then
+    pkg="${cmd_to_pkg[wget]:-wget}"
     missing+=("$pkg")
-  done
+  fi
 
   echo "info|threat-ips|交互式菜单：启用（输入威胁等级 0-100，默认 ${DEFAULT_THREAT_LEVEL}）/ 禁用 / 定时设置，按选择执行"
   if [[ ${#missing[@]} -gt 0 ]]; then

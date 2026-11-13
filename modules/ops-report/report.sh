@@ -2028,7 +2028,7 @@ ops_render_disk_io_chart() {
 <rect x=\"112\" y=\"$((y + 13))\" width=\"${gw}\" height=\"8\" fill=\"#86868B\"/>
 <text x=\"$(awk -v b="$rw" 'BEGIN { printf "%.0f", 112 + b + 6 }')\" y=\"$((y + 8))\" fill=\"#0066CC\" font-size=\"11\" font-weight=\"600\">$(ops_format_bytes "$rb")</text>
 <text x=\"$(awk -v b="$gw" 'BEGIN { printf "%.0f", 112 + b + 6 }')\" y=\"$((y + 21))\" fill=\"#86868B\" font-size=\"11\" font-weight=\"600\">$(ops_format_bytes "$wb")</text>
-<text x=\"470\" y=\"$((y + 21))\" text-anchor=\"end\" fill=\"$([ "${max_util%%.*}" -ge 80 ] && echo '#D97706' || echo '#86868B')\" font-size=\"11\" font-weight=\"600\">${max_util}%</text>"
+<text x=\"470\" y=\"$((y + 21))\" text-anchor=\"end\" fill=\"$([ "${max_util%%.*}" -ge 80 ] 2>/dev/null && echo '#D97706' || echo '#86868B')\" font-size=\"11\" font-weight=\"600\">${max_util}%</text>"
   done <<< "${OPS_DISK_IO_SUMMARY}"
   printf '<svg class="chart" viewBox="0 0 480 %d" role="img" aria-label="设备 I/O 周期累计对比">' "$((grid_bottom + 54))"
   printf '<title>设备 I/O 周期累计对比</title>'
@@ -2689,9 +2689,9 @@ ops_print_terminal_summary() {
   printf 'DebNAS 运维报告\n'
   printf '────────────────────────────────────────────\n'
   printf '周期：最近 %s 天       总体状态：%s\n' "$OPS_REPORT_DAYS" "$OPS_STATUS_TEXT"
-  printf '运行：%s 天   CPU：%s%%   内存：%s%%\n' "$OPS_UPTIME_DAYS" "$OPS_CPU_AVG" "$OPS_MEM_CURRENT_PERCENT"
+  printf '运行：%s 天   CPU：%s   内存：%s\n' "$OPS_UPTIME_DAYS" "$(ops_pct_label "$OPS_CPU_AVG")" "$(ops_pct_label "$OPS_MEM_CURRENT_PERCENT")"
   printf '登录成功：%s   失败：%s   待更新：%s   建议：%s\n' \
-    "$OPS_LOGIN_SUCCESS_COUNT" "$OPS_LOGIN_FAIL_COUNT" "$OPS_PENDING_UPDATE_COUNT" "$OPS_ACTION_COUNT"
+    "$OPS_LOGIN_SUCCESS_COUNT" "$OPS_LOGIN_FAIL_COUNT" "$(ops_installed_count_label "$OPS_PENDING_UPDATE_COUNT")" "$OPS_ACTION_COUNT"
   printf '报告目录：%s\n' "${OPS_PERIOD_REPORTS_DIR:-$OPS_REPORTS_DIR}"
   printf '报告文件：%s（%s 字节）\n' "$OPS_LAST_REPORT" "$OPS_REPORT_SIZE"
   printf '固定入口：%s/latest.html\n' "${OPS_PERIOD_REPORTS_DIR:-$OPS_REPORTS_DIR}"

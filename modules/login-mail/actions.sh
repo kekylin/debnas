@@ -92,7 +92,8 @@ if grep -qE '^[[:space:]]*login_mail_geoip[[:space:]]*=[[:space:]]*1[[:space:]]*
 fi
 if [[ -z "${IPV4_ADDR}" || "${IPV4_ADDR}" == "localhost" || "${IPV4_ADDR}" == "::1" || "${IPV4_ADDR}" == "127.0.0.1" ]]; then
   LOCATION_INFO="本地登录"
-elif [[ "${IPV4_ADDR}" =~ ^192\.168\. ]] || [[ "${IPV4_ADDR}" =~ ^10\. ]] || [[ "${IPV4_ADDR}" =~ ^172\.(1[6-9]|2[0-9]|3[01])\. ]]; then
+elif [[ "${IPV4_ADDR}" =~ ^192\.168\. ]] || [[ "${IPV4_ADDR}" =~ ^10\. ]] || [[ "${IPV4_ADDR}" =~ ^172\.(1[6-9]|2[0-9]|3[01])\. ]] \
+  || [[ "${IPV4_ADDR}" =~ ^fe80: ]] || [[ "${IPV4_ADDR}" =~ ^f[cd][0-9a-f]{2}: ]]; then
   LOCATION_INFO="${IPV4_ADDR} (局域网)"
 else
   if [[ "${GEOIP_ENABLED}" -eq 1 ]] && command -v curl >/dev/null 2>&1; then

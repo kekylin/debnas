@@ -342,8 +342,12 @@ batch_set_acl() {
 # 当前状态：一行 "状态码|说明"（工具型模块：反映 ACL 工具是否可用）
 module_status() {
   local ver=""
-  ver=$(dpkg-query -W -f='${db:Status-Status} ${Version}' acl 2>/dev/null) || ver=""
-  if [[ "$ver" != installed* ]] || ! command -v setfacl &>/dev/null; then
+  if ! pkg_is_installed acl; then
+    echo "absent|未安装 acl 软件包（首次操作时自动安装）"
+    return 0
+  fi
+  ver=$(dpkg-query -W -f='${db:Status-Status} ${Version}' acl 2>/dev/null) || ver="installed"
+  if ! command -v setfacl &>/dev/null; then
     echo "absent|未安装 acl 软件包（首次操作时自动安装）"
     return 0
   fi

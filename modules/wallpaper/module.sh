@@ -32,7 +32,11 @@ readonly WALLPAPER_IMAGE_MAX_BYTES=20971520  # 壁纸图片上限 20 MiB
 # 获取壁纸 API 地址（优先级：debnas.conf > 默认值）
 get_wallpaper_api_url() {
   local api_url
-  api_url=$(config_read "global" "WALLPAPER_API_URL" 2>/dev/null || true)
+  api_url=$(config_read "global" "WALLPAPER_API_URL" 2>/dev/null) || api_url=""
+  if [[ -n "$api_url" && ! "$api_url" =~ ^https?://[^[:space:]]+$ ]]; then
+    log_warning "debnas.conf 中的 WALLPAPER_API_URL 不是合法的 http(s) 地址，使用默认地址"
+    api_url=""
+  fi
   if [[ -n "$api_url" ]]; then
     printf '%s' "$api_url"
     return 0
