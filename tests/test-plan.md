@@ -75,10 +75,10 @@
 | 项目 | 值 |
 |------|-----|
 | 系统版本 | Debian 13 (trixie) amd64 |
-| IP 地址 | <TEST_VM_IP> |
+| IP 地址 | 见本地测试环境（不要提交到仓库） |
 | 普通账号 | kekylin |
-| 普通账号密码 | <REDACTED> |
-| root 提权密码 | <REDACTED> |
+| 普通账号密码 | 见本地测试环境（不要提交到仓库） |
+| root 提权密码 | 见本地测试环境（不要提交到仓库） |
 | 安装类型 | 最小化安装（无软件源、无 sudo） |
 
 ### 约束条件
@@ -105,15 +105,17 @@
 #### 本地模式：SCP 推送部署
 
 ```bash
+# 本地终端先导出测试机参数（不要写入仓库）：
+#   export TEST_VM_IP='192.168.x.x' TEST_VM_PASSWORD='...'
 # 0. 准备 SSH 密码自动填充脚本（只需首次执行一次）
 cat > /tmp/ssh-askpass.sh << 'EOF'
 #!/bin/bash
-echo "<REDACTED>"
+printf '%s\n' "${TEST_VM_PASSWORD:?请先 export TEST_VM_PASSWORD}"
 EOF
 chmod +x /tmp/ssh-askpass.sh
 
 # 1. 打包 → 推送 → 部署（一行完成）
-cd /srv/Visual\ Studio\ Code/debnas && \
+cd /path/to/debnas && \
 rm -f /tmp/debnas.tar.gz && \
 tar -czf /tmp/debnas.tar.gz \
   --exclude='.git' \
@@ -126,10 +128,10 @@ tar -czf /tmp/debnas.tar.gz \
   --exclude='tmp' \
   . && \
 SSH_ASKPASS=/tmp/ssh-askpass.sh DISPLAY=:0 \
-scp -o StrictHostKeyChecking=no /tmp/debnas.tar.gz kekylin@<TEST_VM_IP>:/tmp/ && \
+scp -o StrictHostKeyChecking=no /tmp/debnas.tar.gz kekylin@${TEST_VM_IP}:/tmp/ && \
 SSH_ASKPASS=/tmp/ssh-askpass.sh DISPLAY=:0 \
-ssh -o StrictHostKeyChecking=no -t kekylin@<TEST_VM_IP> \
-  "echo <REDACTED> | su -c '
+ssh -o StrictHostKeyChecking=no -t kekylin@${TEST_VM_IP} \
+  "printf '%s\n' '${TEST_VM_PASSWORD:?}' | su -c '
     rm -rf /opt/debnas
     mkdir -p /opt/debnas
     tar -xzf /tmp/debnas.tar.gz -C /opt/debnas/
@@ -142,13 +144,15 @@ ssh -o StrictHostKeyChecking=no -t kekylin@<TEST_VM_IP> \
 
 #### 远程模式：install.sh 部署
 
+> 需先按上一节导出 `TEST_VM_IP` 与 `TEST_VM_PASSWORD`。
+
 仅在用户明确指示时使用。在 VM 上直接执行安装脚本：
 
 ```bash
 # 国内用户
 SSH_ASKPASS=/tmp/ssh-askpass.sh DISPLAY=:0 \
-ssh -o StrictHostKeyChecking=no -t kekylin@<TEST_VM_IP> \
-  "echo <REDACTED> | su -c '
+ssh -o StrictHostKeyChecking=no -t kekylin@${TEST_VM_IP} \
+  "printf '%s\n' '${TEST_VM_PASSWORD:?}' | su -c '
     wget -q https://gitee.com/kekylin/debnas/raw/main/install.sh -O /tmp/install.sh
     bash /tmp/install.sh --region cn --yes
   '"
@@ -1071,14 +1075,14 @@ bash tests/run.sh all           # L1-L5 全部
 ```bash
 # 示例：测试主菜单显示 + 选择分类 + 返回（使用 printf，不要用 echo -e）
 SSH_ASKPASS=/tmp/ssh-askpass.sh DISPLAY=:0 \
-  ssh -o StrictHostKeyChecking=no -t kekylin@<TEST_VM_IP> "echo <REDACTED> | su -c '
+  ssh -o StrictHostKeyChecking=no -t kekylin@${TEST_VM_IP} "printf '%s\n' '${TEST_VM_PASSWORD:?}' | su -c '
     printf \"1\\n0\\n\" | debnas
   '"
 # 验证：输出中包含目标子菜单内容
 
 # 示例：测试无效输入处理
 SSH_ASKPASS=/tmp/ssh-askpass.sh DISPLAY=:0 \
-  ssh -o StrictHostKeyChecking=no -t kekylin@<TEST_VM_IP> "echo <REDACTED> | su -c '
+  ssh -o StrictHostKeyChecking=no -t kekylin@${TEST_VM_IP} "printf '%s\n' '${TEST_VM_PASSWORD:?}' | su -c '
     printf \"abc\\n99\\n0\\n\" | debnas
   '"
 # 验证：输出中包含"无效"或"重新输入"提示
@@ -1245,7 +1249,7 @@ tests/reports/test-report-YYYYMMDD-HHmmss.md
 # 🧪 DebNAS 测试报告
 
 > **报告编号**: `#NNN` | **日期**: YYYY-MM-DD HH:mm | **测试模式**: 本地推送 / 远程安装
-> **代码版本**: `abc1234` (refactor/debnas-v2) | **测试环境**: Debian 13 (trixie) amd64 | **VM**: <TEST_VM_IP>
+> **代码版本**: `abc1234` (refactor/debnas-v2) | **测试环境**: Debian 13 (trixie) amd64 | **VM**: 见本地测试环境
 
 ---
 
