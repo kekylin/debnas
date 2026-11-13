@@ -405,3 +405,73 @@ _contract_plan_ok() {
   [[ "$output" != *"未识别的预演行"* ]]
   _contract_plan_ok "$output"
 }
+
+# ==================== 输入校验（行为） ====================
+
+@test "acl-manager: validate_permissions 接受合法权限并拒绝非法字符" {
+  run bash -c '
+    DEBNAS_MODULE_ACTION=status
+    source "$1/modules/acl-manager.sh" >/dev/null 2>&1
+    log_error() { :; }
+    for p in rwx r-x "" rwq rwxr; do
+      if validate_permissions "$p"; then echo "[$p]=OK"; else echo "[$p]=NO"; fi
+    done
+  ' _ "${DEBNAS_ROOT}"
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == *"[rwx]=OK"* ]]
+  [[ "$output" == *"[r-x]=OK"* ]]
+  [[ "$output" == *"[]=OK"* ]]
+  [[ "$output" == *"[rwq]=NO"* ]]
+  [[ "$output" == *"[rwxr]=NO"* ]]
+}
+
+@test "acl-manager: validate_acl_path 拒绝根/系统目录/受保护目录" {
+  run bash -c '
+    DEBNAS_MODULE_ACTION=status
+    source "$1/modules/acl-manager.sh" >/dev/null 2>&1
+    log_error() { :; }
+    for p in / /etc/hosts /opt/debnas/bin /home/u/.ssh /srv/data; do
+      if validate_acl_path "$p"; then echo "$p=OK"; else echo "$p=NO"; fi
+    done
+  ' _ "${DEBNAS_ROOT}"
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == *"/=NO"* ]]
+  [[ "$output" == *"/etc/hosts=NO"* ]]
+  [[ "$output" == *"/opt/debnas/bin=NO"* ]]
+  [[ "$output" == *"/home/u/.ssh=NO"* ]]
+  [[ "$output" == *"/srv/data=OK"* ]]
+}
+
+@test "acl-manager: _acl_is_toplevel_dir 只认一级目录" {
+  local d
+  d=$(mktemp -d)
+  run bash -c '
+    DEBNAS_MODULE_ACTION=status
+    source "$1/modules/acl-manager.sh" >/dev/null 2>&1
+    _acl_is_toplevel_dir /tmp && echo TOP=YES || echo TOP=NO
+    _acl_is_toplevel_dir "$2" && echo SUB=YES || echo SUB=NO
+    _acl_is_toplevel_dir / && echo ROOT=YES || echo ROOT=NO
+  ' _ "${DEBNAS_ROOT}" "$d"
+  rm -rf "$d"
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == *"TOP=YES"* ]]
+  [[ "$output" == *"SUB=NO"* ]]
+  [[ "$output" == *"ROOT=NO"* ]]
+}
+
+@test "acl-manager: validate_acl_entry 拒绝非法格式与非法用户名" {
+  run bash -c '
+    DEBNAS_MODULE_ACTION=status
+    source "$1/modules/acl-manager.sh" >/dev/null 2>&1
+    log_error() { :; }
+    getent() { [[ "$2" == "root" ]]; }
+    for e in u:root g:root u:bad,name x:root; do
+      if validate_acl_entry "$e"; then echo "$e=OK"; else echo "$e=NO"; fi
+    done
+  ' _ "${DEBNAS_ROOT}"
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == *"u:root=OK"* ]]
+  [[ "$output" == *"g:root=OK"* ]]
+  [[ "$output" == *"u:bad,name=NO"* ]]
+  [[ "$output" == *"x:root=NO"* ]]
+}

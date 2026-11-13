@@ -22,6 +22,7 @@
 - 菜单「检查脚本更新」的提示按普通用户收敛为四行以内：`检查更新…` / `当前版本` / `一句话结论`，版本号等状态信息统一带 `[INFO]` 标识、不再裸行展示；未签名指针回退、主备源切换等内部诊断不再显示（`_RELEASE_QUIET`）。`debnas check-update` 仍保留详细原因，便于排查
 
 ### Changed
+- 测试：补 acl-manager 权限/路径/条目校验、mail-account 邮箱校验与主题编码及主流程、timer-manager 概览汇总的行为用例
 - 测试：补 fail2ban 的 jail.local 管理判定与私网段过滤、cockpit-ext 的 Origins/安装判定、wallpaper 的 PNG/JPEG 文件头校验行为用例
 - 测试：补 sources 的 DEB822/传统源解析与 deb822 内容生成、docker-ce 镜像源提取与官方源判定、docker-mirror 的 daemon.json 合并与缺失镜像统计行为用例
 - 临时文件收敛：`bin/menu.sh` 与 `lib/ui/cron-menu.sh` 的菜单结果文件改用 `create_temp_file`（随进程退出清理，不再裸 `mktemp`）；threat-ips 解压临时文件删除补 `--`，避免以 `-` 开头的路径被当作选项
@@ -41,6 +42,7 @@
 - 经典菜单内容栏宽度改为**终端宽度的一半**（最少 20 列），从左侧开始（靠左，不整体居中）：Header 在内容栏内居中，面包屑、菜单项、Footer 在内容栏内左对齐；Footer 放不下版本号时省略版本号，优先保留完整快捷键
 
 ### Fixed
+- `mail-account`：`main` 内的辅助函数（`_mail_ask`、邮箱校验、Exim 配置生成等）移到顶层，`main` 只保留配置检查并调用 `_mail_main_flow`；`DEBNAS_MODULE_ACTION=status` 下这些函数可被探测/测试调用，运行时行为不变
 - `tools/check-docs.sh` 的 TECH_DEBT 计数解析只匹配“N 个 BATS 文件、N 个用例”行，避免把说明文字中的年份/数字误当计数
 - 2026-11-13 全面审查修复（第一批 P0/P1）：
   - crontab 读取失败不再当成空 crontab：`_get_current_crontab` 仅在 cron 明确报 `no crontab for` 时按空处理，`cron_register`/`cron_register_variant`/`cron_unregister` 读取失败时拒绝写回，避免覆盖用户任务；卸载不再以 `crontab -r` 作为兜底，删除失败会报错并返回非 0

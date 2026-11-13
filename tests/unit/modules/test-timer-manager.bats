@@ -97,3 +97,25 @@ M
   [[ "$output" == *"DONE"* ]]
   [[ "$output" == *"仅有附加周期条目"* ]]
 }
+
+# ==================== 定时任务概览（行为） ====================
+
+@test "timer-manager: _timer_list_all 汇总启用/未启用与变体条目" {
+  run bash -c '
+    DEBNAS_MODULE_ACTION=status
+    source "$1/modules/timer-manager.sh" >/dev/null 2>&1
+    get_module_field_var() { printf -v "$1" "%s" "显示-$2"; }
+    cron_is_registered() { [[ "$1" == "sys-patches" || "$1" == "ops-report" ]]; }
+    cron_get_schedule() {
+      if [[ "$1" == "sys-patches" ]]; then echo "0 0 * * *"; return 0; fi
+      return 1
+    }
+    cron_describe() { echo "每天 00:00"; }
+    _timer_list_all
+  ' _ "${DEBNAS_ROOT}"
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == *"定时任务概览"* ]]
+  [[ "$output" == *"显示-sys-patches"*"已启用"*"0 0 * * *（每天 00:00）"* ]]
+  [[ "$output" == *"显示-ops-report"*"未启用"*"仅有附加周期条目"* ]]
+  [[ "$output" == *"显示-wallpaper"*"未启用"*"-"* ]]
+}

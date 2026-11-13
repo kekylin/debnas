@@ -159,12 +159,8 @@ main() {
     log_info "开始重新配置邮件账户..."
   fi
 
-# 检查 exim4、update-exim4.conf、systemctl 依赖，确保后续操作可用
-REQUIRED_CMDS=(exim4 update-exim4.conf systemctl)
-if ! check_dependencies "${REQUIRED_CMDS[@]}"; then
-  log_error "缺少 exim4，请先手动安装。"
-  exit "${ERROR_DEPENDENCY}"
-fi
+  _mail_main_flow "$@"
+}
 
 # 域名与 SMTP 服务器映射
 # 国内主流邮箱
@@ -399,7 +395,15 @@ EOF
     { log_error "测试邮件发送失败，请查看 /var/log/exim4/mainlog。"; exit "${ERROR_GENERAL}"; }
 }
 
-# 主控制流程
+# 主控制流程（main 完成配置检查后调用）
+_mail_main_flow() {
+  # 检查 exim4、update-exim4.conf、systemctl 依赖，确保后续操作可用
+  REQUIRED_CMDS=(exim4 update-exim4.conf systemctl)
+  if ! check_dependencies "${REQUIRED_CMDS[@]}"; then
+    log_error "缺少 exim4，请先手动安装。"
+    exit "${ERROR_DEPENDENCY}"
+  fi
+
 log_info "配置邮件服务..."
 
 local email password notify_email smarthost email_domain

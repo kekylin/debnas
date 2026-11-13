@@ -384,3 +384,81 @@ _probe_call() {
   [[ "${lines[0]}" =~ ^(applied|running|partial|absent|warn|error|unknown)\| ]]
   [[ "${lines[0]}" != "unknown|未提供状态检测" ]]
 }
+
+# ==================== 邮箱校验与主题编码（行为） ====================
+
+@test "mail-account: _mail_valid_notify_email 校验通知邮箱格式" {
+  run bash -c '
+    DEBNAS_MODULE_ACTION=status
+    source "$1/modules/mail-account.sh" >/dev/null 2>&1
+    for e in user@example.com user.name+tag@sub.example.cn bad@example invalid@ example.com; do
+      if _mail_valid_notify_email "$e"; then echo "$e=OK"; else echo "$e=NO"; fi
+    done
+  ' _ "${DEBNAS_ROOT}"
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == *"user@example.com=OK"* ]]
+  [[ "$output" == *"user.name+tag@sub.example.cn=OK"* ]]
+  [[ "$output" == *"bad@example=NO"* ]]
+  [[ "$output" == *"example.com=NO"* ]]
+}
+
+@test "mail-account: validate_sender_email 按域名返回 SMTP 服务器" {
+  run bash -c '
+    DEBNAS_MODULE_ACTION=status
+    source "$1/modules/mail-account.sh" >/dev/null 2>&1
+    log_error() { :; }
+    validate_sender_email "a@qq.com" && echo
+    validate_sender_email "a@unsupported.example" || echo UNSUPPORTED
+  ' _ "${DEBNAS_ROOT}"
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == *"smtp.qq.com:587"* ]]
+  [[ "$output" == *"UNSUPPORTED"* ]]
+}
+
+@test "mail-account: to_exim_smarthost 用双冒号表示端口" {
+  run bash -c '
+    DEBNAS_MODULE_ACTION=status
+    source "$1/modules/mail-account.sh" >/dev/null 2>&1
+    to_exim_smarthost "smtp.qq.com:587"
+    echo
+    to_exim_smarthost "smtp.qq.com"
+  ' _ "${DEBNAS_ROOT}"
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == *"smtp.qq.com::587"* ]]
+  [[ "$output" == *"smtp.qq.com"* ]]
+}
+
+@test "mail-account: _mail_mime_subject 对中文主题做 RFC2047 编码" {
+  run bash -c '
+    DEBNAS_MODULE_ACTION=status
+    source "$1/modules/mail-account.sh" >/dev/null 2>&1
+    _mail_mime_subject "DebNAS 运维报告"
+  ' _ "${DEBNAS_ROOT}"
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == "=?UTF-8?B?"* ]]
+  [[ "$output" != *"运维报告"* ]]
+}
+
+@test "mail-account: main 完成配置检查后执行主流程（Mock 依赖与交互）" {
+  run bash -c '
+    DEBNAS_MODULE_ACTION=status
+    source "$1/modules/mail-account.sh" >/dev/null 2>&1
+    log_info() { :; }; log_success() { :; }; log_error() { echo "E:$*"; }
+    _mail_current_smarthost() { echo ""; }
+    notify_email_get() { return 1; }
+    check_dependencies() { return 0; }
+    _mail_ask() { printf -v "$1" "%s" "value-$2"; }
+    validate_sender_email() { echo "smtp.qq.com:587"; }
+    _mail_valid_notify_email() { return 0; }
+    generate_exim_config() { echo "GEN:$1"; }
+    configure_smtp_auth() { echo "AUTH:$1"; }
+    restart_exim_service() { echo RESTART; }
+    send_validation_email() { echo "SEND:$1"; }
+    main
+  ' _ "${DEBNAS_ROOT}"
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == *"GEN:"* ]]
+  [[ "$output" == *"AUTH:"* ]]
+  [[ "$output" == *"RESTART"* ]]
+  [[ "$output" == *"SEND:"* ]]
+}
