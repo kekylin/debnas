@@ -15,6 +15,9 @@
 #   bash tools/release.sh --sign-latest <tag> <GPG 密钥 ID>
 #                                                  # 单独（重新）生成版本指针 LATEST / LATEST.asc
 #
+# 发布前可选检查（维护者本地）:
+#   bash tools/check-docs.sh                       # 核对 docs/ 中的模块/库/测试计数与实际一致
+#
 # 共用代码单一来源：lib/system/installer.sh 中的 DEBNAS-RELEASE-VERIFY（发布产物校验）、
 #   DEBNAS-DOWNLOAD（下载与解压）与 DEBNAS-DEPLOY（安装目录整树替换 + 更新锁 + 全局命令包装脚本）区块；
 #   install.sh 必须自包含，其中的同名区块由 --embed-key / --bump / --sync-verify / --sync-download 同步生成，

@@ -15,6 +15,7 @@
 ## [未发布]
 
 ### Added
+- `tools/check-docs.sh`：核对 `docs/` 中 PROJECT_OVERVIEW / ARCHITECTURE / TECH_DEBT / TESTING_GUIDE 的模块、公共库、BATS 文件与用例计数是否与仓库实际一致；`docs/` 不存在时输出 `[SKIP]` 并以 0 退出（可安全用于 CI）；发布脚本头部注明可选的发布前检查
 - `debnas check-update`：只读版本检测——用已安装目录的发布公钥验签 main 分支的 `LATEST` 指针，与已安装版本比较；不下载代码包、不持更新锁、不修改安装目录。退出码 `0`=已是最新、`1`=有新版本、`2`=检查失败（公钥缺失 / 指针验签失败 / 网络不可达 / 指针回放）。`debnas update` 与它共用 `release_check_latest`，两处判断不会再分叉
 - 一级菜单「关于项目」改为二级菜单：**项目简介**（原「关于项目」的简介内容 + 当前版本）、**检查脚本更新**（检查新版本，确认后调用 `debnas update --tag <最新版本>`；非交互环境只检查不更新）。检查逻辑与 `debnas check-update` 共用 `installer.sh` 的 `release_check_latest` / `release_check_error_text`，与 `debnas update` 的判断口径一致
 - 首页 footer 版本号前新增「有新版本」绿色圆点：启动只读本地缓存（`/var/lib/debnas/state/update-check`，默认 6 小时有效），缺失或过期时由后台 detached 进程静默检查已签名 `LATEST` 指针并写回（flock 去重、5 秒超时，不阻塞首屏）；仅一级菜单显示，版本号放不下时只保留圆点。`debnas update` 成功或菜单内更新完成后清除缓存
