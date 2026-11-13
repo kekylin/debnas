@@ -269,3 +269,55 @@ _contract_plan_ok() {
   [[ "$output" == *"info|cockpit-ext|交互式菜单"* ]]
   [[ "$output" == *"risk|外网暴露|"* ]]
 }
+
+# ==================== Origins 与安装判定（行为） ====================
+
+@test "cockpit-ext: _cockpit_ext_origins 跳过注释并取首个 Origins" {
+  local d
+  d=$(mktemp -d)
+  cat > "$d/cockpit.conf" <<'INNEREOF'
+# Origins = https://comment.example
+[WebService]
+Origins = https://a.example https://b.example
+Origins = https://ignored.example
+INNEREOF
+  run bash -c '
+    DEBNAS_MODULE_ACTION=status
+    source "$1/modules/cockpit-ext/module.sh" >/dev/null 2>&1
+    _COCKPIT_EXT_CONF="$2/cockpit.conf"
+    _cockpit_ext_origins
+  ' _ "${DEBNAS_ROOT}" "$d"
+  rm -rf "$d"
+  [[ "$status" -eq 0 && "$output" == "https://a.example https://b.example" ]]
+}
+
+@test "cockpit-ext: _cockpit_ext_origins 无文件或无 Origins 时输出空" {
+  local d
+  d=$(mktemp -d)
+  printf '[WebService]\n' > "$d/cockpit.conf"
+  run bash -c '
+    DEBNAS_MODULE_ACTION=status
+    source "$1/modules/cockpit-ext/module.sh" >/dev/null 2>&1
+    _COCKPIT_EXT_CONF="$2/cockpit.conf"
+    _cockpit_ext_origins
+    _COCKPIT_EXT_CONF="$2/no-such.conf"
+    _cockpit_ext_origins
+  ' _ "${DEBNAS_ROOT}" "$d"
+  rm -rf "$d"
+  [[ "$status" -eq 0 && -z "$output" ]]
+}
+
+@test "cockpit-ext: _cockpit_ext_installed 兼容 cockpit-ws 与 cockpit 包" {
+  run bash -c '
+    DEBNAS_MODULE_ACTION=status
+    source "$1/modules/cockpit-ext/module.sh" >/dev/null 2>&1
+    pkg_is_installed() { [[ "$1" == "cockpit-ws" ]]; }
+    _cockpit_ext_installed && echo WS
+    pkg_is_installed() { [[ "$1" == "cockpit" ]]; }
+    _cockpit_ext_installed && echo META
+    pkg_is_installed() { return 1; }
+    _cockpit_ext_installed || echo NONE
+  ' _ "${DEBNAS_ROOT}"
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == *"WS"*"META"*"NONE"* ]]
+}

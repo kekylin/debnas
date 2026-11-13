@@ -22,6 +22,7 @@
 - 菜单「检查脚本更新」的提示按普通用户收敛为四行以内：`检查更新…` / `当前版本` / `一句话结论`，版本号等状态信息统一带 `[INFO]` 标识、不再裸行展示；未签名指针回退、主备源切换等内部诊断不再显示（`_RELEASE_QUIET`）。`debnas check-update` 仍保留详细原因，便于排查
 
 ### Changed
+- 测试：补 fail2ban 的 jail.local 管理判定与私网段过滤、cockpit-ext 的 Origins/安装判定、wallpaper 的 PNG/JPEG 文件头校验行为用例
 - 测试：补 sources 的 DEB822/传统源解析与 deb822 内容生成、docker-ce 镜像源提取与官方源判定、docker-mirror 的 daemon.json 合并与缺失镜像统计行为用例
 - 临时文件收敛：`bin/menu.sh` 与 `lib/ui/cron-menu.sh` 的菜单结果文件改用 `create_temp_file`（随进程退出清理，不再裸 `mktemp`）；threat-ips 解压临时文件删除补 `--`，避免以 `-` 开头的路径被当作选项
 - 测试：补 firewall 默认区解析/区文件插入、service-query 服务状态与访问地址、basic-tools 缺包统计与 `module_status` 的行为用例

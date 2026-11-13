@@ -376,3 +376,55 @@ _contract_plan_ok() {
   [[ "$status" -eq 0 ]]
   [[ "$output" == running\|*"需 root 查看"* ]]
 }
+
+# ==================== jail.local 管理与局域网段（行为） ====================
+
+@test "fail2ban: jail_local_is_managed 识别 DebNAS 生成/旧版/用户自定义" {
+  local d
+  d=$(mktemp -d)
+  run bash -c '
+    DEBNAS_MODULE_ACTION=status
+    source "$1/modules/fail2ban.sh" >/dev/null 2>&1
+    printf "%s\n" "$JAIL_LOCAL_MARKER" > "$2/managed.local"
+    {
+      echo "# some header"
+      echo "# 忽略本机流量，防止自身被封禁"
+      echo "# 使用 firewallcmd-ipset 作为封禁后端（适配 firewalld）"
+    } > "$2/legacy.local"
+    echo "[sshd]" > "$2/user.local"
+    for f in managed legacy user; do
+      if jail_local_is_managed "$2/$f.local"; then echo "$f=YES"; else echo "$f=NO"; fi
+    done
+    if jail_local_is_managed "$2/nonexistent.local"; then echo "missing=YES"; else echo "missing=NO"; fi
+  ' _ "${DEBNAS_ROOT}" "$d"
+  rm -rf "$d"
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == *"managed=YES"* ]]
+  [[ "$output" == *"legacy=YES"* ]]
+  [[ "$output" == *"user=NO"* ]]
+  [[ "$output" == *"missing=YES"* ]]
+}
+
+@test "fail2ban: get_local_private_subnets 排除虚拟网桥、公网与非 RFC1918" {
+  local mock="${BATS_TEST_TMPDIR}/mockbin"
+  mkdir -p "$mock"
+  cat > "${mock}/ip" <<'INNEREOF'
+#!/bin/sh
+cat <<'ROUTES'
+10.1.2.0/24 dev eth0 proto kernel scope link src 10.1.2.5
+172.16.5.0/24 dev eth1 proto kernel scope link src 172.16.5.5
+192.168.1.0/24 dev br-lan proto kernel scope link src 192.168.1.1
+10.9.0.0/24 dev docker0 proto kernel scope link src 10.9.0.1
+100.64.0.0/10 dev tun0 scope link
+8.8.8.0/24 dev eth2 scope link
+ROUTES
+INNEREOF
+  chmod +x "${mock}/ip"
+  run env PATH="${mock}:$PATH" bash -c '
+    DEBNAS_MODULE_ACTION=status
+    source "$1/modules/fail2ban.sh" >/dev/null 2>&1
+    get_local_private_subnets
+  ' _ "${DEBNAS_ROOT}"
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == "10.1.2.0/24 172.16.5.0/24" ]]
+}

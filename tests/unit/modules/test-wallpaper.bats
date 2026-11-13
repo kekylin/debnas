@@ -393,3 +393,26 @@ _wp_eval() {
   [[ "$status" -eq 0 ]]
   [[ "$output" == *DONE* ]]
 }
+
+# ==================== 图片文件头校验（行为） ====================
+
+@test "wallpaper: _wp_image_magic_ok 接受 PNG/JPEG、拒绝其他格式" {
+  local d
+  d=$(mktemp -d)
+  printf '\x89PNG\r\n\x1a\nrest' > "$d/a.png"
+  printf '\xff\xd8\xff\xe0rest' > "$d/a.jpg"
+  printf 'GIF89arest' > "$d/a.gif"
+  run bash -c '
+    DEBNAS_MODULE_ACTION=status
+    source "$1/modules/wallpaper/module.sh" >/dev/null 2>&1
+    for f in a.png a.jpg a.gif missing.png; do
+      if _wp_image_magic_ok "$2/$f"; then echo "$f=YES"; else echo "$f=NO"; fi
+    done
+  ' _ "${DEBNAS_ROOT}" "$d"
+  rm -rf "$d"
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == *"a.png=YES"* ]]
+  [[ "$output" == *"a.jpg=YES"* ]]
+  [[ "$output" == *"a.gif=NO"* ]]
+  [[ "$output" == *"missing.png=NO"* ]]
+}
