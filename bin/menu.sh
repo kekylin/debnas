@@ -127,7 +127,7 @@ show_project_intro() {
 # 关于项目 → 检查脚本更新：只读检查版本指针，确认后调用 debnas update
 # 检查逻辑与 debnas check-update / debnas update 共用 release_check_latest
 handle_script_update() {
-  local install_dir="${DEBNAS_OPT_DIR:-/opt/debnas}"
+  local install_dir="$DEBNAS_OPT_DIR"
   # 开发态（从源码目录运行）没有安装标记，用当前代码版本与仓库内的公钥比较
   [[ -d "$install_dir" ]] || install_dir="${_DEBNAS_ROOT:-${DEBNAS_ROOT:-.}}"
 
@@ -327,7 +327,7 @@ _UI_UPDATE_HINT=""
 
 update_hint_init() {
   _UI_UPDATE_HINT=""
-  local install_dir="${DEBNAS_OPT_DIR:-/opt/debnas}"
+  local install_dir="$DEBNAS_OPT_DIR"
   [[ -d "$install_dir" ]] || install_dir="${_DEBNAS_ROOT:-${DEBNAS_ROOT:-.}}"
 
   if update_check_cache_read && update_check_cache_fresh; then

@@ -354,3 +354,14 @@ extract_function() {
 @test "CLI: main() 包含 root 权限检查 (EUID != 0 → exit ERROR_PERMISSION)" {
   grep -A3 'EUID' "$DEBNAS_BIN" | grep -q 'ERROR_PERMISSION'
 }
+
+@test "CLI: 安装路径从 layout 常量派生，入口脚本不硬编码" {
+  grep -q '^DEBNAS_OPT_DIR=' "${DEBNAS_ROOT}/lib/system/layout.sh"
+  grep -q '^DEBNAS_BIN=' "${DEBNAS_ROOT}/lib/system/layout.sh"
+  grep -q 'DEBNAS_BIN' "${DEBNAS_ROOT}/bin/debnas"
+  grep -q 'DEBNAS_OPT_DIR' "${DEBNAS_ROOT}/bin/menu.sh"
+  grep -q 'DEBNAS_BIN' "${DEBNAS_ROOT}/bin/doctor.sh"
+  run grep -nE '"/usr/local/bin/debnas"|"/opt/debnas"' \
+    "${DEBNAS_ROOT}/bin/debnas" "${DEBNAS_ROOT}/bin/menu.sh" "${DEBNAS_ROOT}/bin/doctor.sh"
+  [[ "$status" -ne 0 ]]
+}

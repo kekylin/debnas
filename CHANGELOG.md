@@ -21,6 +21,7 @@
 - 菜单「检查脚本更新」的提示按普通用户收敛为四行以内：`检查更新…` / `当前版本` / `一句话结论`，版本号等状态信息统一带 `[INFO]` 标识、不再裸行展示；未签名指针回退、主备源切换等内部诊断不再显示（`_RELEASE_QUIET`）。`debnas check-update` 仍保留详细原因，便于排查
 
 ### Changed
+- 入口脚本路径从布局常量派生：`lib/system/layout.sh` 新增 `DEBNAS_BIN`，`bin/debnas`、`bin/menu.sh`、`bin/doctor.sh` 改用 `DEBNAS_OPT_DIR` / `DEBNAS_BIN`，不再重复硬编码安装目录与全局命令路径；`install.sh` 为保持单文件自包含仍使用顶部常量
 - 下载/解压实现收敛：`install.sh` 与 `lib/system/installer.sh` 共用 `DEBNAS-DOWNLOAD` 区块（`release_fetch` / `release_fetch_assets` / `release_extract`，日志经 `_release_msg` 适配两侧）；`tools/release.sh` 新增 `--sync-download`，构建自检与 `test-release-sync` 检查该区块逐字一致
 - `modules/ops-report/report.sh` 拆分完成：`report.sh` 改为 loader，按序加载 `report-common.sh`（共享格式化 helper）、`report-collect.sh`（数据采集与状态判定）、`report-render.sh`（HTML/图表渲染）、`report-cli.sh`（报告生成、终端摘要与并发锁）；函数名、全局变量与调用方式不变
 - `modules/ops-report/report.sh` 拆分第一步：23 个 `ops_render_*` 渲染/图表函数原样移入 `report-render.sh`，由 `report.sh` 加载；函数名、全局变量与调用方式不变

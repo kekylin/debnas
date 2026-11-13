@@ -139,7 +139,7 @@ _update_confirm_unsigned() {
 # 用法：debnas update [--tag <版本>]          # 签名校验（默认更新到最新稳定版本）
 #       debnas update --unsigned [--branch <分支>]  # 不校验（开发调试，需交互确认）
 cmd_update() {
-	local install_dir="${DEBNAS_OPT_DIR:-/opt/debnas}"
+	local install_dir="$DEBNAS_OPT_DIR"
 	local want_tag="" branch="" unsigned=0
 
 	while [[ $# -gt 0 ]]; do
@@ -310,8 +310,8 @@ cmd_update() {
 		log_warning "版本迁移存在问题，请运行 debnas doctor 检查"
 	fi
 	# 刷新全局命令包装脚本：同样由"新代码"生成内容（旧版包装脚本或软链接在此被替换）
-	if ! (unset _DEBNAS_BOOTSTRAPPED _DEBNAS_CORE_LOADED; bash -c 'source "$1/lib/bootstrap.sh" && deploy_install_wrapper "$2" "$1"' _ "$install_dir" "/usr/local/bin/debnas") 2>/dev/null; then
-		log_warning "全局命令 /usr/local/bin/debnas 未能刷新，可重新执行 install.sh 修复"
+	if ! (unset _DEBNAS_BOOTSTRAPPED _DEBNAS_CORE_LOADED; bash -c 'source "$1/lib/bootstrap.sh" && deploy_install_wrapper "$2" "$1"' _ "$install_dir" "$DEBNAS_BIN") 2>/dev/null; then
+		log_warning "全局命令 ${DEBNAS_BIN} 未能刷新，可重新执行 install.sh 修复"
 	fi
 	deploy_unlock
 
@@ -325,7 +325,7 @@ cmd_update() {
 # 退出码：0=已是最新  1=有新版本  2=检查失败（公钥缺失 / 指针验签失败 / 网络不可达 / 指针回放）
 # 说明：只读版本指针，不下载发布包、不持部署锁、不修改安装目录
 cmd_check_update() {
-	local install_dir="${DEBNAS_OPT_DIR:-/opt/debnas}"
+	local install_dir="$DEBNAS_OPT_DIR"
 	# 开发态（直接从源码目录运行）没有安装标记，用当前代码版本与仓库内的公钥比较
 	[[ -d "$install_dir" ]] || install_dir="${_DEBNAS_ROOT:-${DEBNAS_ROOT:-.}}"
 
@@ -390,16 +390,16 @@ cmd_uninstall() {
 	fi
 
 	local uninstall_failed=0
-	if rm -f /usr/local/bin/debnas 2>/dev/null; then
-		log_info "已移除全局命令: /usr/local/bin/debnas"
+	if rm -f "$DEBNAS_BIN" 2>/dev/null; then
+		log_info "已移除全局命令: ${DEBNAS_BIN}"
 	else
-		log_warning "未能移除全局命令: /usr/local/bin/debnas"
+		log_warning "未能移除全局命令: ${DEBNAS_BIN}"
 		uninstall_failed=1
 	fi
-	if rm -rf /opt/debnas 2>/dev/null; then
-		log_info "已移除脚本目录: /opt/debnas/"
+	if rm -rf "$DEBNAS_OPT_DIR" 2>/dev/null; then
+		log_info "已移除脚本目录: ${DEBNAS_OPT_DIR}/"
 	else
-		log_warning "未能移除脚本目录: /opt/debnas/"
+		log_warning "未能移除脚本目录: ${DEBNAS_OPT_DIR}/"
 		uninstall_failed=1
 	fi
 
@@ -574,12 +574,12 @@ main() {
 	fi
 
 	# 上次更新被中断（SIGKILL/断电）留下的部署残留：自动回滚或清理（锁被占用时跳过）
-	if [[ "$_DEBNAS_ROOT" == "/opt/debnas" ]]; then
-		deploy_recover "/opt/debnas" || true
+	if [[ "$_DEBNAS_ROOT" == "$DEBNAS_OPT_DIR" ]]; then
+		deploy_recover "$DEBNAS_OPT_DIR" || true
 		# 全局命令包装脚本过期（或仍是旧版软链接）时换成当前版本的内容：执行更新的是旧代码，
 		# 旧版 update 不刷新包装脚本，升级后首次启动在这里补上；内容一致时不写
-		if [[ -e /usr/local/bin/debnas || -L /usr/local/bin/debnas ]]; then
-			deploy_install_wrapper "/usr/local/bin/debnas" "/opt/debnas" 2>/dev/null || true
+		if [[ -e "$DEBNAS_BIN" || -L "$DEBNAS_BIN" ]]; then
+			deploy_install_wrapper "$DEBNAS_BIN" "$DEBNAS_OPT_DIR" 2>/dev/null || true
 		fi
 	fi
 

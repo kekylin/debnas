@@ -121,8 +121,8 @@ check_debnas_status() {
   printf "  %-20s %s\n" "安装目录:" "${_DEBNAS_ROOT}"
 
   # 全局命令
-  if [[ -f "/usr/local/bin/debnas" ]]; then
-    printf "  %-20s %s\n" "全局命令:" "✅ /usr/local/bin/debnas"
+  if [[ -f "$DEBNAS_BIN" ]]; then
+    printf "  %-20s %s\n" "全局命令:" "✅ ${DEBNAS_BIN}"
   else
     printf "  %-20s %s\n" "全局命令:" "❌ 未安装"
   fi

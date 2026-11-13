@@ -15,6 +15,7 @@ DEBNAS_ETC_DIR="${DEBNAS_ETC_DIR:-/etc/debnas}"                     # 配置
 DEBNAS_VAR_DIR="${DEBNAS_VAR_DIR:-/var/lib/debnas}"                 # 状态/数据/报告
 DEBNAS_LOG_ROOT="${DEBNAS_LOG_ROOT:-/var/log/debnas}"               # 日志
 DEBNAS_OPT_DIR="${DEBNAS_OPT_DIR:-/opt/debnas}"                     # 程序
+DEBNAS_BIN="${DEBNAS_BIN:-/usr/local/bin/debnas}"                   # 全局命令包装脚本
 DEBNAS_BACKUP_ROOT="${DEBNAS_BACKUP_ROOT:-/var/backups/debnas}"     # 集中备份
 DEBNAS_LIBEXEC_DIR="${DEBNAS_LIBEXEC_DIR:-/usr/local/libexec/debnas}" # 供系统程序回调的辅助脚本
 DEBNAS_MANIFEST_FILE="${DEBNAS_MANIFEST_FILE:-${DEBNAS_VAR_DIR}/manifest}"
