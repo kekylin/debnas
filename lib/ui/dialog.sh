@@ -26,6 +26,8 @@ IFS=$'\n\t'
 ui_confirm() {
   local title="$1"
   local description="${2:-}"
+  # 调用方常用字面量 \n 表示多行，统一转换为真实换行
+  description="${description//\\n/$'\n'}"
 
   # 非交互模式：仅 DEBNAS_FORCE_YES=1 时自动确认，否则拒绝（安全默认）
   if [[ ! -t 0 ]]; then
@@ -66,7 +68,10 @@ ui_confirm() {
       # 说明文字里的 "*"（如 /var/lib/docker/*）会被替换成真实文件名
       local line
       while IFS= read -r line; do
-        [[ -n "$line" ]] || continue
+        if [[ -z "$line" ]]; then
+          printf '\n' > /dev/tty
+          continue
+        fi
         printf '%b    %s%b\n' "$COLOR_DIM" "$line" "$COLOR_RESET" > /dev/tty
       done <<< "$description"
       printf '\n' > /dev/tty
@@ -161,6 +166,8 @@ ui_confirm() {
 ui_alert() {
   local title="$1"
   local description="${2:-}"
+  # 调用方常用字面量 \n 表示多行，统一转换为真实换行
+  description="${description//\\n/$'\n'}"
 
   # 非交互模式：直接返回
   if [[ ! -t 0 ]]; then
@@ -175,7 +182,10 @@ ui_alert() {
   if [[ -n "$description" ]]; then
     local line
     while IFS= read -r line; do
-      [[ -n "$line" ]] || continue
+      if [[ -z "$line" ]]; then
+        printf '\n' > /dev/tty
+        continue
+      fi
       printf '%b    %s%b\n' "$COLOR_DIM" "$line" "$COLOR_RESET" > /dev/tty
     done <<< "$description"
     printf '\n' > /dev/tty
@@ -238,14 +248,12 @@ ui_input() {
   local hidden="${3:-}"
 
   # 非交互模式：读取 stdin；EOF 或空行回退到默认值
+  # 注意：无末尾换行的输入 read 会返回非 0，但 input 仍有值，不能丢弃
   if [[ ! -t 0 ]]; then
-    local input
-    if IFS= read -r input; then
-      if [[ -n "$input" ]]; then
-        echo "$input"
-      else
-        echo "$default"
-      fi
+    local input=""
+    IFS= read -r input || true
+    if [[ -n "$input" ]]; then
+      echo "$input"
     elif [[ -n "$default" ]]; then
       echo "$default"
     fi

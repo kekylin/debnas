@@ -6,6 +6,7 @@
 # 这是开发机上的完整质量门禁（第 1-5 层），合并 PR 前必须通过。
 
 set -euo pipefail
+IFS=$'\n\t'
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEBNAS_ROOT="${DEBNAS_ROOT:-$(cd "${SCRIPT_DIR}/.." && pwd)}"

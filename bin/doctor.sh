@@ -205,7 +205,7 @@ check_version_compatibility() {
   echo "── 版本"
 
   local installed_ver
-  installed_ver=$(cat /var/lib/debnas/state/.debnas_version 2>/dev/null) || installed_ver=""
+  installed_ver=$(cat "${DEBNAS_VERSION_STATE:-/var/lib/debnas/state/.debnas_version}" 2>/dev/null) || installed_ver=""
 
   if [[ -n "$installed_ver" ]]; then
     printf "  %-20s %s\n" "已记录版本:" "$installed_ver"

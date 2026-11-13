@@ -122,6 +122,11 @@ log_debug() {
 log_to_file() {
   local module_name="${1:?log_to_file: 缺少模块名}"
 
+  # 模块名会拼入日志文件路径，禁止路径分隔符与 ..
+  if [[ "$module_name" == */* || "$module_name" == *..* ]]; then
+    return 1
+  fi
+
   # 尊重 debnas.conf 的 file_logging=0（未设置时默认启用）
   if [[ "${DEBNAS_FILE_LOGGING:-1}" == "0" ]]; then
     return 0

@@ -127,7 +127,7 @@ show_project_intro() {
 # 关于项目 → 检查脚本更新：只读检查版本指针，确认后调用 debnas update
 # 检查逻辑与 debnas check-update / debnas update 共用 release_check_latest
 handle_script_update() {
-  local install_dir="/opt/debnas"
+  local install_dir="${DEBNAS_OPT_DIR:-/opt/debnas}"
   # 开发态（从源码目录运行）没有安装标记，用当前代码版本与仓库内的公钥比较
   [[ -d "$install_dir" ]] || install_dir="${_DEBNAS_ROOT:-${DEBNAS_ROOT:-.}}"
 
@@ -327,7 +327,7 @@ _UI_UPDATE_HINT=""
 
 update_hint_init() {
   _UI_UPDATE_HINT=""
-  local install_dir="/opt/debnas"
+  local install_dir="${DEBNAS_OPT_DIR:-/opt/debnas}"
   [[ -d "$install_dir" ]] || install_dir="${_DEBNAS_ROOT:-${DEBNAS_ROOT:-.}}"
 
   if update_check_cache_read && update_check_cache_fresh; then
@@ -412,6 +412,17 @@ setup_environment() {
 # ==================== 主入口 ====================
 
 main() {
+  # 终端宽度与文本截断依赖 UTF-8 locale；C/POSIX 下中文会按字节截断。
+  # 仅在当前 locale 不是 UTF-8 且系统提供 C.UTF-8 时回退，不覆盖用户已设置的 UTF-8 locale。
+  case "${LC_ALL:-${LC_CTYPE:-${LANG:-}}}" in
+    *UTF-8|*utf8|*utf-8) ;;
+    *)
+      if locale -a 2>/dev/null | grep -qiE '^C\.utf-?8$'; then
+        export LC_ALL=C.UTF-8
+      fi
+      ;;
+  esac
+
   # 交互界面：经典菜单（debnas-v2 样式），ui_menu 方向键导航
   ui_screen_clear
 

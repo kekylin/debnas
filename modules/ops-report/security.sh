@@ -378,7 +378,7 @@ ops_collect_security() {
 # 漂移表转义 & < >（纯 bash；替换串中的 & 需转义，见 report.sh 的 ops_html_escape）
 ops_drift_escape() {
   local s="$1"
-  s="${s//&/\&amp;}"; s="${s//</\&lt;}"; s="${s//>/\&gt;}"
+  s="${s//&/\&amp;}"; s="${s//</\&lt;}"; s="${s//>/\&gt;}"; s="${s//\"/\&quot;}"; s="${s//\'/\&#39;}"
   printf '%s' "$s"
 }
 

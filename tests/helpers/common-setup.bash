@@ -2,9 +2,16 @@
 # BATS 测试共享设置
 # 所有测试文件通过 load 'helpers/common-setup' 引入
 
-# 项目根目录（优先使用 run.sh 传入的绝对路径，否则从测试文件位置推断）
-# 测试文件位于 tests/unit/lib/，需向上 3 层到项目根
-export DEBNAS_ROOT="${DEBNAS_ROOT:-${BATS_TEST_DIRNAME}/../../..}"
+# 项目根目录（优先使用 run.sh 传入的绝对路径；否则从测试文件位置向上查找 bin/debnas）
+# 说明：tests/unit/lib 与 tests/integration 的相对层级不同，固定 ../../.. 对 integration 会指到项目上级。
+_find_debnas_root() {
+  local d="${BATS_TEST_DIRNAME:-$PWD}"
+  while [[ "$d" != "/" && ! -f "$d/bin/debnas" ]]; do
+    d="$(dirname "$d")"
+  done
+  [[ -f "$d/bin/debnas" ]] && printf '%s' "$d"
+}
+export DEBNAS_ROOT="${DEBNAS_ROOT:-$(_find_debnas_root)}"
 
 # 确保可以 source 库文件
 setup_debnas_lib() {

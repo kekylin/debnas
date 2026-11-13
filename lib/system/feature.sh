@@ -16,11 +16,17 @@ _feature_file() {
   echo "${DEBNAS_FEATURE_DIR}/${module_name}.enabled"
 }
 
+# 校验模块名（会拼入状态文件路径，禁止路径穿越）
+_feature_valid_name() {
+  [[ "${1:-}" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]*$ && "$1" != *..* ]]
+}
+
 # 检查模块功能是否已启用
 # 参数：$1 - 模块名
 # 返回：0 已启用，1 未启用
 feature_enabled() {
   local module_name="${1:?feature_enabled: 缺少模块名}"
+  _feature_valid_name "$module_name" || { log_error "非法的模块名：${module_name}"; return 1; }
   local feature_file value=""
   feature_file=$(_feature_file "$module_name")
   [[ -f "$feature_file" ]] || return 1
@@ -33,6 +39,7 @@ feature_enabled() {
 # 返回：0 成功，1 失败
 feature_enable() {
   local module_name="${1:?feature_enable: 缺少模块名}"
+  _feature_valid_name "$module_name" || { log_error "非法的模块名：${module_name}"; return 1; }
   mkdir -p "${DEBNAS_FEATURE_DIR}" 2>/dev/null || return 1
   echo "1" > "$(_feature_file "$module_name")" || return 1
   return 0
@@ -43,6 +50,7 @@ feature_enable() {
 # 返回：0 成功，1 失败
 feature_disable() {
   local module_name="${1:?feature_disable: 缺少模块名}"
+  _feature_valid_name "$module_name" || { log_error "非法的模块名：${module_name}"; return 1; }
   mkdir -p "${DEBNAS_FEATURE_DIR}" 2>/dev/null || return 1
   echo "0" > "$(_feature_file "$module_name")" || return 1
   return 0

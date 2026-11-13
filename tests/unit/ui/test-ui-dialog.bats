@@ -110,6 +110,20 @@ setup() {
   [[ "$output" == "debnas" ]]
 }
 
+@test "ui_input: 非终端输入无末尾换行时不丢弃内容" {
+  run bash -c '
+    source "$1"/lib/core/constants.sh 2>/dev/null
+    source "$1"/lib/core/colors.sh 2>/dev/null
+    source "$1"/lib/core/logging.sh 2>/dev/null
+    source "$1"/lib/ui/styles.sh 2>/dev/null
+    source "$1"/lib/ui/menu.sh 2>/dev/null
+    source "$1"/lib/ui/dialog.sh 2>/dev/null
+    printf "hostA" | ui_input "请输入主机名" "default"
+  ' _ "${DEBNAS_ROOT}"
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == "hostA" ]]
+}
+
 @test "ui_input: 非终端 stdin 无默认值 → 输出空" {
   run bash -c '
     source "$1"/lib/core/constants.sh 2>/dev/null

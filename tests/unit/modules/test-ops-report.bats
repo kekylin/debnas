@@ -134,10 +134,10 @@ M
   [[ "$output" == *"ban=4"* ]]
 }
 
-@test "ops-report: 转义纯 bash 实现（无 sed 子进程）且漂移表只转 & < >" {
+@test "ops-report: 转义纯 bash 实现（无 sed 子进程）且漂移表转义 & < > 与引号" {
   if sed -n '/^ops_html_escape()/,/^}/p' "$MODULE_DIR/report.sh" | grep -q 'sed'; then false; fi
   run bash -c 'set -euo pipefail; source "$1/security.sh"; ops_drift_escape "a&<b>\"x"' _ "$MODULE_DIR"
-  [[ "$output" == 'a&amp;&lt;b&gt;"x' ]]
+  [[ "$output" == 'a&amp;&lt;b&gt;&quot;x' ]]
 }
 
 @test "ops-report: 定时任务状态走 cron_state，sysstat 原始输出不再拼进 shell 变量" {

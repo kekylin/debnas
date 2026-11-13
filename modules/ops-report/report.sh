@@ -169,6 +169,8 @@ ops_collect_resources() {
   OPS_NET_IFACE_PEAK_SUMMARY=""
   OPS_NET_PEAK_RATE_MBPS="待周期数据"
   OPS_SYSSTAT_SAMPLE_DAYS=0
+  OPS_NET_SAMPLE_DAYS=0
+  OPS_DISK_SAMPLE_DAYS=0
   OPS_CPU_DAILY_LABELS=""
   OPS_MEM_DAILY_LABELS=""
   OPS_NET_DAILY_LABELS=""
@@ -314,6 +316,8 @@ ops_collect_sysstat() {
       DISK_PEAK) OPS_DISK_IO_PEAK_DATE="${value#* }" ;;
       SWAP_PEAK) OPS_SWAP_PEAK_KB="$value" ;;
       SAMPLE_DAYS) OPS_SYSSTAT_SAMPLE_DAYS="$value" ;;
+      NET_SAMPLE_DAYS) OPS_NET_SAMPLE_DAYS="$value" ;;
+      DISK_SAMPLE_DAYS) OPS_DISK_SAMPLE_DAYS="$value" ;;
     esac
   done < <(awk -v phys="$OPS_PHYS_NET_IFACES" -v report_days="${OPS_REPORT_DAYS:-7}" '
     function is_num(x) { return x ~ /^[0-9]+([.][0-9]+)?$/ }
@@ -446,7 +450,11 @@ ops_collect_sysstat() {
       printf "SWAP_PEAK\t%d\n", swap_max + 0
       sd = (cpu_n > mem_n) ? cpu_n : mem_n
       if (net_n > sd) sd = net_n
+      dsd = 0
+      for (k = 1; k <= dtotal; k++) { if (dcnt[dnames[k]] > dsd) dsd = dcnt[dnames[k]] }
       printf "SAMPLE_DAYS\t%d\n", sd
+      printf "NET_SAMPLE_DAYS\t%d\n", net_n
+      printf "DISK_SAMPLE_DAYS\t%d\n", dsd
     }' "${sar_dir}/u" "${sar_dir}/r" "${sar_dir}/S" "${sar_dir}/n" "${sar_dir}/d" 2>/dev/null)
   rm -rf -- "$sar_dir"
 }
@@ -818,9 +826,9 @@ ops_disk_io_peak() {
 }
 
 # 平均速率（kB/s）× 采样天数换算为周期累计字节数
-# 参数：$1 - 平均速率（kB/s）
+# 参数：$1 - 平均速率（kB/s）；$2 - 该指标的采样天数（可选，默认全局 SAMPLE_DAYS）
 ops_rate_bytes() {
-  awk -v v="${1:-0}" -v d="${OPS_SYSSTAT_SAMPLE_DAYS:-1}" 'BEGIN { printf "%.0f", v * 1024 * 86400 * d }'
+  awk -v v="${1:-0}" -v d="${2:-${OPS_SYSSTAT_SAMPLE_DAYS:-1}}" 'BEGIN { printf "%.0f", v * 1024 * 86400 * d }'
 }
 
 ops_add_action() {
@@ -1327,7 +1335,7 @@ ops_render_network_metrics() {
   local total=$((rx + tx))
   local avg_rx="--" avg_tx="--"
   local rx_label="待周期数据" tx_label="待周期数据" total_label="待周期数据"
-  local net_days="${OPS_SYSSTAT_SAMPLE_DAYS:-0}"
+  local net_days="${OPS_NET_SAMPLE_DAYS:-${OPS_SYSSTAT_SAMPLE_DAYS:-0}}"
   [[ "$net_days" -gt 0 ]] || net_days="${OPS_REPORT_DAYS:-7}"
   if [[ "$OPS_NET_TOTAL_LABEL" == "报告周期" ]]; then
     rx_label=$(ops_format_bytes "$rx")
@@ -1630,7 +1638,7 @@ ops_key_services_counts() {
 }
 
 ops_render_actions_table() {
-  local item priority content action status
+  local item priority content action status badge_class
   if [[ ${#OPS_ACTION_ITEMS[@]} -eq 0 ]]; then
     echo '<tr><td>当前没有需要立即处理的建议事项</td><td>-</td><td>-</td><td class="good">已解决</td></tr>'
     return 0
@@ -1680,7 +1688,7 @@ ops_short_event_label() {
 }
 
 ops_event_category() {
-  local event="$1" impact="${2:-}"
+  local event="$1"
   case "$event" in
     *登录*|*安全事件*|*入侵*) echo "security" ;;
     *磁盘*|*文件系统*|*内核*|*RAID*|*SMART*|*OOM*|*CPU*|*内存*|*负载*) echo "system" ;;
@@ -1798,7 +1806,7 @@ ops_render_event_pulse() {
       bucket_low[$date_idx]=$((count + 1))
     fi
     [[ "$y" -lt "${bucket_y[$date_idx]}" ]] && bucket_y[$date_idx]="$y"
-    cat=$(ops_event_category "$event" "$impact")
+    cat=$(ops_event_category "$event")
     short_label=$(ops_short_event_label "$event")
     nodes+=("$node_x|$y|$cat|$cls|$(ops_html_escape "$short_label")")
     desc_parts+=("${bucket_labels[$date_idx]} ${cat}")
@@ -1961,8 +1969,8 @@ ops_render_disk_io_chart() {
     [[ -n "$name" ]] || continue
     disk_rows+=1
     local rb wb
-    rb=$(ops_rate_bytes "$avg_rd")
-    wb=$(ops_rate_bytes "$avg_wr")
+    rb=$(ops_rate_bytes "$avg_rd" "${OPS_DISK_SAMPLE_DAYS:-${OPS_SYSSTAT_SAMPLE_DAYS:-1}}")
+    wb=$(ops_rate_bytes "$avg_wr" "${OPS_DISK_SAMPLE_DAYS:-${OPS_SYSSTAT_SAMPLE_DAYS:-1}}")
     io_rb["$name"]="$rb"
     io_wb["$name"]="$wb"
     [[ "$rb" -gt "$max_bytes" ]] && max_bytes="$rb"
@@ -2217,7 +2225,7 @@ ops_render_anomaly_table() {
   service_state="未发现"; service_note="无失败服务"
   login_state="无数据"; login_note="无登录日志数据"
   [[ -z "${OPS_LOGIN_SOURCE:-}" && -n "${OPS_LOGIN_SOURCE_NOTE:-}" ]] && login_note="无登录数据源（未安装 wtmpdb / last）"
-  local net_days="${OPS_SYSSTAT_SAMPLE_DAYS:-0}"
+  local net_days="${OPS_NET_SAMPLE_DAYS:-${OPS_SYSSTAT_SAMPLE_DAYS:-0}}"
   [[ "$net_days" -gt 0 ]] || net_days="${OPS_REPORT_DAYS:-7}"
   if [[ "$OPS_CPU_AVG" =~ ^[0-9.]+$ ]] && awk -v v="$OPS_CPU_AVG" 'BEGIN { exit !(v >= 80) }'; then
     cpu_state="关注"; cpu_note="CPU 平均 ${OPS_CPU_AVG}%，峰值 ${OPS_CPU_MAX}%，需排查持续高占用"
@@ -2345,8 +2353,8 @@ ops_render_network_iface_table() {
   while IFS='|' read -r iface avg_rx avg_tx _; do
     [[ -n "$iface" ]] || continue
     local rx_bytes tx_bytes
-    rx_bytes=$(ops_rate_bytes "$avg_rx")
-    tx_bytes=$(ops_rate_bytes "$avg_tx")
+    rx_bytes=$(ops_rate_bytes "$avg_rx" "${OPS_NET_SAMPLE_DAYS:-${OPS_SYSSTAT_SAMPLE_DAYS:-1}}")
+    tx_bytes=$(ops_rate_bytes "$avg_tx" "${OPS_NET_SAMPLE_DAYS:-${OPS_SYSSTAT_SAMPLE_DAYS:-1}}")
     total_rx=$((total_rx + rx_bytes))
     total_tx=$((total_tx + tx_bytes))
     count=$((count + 1))

@@ -82,8 +82,8 @@ gpg_key_fingerprint_verify() {
     log_error "${label}GPG 公钥文件必须恰好包含一把主密钥（实际 ${npub} 把），拒绝使用"
     return 1
   fi
-  if [[ "$validity" == "r" ]]; then
-    log_error "${label}GPG 公钥已吊销，拒绝使用"
+  if [[ "$validity" == "r" || "$validity" == "e" || "$validity" == "d" || "$validity" == "i" ]]; then
+    log_error "${label}GPG 公钥不可用（已吊销/过期/禁用/无效），拒绝使用"
     return 1
   fi
   if [[ "${fpr^^}" != "$expected" ]]; then

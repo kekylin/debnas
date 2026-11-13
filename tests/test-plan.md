@@ -979,8 +979,8 @@ AI 拥有测试 VM 的完全操作权限（SSH 信息见本文"测试环境"章�
 bash tests/check.sh
 
 # 逐层单独执行：
-bash tests/run.sh unit          # L3 单元测试（63 文件，1588 用例）
-bash tests/run.sh integration   # L5 集成测试（15 文件，249 用例）
+bash tests/run.sh unit          # L3 单元测试（65 文件，1628 用例）
+bash tests/run.sh integration   # L5 集成测试（15 文件，258 用例）
 bash tests/run.sh all           # L1-L5 全部
 ```
 
