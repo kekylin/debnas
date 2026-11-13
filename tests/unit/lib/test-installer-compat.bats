@@ -162,11 +162,13 @@ _run_cmd_update() {
     config_read() { echo "cn"; }
     create_temp_dir() { mktemp -d "$R/tmp.XXXXXX"; }
     DEBNAS_VERSION="v0.0.1"
+    DEBNAS_OPT_DIR="$R/opt/debnas"
+    DEBNAS_BIN="$R/ulb/debnas"
     source "$SRC/lib/system/installer.sh"
     installer_load_release_key() { echo "0000000000000000000000000000000000000000"; }
     installer_download_release() { cp "$R/new.tar.gz" "$3/debnas-$2.tar.gz"; }
     installer_verify_release() { return 0; }
-    eval "$(sed -n "/^cmd_update()/,/^}/p" "$BIN" | sed "s#/usr/local/bin/debnas#$R/ulb/debnas#g; s#/opt/debnas#$R/opt/debnas#g")"
+    eval "$(sed -n "/^cmd_update()/,/^}/p" "$BIN")"
     cmd_update --tag v9.9.9
   ' _ "${DEBNAS_ROOT}" "$1" "$WORK"
 }
@@ -216,9 +218,9 @@ _run_cmd_update() {
 @test "bin/debnas: 启动时发现包装脚本过期或仍是软链接则换成当前版本（旧版 update 不刷新的补救）" {
   local body
   body=$(sed -n '/^main()/,/^}/p' "${DEBNAS_ROOT}/bin/debnas")
-  [[ "$body" == *'deploy_install_wrapper "/usr/local/bin/debnas" "/opt/debnas"'* ]]
+  [[ "$body" == *'deploy_install_wrapper "$DEBNAS_BIN" "$DEBNAS_OPT_DIR"'* ]]
   # 只在包装脚本已存在时动它；且位于 root 检查之后
-  [[ "$body" == *'[[ -e /usr/local/bin/debnas || -L /usr/local/bin/debnas ]]'* ]]
+  [[ "$body" == *'[[ -e "$DEBNAS_BIN" || -L "$DEBNAS_BIN" ]]'* ]]
   awk '/^main\(\)/,/^}/' "${DEBNAS_ROOT}/bin/debnas" | awk '/需要 root 权限/ { r = NR } /deploy_install_wrapper/ { w = NR } END { exit !(r && w && r < w) }'
 }
 

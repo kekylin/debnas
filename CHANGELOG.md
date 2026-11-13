@@ -21,6 +21,7 @@
 - 菜单「检查脚本更新」的提示按普通用户收敛为四行以内：`检查更新…` / `当前版本` / `一句话结论`，版本号等状态信息统一带 `[INFO]` 标识、不再裸行展示；未签名指针回退、主备源切换等内部诊断不再显示（`_RELEASE_QUIET`）。`debnas check-update` 仍保留详细原因，便于排查
 
 ### Changed
+- 测试：`test-installer-compat` 的 `debnas update` 用例改用 `DEBNAS_OPT_DIR` / `DEBNAS_BIN` 注入临时路径，跟随入口路径常量变更
 - 测试：补 `bin/doctor.sh` 各项检查的行为用例（Mock `df` / `systemctl` / 状态函数）与 `lib/ui/progress.sh` 的进度、完成、除零用例；doctor 增加 `DEBNAS_DOCTOR_NO_MAIN` 测试守卫
 - UI 入口统一 UTF-8 locale 回退：`lib/ui/layout.sh` 新增 `ui_ensure_utf8_locale`，交互菜单与 `module-runner` 在非 UTF-8 locale 且系统提供 `C.UTF-8` 时回退，避免中文按字节截断；不覆盖用户已设置的 UTF-8 locale
 - 入口脚本路径从布局常量派生：`lib/system/layout.sh` 新增 `DEBNAS_BIN`，`bin/debnas`、`bin/menu.sh`、`bin/doctor.sh`、`lib/system/cron.sh` 改用 `DEBNAS_OPT_DIR` / `DEBNAS_BIN`，不再重复硬编码安装目录与全局命令路径；`install.sh` 为保持单文件自包含仍使用顶部常量
