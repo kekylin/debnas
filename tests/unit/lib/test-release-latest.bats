@@ -266,10 +266,12 @@ _run_update_until_download() {
     config_read() { echo "global"; }
     create_temp_dir() { mktemp -d "$R/tmp.XXXXXX"; }
     DEBNAS_VERSION="$INSTALLED"
+    DEBNAS_OPT_DIR="$R/inst"
+    DEBNAS_BIN="$R/ulb/debnas"
     export DEBNAS_UPDATE_LOCK="$R/update.lock"
     source "$SRC/lib/system/installer.sh"
     installer_download_release() { echo "DOWNLOAD $2"; return 1; }
-    eval "$(sed -n "/^cmd_update()/,/^}/p" "$SRC/bin/debnas" | sed "s#/usr/local/bin/debnas#$R/ulb/debnas#g; s#/opt/debnas#$R/inst#g")"
+    eval "$(sed -n "/^cmd_update()/,/^}/p" "$SRC/bin/debnas")"
     cmd_update
   ' _ "${DEBNAS_ROOT}" "$WORK" "$1"
 }

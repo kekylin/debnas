@@ -31,7 +31,7 @@
 - 测试：补 sources 的 DEB822/传统源解析与 deb822 内容生成、docker-ce 镜像源提取与官方源判定、docker-mirror 的 daemon.json 合并与缺失镜像统计行为用例
 - 临时文件收敛：`bin/menu.sh` 与 `lib/ui/cron-menu.sh` 的菜单结果文件改用 `create_temp_file`（随进程退出清理，不再裸 `mktemp`）；threat-ips 解压临时文件删除补 `--`，避免以 `-` 开头的路径被当作选项
 - 测试：补 firewall 默认区解析/区文件插入、service-query 服务状态与访问地址、basic-tools 缺包统计与 `module_status` 的行为用例
-- 测试：`test-installer-compat` 的 `debnas update` 用例改用 `DEBNAS_OPT_DIR` / `DEBNAS_BIN` 注入临时路径，跟随入口路径常量变更
+- 测试：`test-installer-compat` 与 `test-release-latest` 的 `debnas update` 用例改用 `DEBNAS_OPT_DIR` / `DEBNAS_BIN` 注入临时路径，跟随入口路径常量变更
 - 测试：补 `bin/doctor.sh` 各项检查的行为用例（Mock `df` / `systemctl` / 状态函数）与 `lib/ui/progress.sh` 的进度、完成、除零用例；doctor 增加 `DEBNAS_DOCTOR_NO_MAIN` 测试守卫
 - UI 入口统一 UTF-8 locale 回退：`lib/ui/layout.sh` 新增 `ui_ensure_utf8_locale`，交互菜单与 `module-runner` 在非 UTF-8 locale 且系统提供 `C.UTF-8` 时回退，避免中文按字节截断；不覆盖用户已设置的 UTF-8 locale
 - 入口脚本路径从布局常量派生：`lib/system/layout.sh` 新增 `DEBNAS_BIN`，`bin/debnas`、`bin/menu.sh`、`bin/doctor.sh`、`lib/system/cron.sh` 改用 `DEBNAS_OPT_DIR` / `DEBNAS_BIN`，不再重复硬编码安装目录与全局命令路径；`install.sh` 为保持单文件自包含仍使用顶部常量
