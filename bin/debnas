@@ -139,7 +139,7 @@ _update_confirm_unsigned() {
 # 用法：debnas update [--tag <版本>]          # 签名校验（默认更新到最新稳定版本）
 #       debnas update --unsigned [--branch <分支>]  # 不校验（开发调试，需交互确认）
 cmd_update() {
-	local install_dir="$DEBNAS_OPT_DIR"
+	local install_dir="${DEBNAS_OPT_DIR:-/opt/debnas}"
 	local want_tag="" branch="" unsigned=0
 
 	while [[ $# -gt 0 ]]; do
@@ -325,7 +325,7 @@ cmd_update() {
 # 退出码：0=已是最新  1=有新版本  2=检查失败（公钥缺失 / 指针验签失败 / 网络不可达 / 指针回放）
 # 说明：只读版本指针，不下载发布包、不持部署锁、不修改安装目录
 cmd_check_update() {
-	local install_dir="$DEBNAS_OPT_DIR"
+	local install_dir="${DEBNAS_OPT_DIR:-/opt/debnas}"
 	# 开发态（直接从源码目录运行）没有安装标记，用当前代码版本与仓库内的公钥比较
 	[[ -d "$install_dir" ]] || install_dir="${_DEBNAS_ROOT:-${DEBNAS_ROOT:-.}}"
 

@@ -53,7 +53,7 @@ teardown() {
 
 @test "doctor: check_disk_space 只展示设备行" {
   cat > "${MOCK_BIN}/df" <<'EOF'
-#!/bin/sh
+#!/bin/bash
 echo "Filesystem      Size  Used Avail Use% Mounted on"
 echo "tmpfs           1.0G     0  1.0G   0% /run"
 echo "/dev/sda1       100G   40G   60G  40% /"
@@ -72,7 +72,7 @@ EOF
 
 @test "doctor: check_debnas_status 统计模块/定时任务并检查全局命令" {
   local bin="${BATS_TEST_TMPDIR}/debnas-bin"
-  printf '#!/bin/sh\n' > "$bin"; chmod +x "$bin"
+  printf '#!/bin/bash\n' > "$bin"; chmod +x "$bin"
   _doctor_run '
     export DEBNAS_BIN="'"$bin"'"
     config_read() { echo cn; }
@@ -88,7 +88,7 @@ EOF
 
 @test "doctor: check_services 依据 systemctl 状态输出三种结论" {
   cat > "${MOCK_BIN}/systemctl" <<'EOF'
-#!/bin/sh
+#!/bin/bash
 case "$1" in
   list-unit-files)
     [[ "$2" == "cockpit.service" || "$2" == "docker.service" ]] && exit 0
