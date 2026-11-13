@@ -626,3 +626,70 @@ probe_bare() {
   run probe_bare "$p" status 13
   [[ "${#lines[@]}" -eq 1 && "$output" != *"无登录数据源"* ]]
 }
+
+# ==================== 纯函数行为（report-common.sh / report-render.sh，统一经 report.sh 加载） ====================
+
+@test "ops-report: ops_format_bytes 0/1024/1048576/1073741824 分别输出 B/KB/MB/GB" {
+  run bash -c 'set -euo pipefail; IFS=$'"'"'\n\t'"'"'; source "$1/modules/ops-report/report.sh"
+    for v in 0 1024 1048576 1073741824; do ops_format_bytes "$v"; echo; done' _ "$DEBNAS_ROOT"
+  [[ "$status" -eq 0 ]]
+  [[ "${lines[0]}" == "0.0 B" ]]
+  [[ "${lines[1]}" == "1.0 KB" ]]
+  [[ "${lines[2]}" == "1.0 MB" ]]
+  [[ "${lines[3]}" == "1.0 GB" ]]
+}
+
+@test "ops-report: ops_pct_label 数字补 % 且 N/A 与缺省原样保留" {
+  run bash -c 'set -euo pipefail; IFS=$'"'"'\n\t'"'"'; source "$1/modules/ops-report/report.sh"
+    printf "%s|%s|%s|%s\n" "$(ops_pct_label 42)" "$(ops_pct_label 42.5)" "$(ops_pct_label N/A)" "$(ops_pct_label)"' _ "$DEBNAS_ROOT"
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == "42%|42.5%|N/A|N/A" ]]
+}
+
+@test "ops-report: ops_period_label_cn 7/30/365 对应周报/月报/年报，非法值与缺省回落周报" {
+  run bash -c 'set -euo pipefail; IFS=$'"'"'\n\t'"'"'; source "$1/modules/ops-report/report.sh"
+    printf "%s|%s|%s|%s|%s\n" "$(ops_period_label_cn 7)" "$(ops_period_label_cn 30)" "$(ops_period_label_cn 365)" "$(ops_period_label_cn 14)" "$(ops_period_label_cn)"' _ "$DEBNAS_ROOT"
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == "周报|月报|年报|周报|周报" ]]
+}
+
+@test "ops-report: ops_period_label_en 7/30/365 对应 Weekly/Monthly/Annual，非法值与缺省回落 Weekly" {
+  run bash -c 'set -euo pipefail; IFS=$'"'"'\n\t'"'"'; source "$1/modules/ops-report/report.sh"
+    printf "%s|%s|%s|%s|%s\n" "$(ops_period_label_en 7)" "$(ops_period_label_en 30)" "$(ops_period_label_en 365)" "$(ops_period_label_en 99)" "$(ops_period_label_en)"' _ "$DEBNAS_ROOT"
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == "Server Weekly|Server Monthly|Server Annual|Server Weekly|Server Weekly" ]]
+}
+
+@test "ops-report: ops_html_escape 转义 & < > 双引号 单引号并原样保留普通文本" {
+  local s=$'<a href="x?y=1&z=2">Tom\'s</a>'
+  run bash -c 'set -euo pipefail; IFS=$'"'"'\n\t'"'"'; source "$1/modules/ops-report/report.sh"
+    ops_html_escape "$2"' _ "$DEBNAS_ROOT" "$s"
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == '&lt;a href=&quot;x?y=1&amp;z=2&quot;&gt;Tom&#39;s&lt;/a&gt;' ]]
+  run bash -c 'set -euo pipefail; IFS=$'"'"'\n\t'"'"'; source "$1/modules/ops-report/report.sh"; ops_html_escape "plain text"' _ "$DEBNAS_ROOT"
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == "plain text" ]]
+}
+
+@test "ops-report: ops_value_count 统计逗号/空格分隔值，空输入计 0" {
+  run bash -c 'set -euo pipefail; IFS=$'"'"'\n\t'"'"'; source "$1/modules/ops-report/report.sh"
+    printf "%s|%s|%s|%s|%s\n" \
+      "$(ops_value_count "1,2,3")" \
+      "$(ops_value_count "10 20 30 40")" \
+      "$(ops_value_count "1, 2,3")" \
+      "$(ops_value_count 7)" \
+      "$(ops_value_count "")"' _ "$DEBNAS_ROOT"
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == "3|4|3|1|0" ]]
+}
+
+@test "ops-report: ops_rate_bytes 按给定值与采样天数换算字节总量" {
+  run bash -c 'set -euo pipefail; IFS=$'"'"'\n\t'"'"'; source "$1/modules/ops-report/report.sh"
+    printf "%s|%s|%s|%s\n" \
+      "$(ops_rate_bytes 1 1)" \
+      "$(ops_rate_bytes 1 7)" \
+      "$(OPS_SYSSTAT_SAMPLE_DAYS=7 ops_rate_bytes 1)" \
+      "$(ops_rate_bytes 1)"' _ "$DEBNAS_ROOT"
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == "88473600|619315200|619315200|88473600" ]]
+}
