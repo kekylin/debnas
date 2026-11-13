@@ -22,6 +22,7 @@
 - 菜单「检查脚本更新」的提示按普通用户收敛为四行以内：`检查更新…` / `当前版本` / `一句话结论`，版本号等状态信息统一带 `[INFO]` 标识、不再裸行展示；未签名指针回退、主备源切换等内部诊断不再显示（`_RELEASE_QUIET`）。`debnas check-update` 仍保留详细原因，便于排查
 
 ### Changed
+- 临时文件收敛：`bin/menu.sh` 与 `lib/ui/cron-menu.sh` 的菜单结果文件改用 `create_temp_file`（随进程退出清理，不再裸 `mktemp`）；threat-ips 解压临时文件删除补 `--`，避免以 `-` 开头的路径被当作选项
 - 测试：补 firewall 默认区解析/区文件插入、service-query 服务状态与访问地址、basic-tools 缺包统计与 `module_status` 的行为用例
 - 测试：`test-installer-compat` 的 `debnas update` 用例改用 `DEBNAS_OPT_DIR` / `DEBNAS_BIN` 注入临时路径，跟随入口路径常量变更
 - 测试：补 `bin/doctor.sh` 各项检查的行为用例（Mock `df` / `systemctl` / 状态函数）与 `lib/ui/progress.sh` 的进度、完成、除零用例；doctor 增加 `DEBNAS_DOCTOR_NO_MAIN` 测试守卫

@@ -61,7 +61,7 @@ cron_settings_menu() {
 
   while true; do
     local choice exit_code menu_result
-    menu_result=$(mktemp)
+    menu_result=$(create_temp_file "menu-result")
     UI_MENU_BLANK_BEFORE=1 UI_MENU_BACK_LABEL="← 返回上级" UI_MENU_RESULT_FILE="$menu_result" ui_menu "${display_name} 定时设置" "${items[@]}" || {
       exit_code=$?
       rm -f "$menu_result"

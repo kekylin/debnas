@@ -32,7 +32,7 @@ download_threat_list() {
     log_error "威胁 IP 列表为空，放弃本次更新（保留现有封禁）"
     return 1
   fi
-  rm -f "${temp_gz}"
+  rm -f -- "${temp_gz}"
   log_success "威胁 IP 列表下载完成（威胁等级：${threat_level}）"
 }
 

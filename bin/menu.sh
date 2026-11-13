@@ -212,7 +212,7 @@ handle_about_sub_menu() {
 
   local choice exit_code menu_result
   while true; do
-    menu_result=$(mktemp)
+    menu_result=$(create_temp_file "menu-result")
     UI_MENU_BACK_LABEL="← 返回上级" UI_MENU_RESULT_FILE="$menu_result" ui_menu "关于项目" "${items[@]}" || {
       exit_code=$?
       rm -f "$menu_result"
@@ -249,7 +249,7 @@ handle_solution_sub_menu() {
 
   local choice exit_code menu_result
   while true; do
-    menu_result=$(mktemp)
+    menu_result=$(create_temp_file "menu-result")
     UI_MENU_BACK_LABEL="← 返回上级" UI_MENU_RESULT_FILE="$menu_result" ui_menu "一键部署" "${SOLUTION_DISPLAY_NAMES[@]}" || {
       exit_code=$?
       rm -f "$menu_result"
@@ -296,7 +296,7 @@ handle_auto_sub_menu() {
   local _old_area=$((_hdr_h + _bc_lines + ${#modules[@]} + _ftr_lines))
 
   while true; do
-    menu_result=$(mktemp)
+    menu_result=$(create_temp_file "menu-result")
     UI_MENU_BACK_LABEL="← 返回上级" UI_MENU_RESULT_FILE="$menu_result" ui_menu "$category" "${display_names[@]}" || {
       exit_code=$?
       rm -f "$menu_result"
@@ -372,7 +372,7 @@ main_menu_loop() {
     else
       ui_screen_switch  # 从子菜单返回：清子菜单区 + 渲染 L1
     fi
-    menu_result=$(mktemp)
+    menu_result=$(create_temp_file "menu-result")
     UI_MENU_QUIT=1 UI_MENU_RESULT_FILE="$menu_result" ui_menu "" "${ACTIVE_CATEGORIES[@]}" || {
       exit_code=$?
       rm -f "$menu_result"
