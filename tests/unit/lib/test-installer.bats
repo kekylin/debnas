@@ -317,7 +317,7 @@ _mk_src_and_install() {
   [[ "$body" == *'create_temp_dir "update"'* && "$body" != *"mktemp -d /tmp/debnas-update"* ]]
   # 锁在下载之前
   awk '/^cmd_update\(\)/,/^}/' "${DEBNAS_ROOT}/bin/debnas" | awk '/deploy_lock/ { l = NR } /installer_download_/ && !d { d = NR } END { exit !(l && d && l < d) }'
-  sed -n '/^main()/,/^}/p' "${DEBNAS_ROOT}/bin/debnas" | grep -q 'deploy_recover "/opt/debnas"'
+  sed -n '/^main()/,/^}/p' "${DEBNAS_ROOT}/bin/debnas" | grep -q 'deploy_recover "$DEBNAS_OPT_DIR"'
 }
 
 @test "install.sh: 包含下载→解压→部署流程" {

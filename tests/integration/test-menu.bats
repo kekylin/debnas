@@ -36,6 +36,7 @@ _menu_src() { echo "${DEBNAS_ROOT}/bin/menu.sh"; }
     ui_screen_switch() { :; }
     ui_cursor_show() { :; }
     log_action() { :; }
+    create_temp_file() { mktemp; }
 
     # ui_menu 返回 255（Q 退出）
     ui_menu() { return 255; }
@@ -64,6 +65,7 @@ _menu_src() { echo "${DEBNAS_ROOT}/bin/menu.sh"; }
     ui_screen_switch() { :; }
     ui_cursor_show() { :; }
     log_action() { :; }
+    create_temp_file() { mktemp; }
 
     # 用文件计数器（$() 是子 shell，变量修改不持久）
     COUNTER_FILE=$(mktemp)
@@ -104,6 +106,7 @@ _menu_src() { echo "${DEBNAS_ROOT}/bin/menu.sh"; }
     ui_screen_switch() { :; }
     ui_cursor_show() { :; }
     log_action() { :; }
+    create_temp_file() { mktemp; }
 
     # 用文件计数器（$() 是子 shell，变量修改不持久）
     COUNTER_FILE=$(mktemp)
@@ -154,6 +157,7 @@ _menu_src() { echo "${DEBNAS_ROOT}/bin/menu.sh"; }
     ui_screen_switch() { :; }
     ui_cursor_show() { :; }
     log_action() { :; }
+    create_temp_file() { mktemp; }
 
     # 非终端：read_key 返回 ESC，ui_menu 返回 254
     # 主菜单忽略 254（continue），循环 → 第4次返回 255 退出

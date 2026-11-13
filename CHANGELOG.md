@@ -49,6 +49,7 @@
 - 经典菜单内容栏宽度改为**终端宽度的一半**（最少 20 列），从左侧开始（靠左，不整体居中）：Header 在内容栏内居中，面包屑、菜单项、Footer 在内容栏内左对齐；Footer 放不下版本号时省略版本号，优先保留完整快捷键
 
 ### Fixed
+- 测试适配：`main_menu_loop` 用例补 `create_temp_file` mock；`cmd_update` 用例改断言 `DEBNAS_OPT_DIR`；ops-report 容量预测用例改用当前时间，避免午夜前后“今天样本”判断失败
 - `bin/debnas` / `bin/menu.sh` 的安装目录变量补回 `/opt/debnas` 默认值，保证仅提取函数、未加载 `layout.sh` 的调用（含测试）不会因未定义变量退出；`test-doctor` 的 systemctl mock 改用 bash（Debian 的 `/bin/sh` 为 dash）
 - 测试计划移除明文测试机密码与固定 IP，改为本地导出的 `TEST_VM_IP` / `TEST_VM_PASSWORD`
 - `mail-account`：`main` 内的辅助函数（`_mail_ask`、邮箱校验、Exim 配置生成等）移到顶层，`main` 只保留配置检查并调用 `_mail_main_flow`；`DEBNAS_MODULE_ACTION=status` 下这些函数可被探测/测试调用，运行时行为不变

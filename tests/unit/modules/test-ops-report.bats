@@ -296,7 +296,7 @@ M
   run bash -c 'set -euo pipefail; IFS=$'"'"'\n\t'"'"'; source "$1/report.sh"
     OPS_SNAPSHOT_DIR="$2"; OPS_REPORT_DAYS=7
     now=$(date +%s)
-    printf "sda|30|%s\nsda|36|%s\nsdc|10|%s\n" "$((now - 7 * 86400))" "$((now - 3600))" "$((now - 40 * 86400))" > "$2/disk-usage.snapshot"
+    printf "sda|30|%s\nsda|36|%s\nsdc|10|%s\n" "$((now - 7 * 86400))" "$now" "$((now - 40 * 86400))" > "$2/disk-usage.snapshot"
     OPS_DISK_USAGE_LINES=$(printf "sda|100.0 GB|37.0 GB|37|/|QEMU|SSD\nsdb|50.0 GB|25.0 GB|50|/data|QEMU|HDD\nsdc|50.0 GB|5.0 GB|10|/x|QEMU|HDD\nsdd|9 GB|8 GB|95|/y|Q|HDD")
     ops_collect_disk_trend
     echo "A:${OPS_DISK_FORECAST//$'"'"'\n'"'"'/ }"
@@ -309,7 +309,7 @@ M
   # sda：7 天 +7 个百分点 → 1.00%/天，(90-37)/1 = 53 天；sdb 无基线；sdc 基线超出周期（40 天前）按无基线；sdd 已超 90%
   [[ "${lines[0]}" == "A:sda|37|7|1.00|53 sdb|50||| sdc|10||| sdd|95|||" ]]
   [[ "${lines[1]}" == "B:sda|37|7|1.00|53 sdb|50||| sdc|10||| sdd|95|||" ]]
-  # 快照：7 天前的基线 + 今天一条（今天较早的那条被本次替换）
+  # 快照：7 天前的基线 + 今天一条（今天的旧样本被本次替换）
   [[ "${lines[2]}" == "N:2" ]]
   [[ "${lines[3]}" == "1" ]]
 }
