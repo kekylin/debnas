@@ -360,3 +360,76 @@ _fw_sandbox_init() {
   ! grep -qF -- '--permanent' "$FW_TMP/fwcmd.log" || false
   rm -rf "$FW_TMP"
 }
+
+# ==================== 区间解析与默认区（行为） ====================
+
+@test "firewall-unit: _fw_zone_insert 在 </zone> 前追加条目" {
+  run bash -c '
+    DEBNAS_MODULE_ACTION=status
+    source "$1/modules/firewall.sh" >/dev/null 2>&1
+    _fw_zone_insert "<zone>
+  <service name=\"ssh\"/>
+</zone>" "<service name=\"cockpit\"/>"
+  ' _ "${DEBNAS_ROOT}"
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == *"<service name=\"ssh\"/>"* ]]
+  [[ "$output" == *"  <service name=\"cockpit\"/>"* ]]
+  [[ "$output" == *"</zone>"* ]]
+}
+
+@test "firewall-unit: _fw_zone_insert 无 </zone> 时返回 1" {
+  run bash -c '
+    DEBNAS_MODULE_ACTION=status
+    source "$1/modules/firewall.sh" >/dev/null 2>&1
+    rc=0
+    _fw_zone_insert "<not-a-zone/>" "<x/>" >/dev/null || rc=$?
+    echo "RC=$rc"
+  ' _ "${DEBNAS_ROOT}"
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == *"RC=1"* ]]
+}
+
+@test "firewall-unit: _fw_default_zone 读取 DefaultZone 并校验区文件存在" {
+  local d
+  d=$(mktemp -d)
+  mkdir -p "$d/zones" "$d/sys"
+  printf 'DefaultZone=home\n' > "$d/firewalld.conf"
+  : > "$d/zones/home.xml"
+  run bash -c '
+    DEBNAS_MODULE_ACTION=status
+    source "$1/modules/firewall.sh" >/dev/null 2>&1
+    _FW_CONF="$2/firewalld.conf"; _FW_ZONES_DIR="$2/zones"; _FW_SYS_ZONES_DIR="$2/sys"
+    _fw_default_zone
+  ' _ "${DEBNAS_ROOT}" "$d"
+  rm -rf "$d"
+  [[ "$status" -eq 0 && "$output" == "home" ]]
+}
+
+@test "firewall-unit: _fw_default_zone 指向不存在的区时回退 public" {
+  local d
+  d=$(mktemp -d)
+  mkdir -p "$d/zones" "$d/sys"
+  printf 'DefaultZone=ghost\n' > "$d/firewalld.conf"
+  run bash -c '
+    DEBNAS_MODULE_ACTION=status
+    source "$1/modules/firewall.sh" >/dev/null 2>&1
+    _FW_CONF="$2/firewalld.conf"; _FW_ZONES_DIR="$2/zones"; _FW_SYS_ZONES_DIR="$2/sys"
+    _fw_default_zone
+  ' _ "${DEBNAS_ROOT}" "$d"
+  rm -rf "$d"
+  [[ "$status" -eq 0 && "$output" == "public" ]]
+}
+
+@test "firewall-unit: _fw_default_zone 缺少配置时回退 public" {
+  local d
+  d=$(mktemp -d)
+  mkdir -p "$d/zones" "$d/sys"
+  run bash -c '
+    DEBNAS_MODULE_ACTION=status
+    source "$1/modules/firewall.sh" >/dev/null 2>&1
+    _FW_CONF="$2/no-such.conf"; _FW_ZONES_DIR="$2/zones"; _FW_SYS_ZONES_DIR="$2/sys"
+    _fw_default_zone
+  ' _ "${DEBNAS_ROOT}" "$d"
+  rm -rf "$d"
+  [[ "$status" -eq 0 && "$output" == "public" ]]
+}

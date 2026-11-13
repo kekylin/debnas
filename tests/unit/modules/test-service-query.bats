@@ -249,3 +249,39 @@ _assert_plan_lines() {
   run _contract_probe status
   [[ "$output" =~ ^(unknown|warn)\|只读工具 ]]
 }
+
+# ==================== 服务查询（行为） ====================
+
+@test "service-query: is_service_active 自动补 .service 后缀" {
+  run bash -c '
+    DEBNAS_MODULE_ACTION=status
+    source "$1/modules/service-query.sh" >/dev/null 2>&1
+    systemctl() { echo "$@"; }
+    is_service_active cockpit
+  ' _ "${DEBNAS_ROOT}"
+  [[ "$status" -eq 0 && "$output" == "is-active --quiet cockpit.service" ]]
+}
+
+@test "service-query: is_service_active 已带后缀时不重复追加并透传状态" {
+  run bash -c '
+    DEBNAS_MODULE_ACTION=status
+    source "$1/modules/service-query.sh" >/dev/null 2>&1
+    systemctl() { [[ "$1 $2 $3" == "is-active --quiet cockpit.socket" ]] && return 0; return 1; }
+    is_service_active cockpit.socket && echo ACTIVE || echo INACTIVE
+    is_service_active docker && echo ACTIVE || echo INACTIVE
+  ' _ "${DEBNAS_ROOT}"
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == *"ACTIVE"*"INACTIVE"* ]]
+}
+
+@test "service-query: print_service_status 输出访问地址" {
+  run bash -c '
+    DEBNAS_MODULE_ACTION=status
+    source "$1/modules/service-query.sh" >/dev/null 2>&1
+    log_success() { echo "S:$*"; }; log_info() { echo "I:$*"; }
+    print_service_status cockpit "https://192.0.2.10:9090"
+  ' _ "${DEBNAS_ROOT}"
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == *"S:cockpit 服务已运行"* ]]
+  [[ "$output" == *"I:请通过浏览器访问：https://192.0.2.10:9090"* ]]
+}

@@ -214,3 +214,35 @@ _assert_plan_lines() {
   [[ "$output" != *"user|"* ]]
   [[ "$output" == *"add_user_to_sudo=0"* ]]
 }
+
+# ==================== 缺失包与状态（行为） ====================
+
+@test "basic-tools: _basic_tools_missing 只列出未安装的包" {
+  local mock="${BATS_TEST_TMPDIR}/mockbin"
+  mkdir -p "$mock"
+  cat > "${mock}/dpkg-query" <<'INNEREOF'
+#!/bin/sh
+for p in "$@"; do
+  case "$p" in -*) continue ;; *'${'*|*'}'*) continue ;; esac
+  if [ "$p" = "curl" ]; then echo "$p deinstall"; else echo "$p installed"; fi
+done
+INNEREOF
+  chmod +x "${mock}/dpkg-query"
+  run env PATH="${mock}:$PATH" bash -c '
+    DEBNAS_MODULE_ACTION=status
+    source "$1/modules/basic-tools.sh" >/dev/null 2>&1
+    _basic_tools_missing
+  ' _ "${DEBNAS_ROOT}"
+  [[ "$status" -eq 0 && "$output" == "curl" ]]
+}
+
+@test "basic-tools: module_status 根据缺失包输出 partial" {
+  run bash -c '
+    DEBNAS_MODULE_ACTION=status
+    source "$1/modules/basic-tools.sh" >/dev/null 2>&1
+    _basic_tools_missing() { echo curl; }
+    module_status
+  ' _ "${DEBNAS_ROOT}"
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == partial\|*"缺 curl"* ]]
+}
