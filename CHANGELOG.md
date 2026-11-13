@@ -21,6 +21,7 @@
 - 菜单「检查脚本更新」的提示按普通用户收敛为四行以内：`检查更新…` / `当前版本` / `一句话结论`，版本号等状态信息统一带 `[INFO]` 标识、不再裸行展示；未签名指针回退、主备源切换等内部诊断不再显示（`_RELEASE_QUIET`）。`debnas check-update` 仍保留详细原因，便于排查
 
 ### Changed
+- `modules/ops-report/report.sh` 拆分完成：`report.sh` 改为 loader，按序加载 `report-common.sh`（共享格式化 helper）、`report-collect.sh`（数据采集与状态判定）、`report-render.sh`（HTML/图表渲染）、`report-cli.sh`（报告生成、终端摘要与并发锁）；函数名、全局变量与调用方式不变
 - `modules/ops-report/report.sh` 拆分第一步：23 个 `ops_render_*` 渲染/图表函数原样移入 `report-render.sh`，由 `report.sh` 加载；函数名、全局变量与调用方式不变
 - 锁实现收敛：`lib/system/tempfile.sh` 新增 `lock_acquire` / `lock_release` 句柄 API（属主/符号链接校验、`--timeout` / `--nonblock` / `--required`），`debnas_locked`、hosts-sync 与 threat-ips 的锁统一走该 API；`deploy_lock` 作为跨 `install.sh` / `update` 的共享锁保留并注明同步要求
 - `lib/system/cron.sh` 的交互菜单（启用/禁用定时任务）移入 `lib/ui/cron-menu.sh`，system 层不再反向依赖 UI 层；无调用方的 `cron_show_status` 已删除

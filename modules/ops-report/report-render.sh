@@ -1501,3 +1501,209 @@ $([[ -z "${OPS_LOGIN_SOURCE_NOTE:-}" ]] || printf '      <p class="muted">%s</p>
 HTML
 }
 
+ops_period_label_cn() {
+  case "${1:-7}" in
+    7) echo "周报" ;;
+    30) echo "月报" ;;
+    365) echo "年报" ;;
+    *) echo "周报" ;;
+  esac
+}
+
+ops_period_label_en() {
+  case "${1:-7}" in
+    7) echo "Server Weekly" ;;
+    30) echo "Server Monthly" ;;
+    365) echo "Server Annual" ;;
+    *) echo "Server Weekly" ;;
+  esac
+}
+
+ops_html_escape() {
+  local s="$1"
+  s="${s//&/\&amp;}"; s="${s//</\&lt;}"; s="${s//>/\&gt;}"; s="${s//\"/\&quot;}"; s="${s//\'/\&#39;}"
+  printf '%s' "$s"
+}
+
+ops_value_count() {
+  local values="${1:-}"
+  printf '%s\n' "$values" | awk '
+    {
+      gsub(/[^0-9., ]+/, " ", $0)
+      gsub(/,+/, " ", $0)
+      n = split($0, a, / +/)
+      if (n == 1 && a[1] == "") n = 0
+      print n + 0
+    }'
+}
+
+ops_auto_labels() {
+  local values="${1:-}" n="${2:-}" i label out=""
+  if [[ -z "$n" ]]; then
+    n=$(ops_value_count "$values")
+  fi
+  if [[ -z "$n" || "$n" -eq 0 ]]; then
+    n="${OPS_REPORT_DAYS:-7}"
+  fi
+  # 以截止日正午为基准按天回推（正午避开夏令时切换），不再每个标签起两次 date
+  local until_noon
+  until_noon=$(ops_until_noon_epoch)
+  for ((i = n - 1; i >= 0; i--)); do
+    printf -v label '%(%m-%d)T' "$((until_noon - i * 86400))"
+    out="${out:+${out}, }${label}"
+  done
+  printf '%s' "$out"
+}
+
+ops_until_noon_epoch() {
+  local until_date
+  until_date=$(date -d "${OPS_REPORT_UNTIL:-today}" '+%Y-%m-%d' 2>/dev/null || echo "today")
+  date -d "${until_date} 12:00" '+%s' 2>/dev/null || date '+%s'
+}
+
+ops_rate_bytes() {
+  awk -v v="${1:-0}" -v d="${2:-${OPS_SYSSTAT_SAMPLE_DAYS:-1}}" 'BEGIN { printf "%.0f", v * 1024 * 86400 * d }'
+}
+
+ops_ban_label() {
+  if [[ "${1:-0}" =~ ^[0-9]+$ ]]; then
+    printf '%s IP' "${1:-0}"
+  else
+    printf '%s' "${1:-未启用}"
+  fi
+}
+
+ops_network_value() {
+  if [[ "${OPS_NET_TOTAL_LABEL:-待周期数据}" == "报告周期" ]]; then
+    ops_format_bytes "${1:-0}"
+  else
+    echo "待周期数据"
+  fi
+}
+
+ops_abnormal_login_hours() {
+  local line ts hour
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    line="${line#*：}"
+    ts=$(printf '%s\n' "$line" | awk '{ sub(/^[^ ]+ [^ ]+ /, ""); print }')
+    hour=$(date -d "$ts" '+%H' 2>/dev/null || true)
+    [[ "$hour" =~ ^[0-9]+$ ]] && printf '%s ' "$hour"
+  done <<< "${OPS_SECURITY_EVENTS:-}"
+  printf '\n'
+}
+
+ops_build_login_risk_note() {
+  OPS_LOGIN_RISK_LABEL="异常登录"
+  OPS_LOGIN_RISK_NOTE="未发现异常登录"
+  OPS_LOGIN_RISK_ITEMS=0
+  local abnormal_users abnormal_count fail_count parts
+  abnormal_users=$(printf '%s\n' "${OPS_SECURITY_EVENTS:-}" \
+    | sed 's/^[^：]*：//' | awk 'NF { print $1 }' | sort -u)
+  abnormal_count=$(printf '%s\n' "$abnormal_users" | grep -v '^$' | wc -l || true)
+  fail_count="${OPS_LOGIN_FAIL_COUNT:-0}"
+  parts=""
+  if [[ "$abnormal_count" -gt 0 ]]; then
+    local users_text user_count
+    users_text=$(printf '%s\n' "$abnormal_users" | head -3 \
+      | awk 'NF { if (n++) printf "、"; printf "%s", $1 }' || true)
+    user_count=$(printf '%s\n' "$abnormal_users" | grep -v '^$' | wc -l || true)
+    if [[ "$user_count" -gt 3 ]]; then
+      users_text="${users_text} 等 ${user_count} 个用户"
+    fi
+    parts="异常登录：${users_text}"
+    OPS_LOGIN_RISK_ITEMS=$((OPS_LOGIN_RISK_ITEMS + 1))
+  fi
+  if [[ "$fail_count" -gt 0 ]]; then
+    local fail_text ip
+    fail_text="失败登录：${fail_count} 次"
+    ip=$(printf '%s\n' "${OPS_FAIL_IP_STATS:-}" | head -1 | awk '{print $1}' || true)
+    [[ -n "$ip" ]] && fail_text="${fail_text}（主要来源 ${ip}）"
+    parts="${parts:+${parts}；}${fail_text}"
+    OPS_LOGIN_RISK_ITEMS=$((OPS_LOGIN_RISK_ITEMS + 1))
+  fi
+  if [[ -n "$parts" ]]; then
+    OPS_LOGIN_RISK_NOTE="$parts"
+    if [[ "$abnormal_count" -gt 0 && "$fail_count" -gt 0 ]]; then
+      OPS_LOGIN_RISK_LABEL="登录安全"
+    elif [[ "$fail_count" -gt 0 ]]; then
+      OPS_LOGIN_RISK_LABEL="失败登录"
+    fi
+  fi
+}
+
+ops_key_services_counts() {
+  local name errors restarts start state
+  local -i active=0 total=0
+  while IFS='|' read -r name errors restarts start state; do
+    [[ -n "$name" ]] || continue
+    case "$name" in
+      ssh|nginx|docker|cron) ;;
+      *) continue ;;
+    esac
+    total+=1
+    [[ "$state" == "正常" ]] && active+=1
+  done <<< "${OPS_SERVICE_STABILITY}"
+  printf '%s / %s' "$active" "$total"
+}
+
+ops_short_event_label() {
+  local event="$1"
+  case "$event" in
+    *"计划重启"*|*"系统更新"*|*"维护"*) echo "计划维护" ;;
+    *"磁盘/RAID/文件系统或内核"*) echo "系统异常" ;;
+    *"磁盘使用率"*) echo "磁盘使用率" ;;
+    *"磁盘 I/O"*) echo "磁盘 I/O 异常" ;;
+    *"SMART"*) echo "SMART 异常" ;;
+    *"RAID"*) echo "RAID 降级" ;;
+    *"文件系统"*) echo "文件系统错误" ;;
+    *"内核"*|*"OOM"*|*"oom"*) echo "内核错误" ;;
+    *"登录"*) echo "异常登录" ;;
+    *"安全更新"*|*"更新"*) echo "安全更新待装" ;;
+    *"CPU"*) echo "CPU 持续高占用" ;;
+    *"内存"*) echo "内存持续高占用" ;;
+    *"负载"*) echo "负载峰值" ;;
+    *"磁盘"*) echo "磁盘 I/O 异常" ;;
+    *"失败服务"*) echo "服务失败" ;;
+    *) echo "${event:-事件}" ;;
+  esac
+}
+
+ops_event_category() {
+  local event="$1"
+  case "$event" in
+    *登录*|*安全事件*|*入侵*) echo "security" ;;
+    *磁盘*|*文件系统*|*内核*|*RAID*|*SMART*|*OOM*|*CPU*|*内存*|*负载*) echo "system" ;;
+    *失败服务*) echo "service" ;;
+    *安全更新*|*更新*) echo "update" ;;
+    *网络*) echo "network" ;;
+    *计划*|*维护*) echo "maintenance" ;;
+    *) echo "other" ;;
+  esac
+}
+
+ops_event_pulse_heading() {
+  case "${OPS_REPORT_DAYS:-7}" in
+    30)  echo "月度运行节奏（按天）" ;;
+    365) echo "年度运行节奏（按周）" ;;
+    *)   echo "一周运行节奏" ;;
+  esac
+}
+
+ops_suspicious_summary() {
+  if [[ "${OPS_SUSPICIOUS_PROGRAM_COUNT:-0}" -eq 0 ]]; then
+    echo "静态启发式扫描未发现可疑进程"
+    return 0
+  fi
+  local names
+  names=$(printf '%s\n' "${OPS_SUSPICIOUS_PROGRAMS:-}" | head -3 \
+    | awk '{ sub(/：.*/, "", $2); if (n++) printf "、"; printf "%s", $2 }' || true)
+  if [[ "${OPS_SUSPICIOUS_PROGRAM_COUNT}" -gt 3 ]]; then
+    names="${names} 等 ${OPS_SUSPICIOUS_PROGRAM_COUNT} 项"
+  fi
+  echo "$names"
+}
+
+
+# ==================== 渲染专用 helper（原 report.sh 移出） ====================
+

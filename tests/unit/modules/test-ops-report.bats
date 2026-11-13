@@ -18,7 +18,7 @@ MODULE_DIR="${DEBNAS_ROOT}/modules/ops-report"
   grep -q 'ops_collect_health()' "$MODULE_DIR/health.sh"
   grep -q 'ops_collect_security()' "$MODULE_DIR/security.sh"
   grep -q 'ops_collect_services()' "$MODULE_DIR/services.sh"
-  grep -q 'ops_generate_report()' "$MODULE_DIR/report.sh"
+  grep -q 'ops_generate_report()' "$MODULE_DIR/report-cli.sh"
   grep -q 'ops_send_report_email()' "$MODULE_DIR/notify.sh"
   grep -q 'ops_login_data_start()' "$MODULE_DIR/security.sh"
 }
@@ -80,14 +80,14 @@ tcp LISTEN 0 128 0.0.0.0:80 0.0.0.0:*"
 }
 
 @test "ops-report: sysstat 只读周期内二进制文件并解压历史压缩文件" {
-  grep -q "name 'sa\[0-9\]\*'" "$MODULE_DIR/report.sh"
-  grep -q -- '-newermt' "$MODULE_DIR/report.sh"
-  grep -q 'xz -dc' "$MODULE_DIR/report.sh"
+  grep -q "name 'sa\[0-9\]\*'" "$MODULE_DIR/report-collect.sh"
+  grep -q -- '-newermt' "$MODULE_DIR/report-collect.sh"
+  grep -q 'xz -dc' "$MODULE_DIR/report-collect.sh"
 }
 
 @test "ops-report: 报告生成加 flock 并以 600 预创建报告文件" {
-  grep -q 'flock -n' "$MODULE_DIR/report.sh"
-  grep -q 'install -m 600 /dev/null' "$MODULE_DIR/report.sh"
+  grep -q 'flock -n' "$MODULE_DIR/report-cli.sh"
+  grep -q 'install -m 600 /dev/null' "$MODULE_DIR/report-cli.sh"
 }
 
 @test "ops-report: 失败登录按 auth/authpriv facility 读取 journal，fail2ban 多 jail 正确拆分" {
@@ -135,7 +135,7 @@ M
 }
 
 @test "ops-report: 转义纯 bash 实现（无 sed 子进程）且漂移表转义 & < > 与引号" {
-  if sed -n '/^ops_html_escape()/,/^}/p' "$MODULE_DIR/report.sh" | grep -q 'sed'; then false; fi
+  if sed -n '/^ops_html_escape()/,/^}/p' "$MODULE_DIR/report-render.sh" | grep -q 'sed'; then false; fi
   run bash -c 'set -euo pipefail; source "$1/security.sh"; ops_drift_escape "a&<b>\"x"' _ "$MODULE_DIR"
   [[ "$output" == 'a&amp;&lt;b&gt;&quot;x' ]]
 }
@@ -143,7 +143,7 @@ M
 @test "ops-report: 定时任务状态走 cron_state，sysstat 原始输出不再拼进 shell 变量" {
   if grep -q '_ops_cron_state' "$MODULE_DIR/module.sh"; then false; fi
   grep -q 'cron_state "ops-report"' "$MODULE_DIR/module.sh"
-  ! grep -q 'OPS_SAR_NET_LINES' "$MODULE_DIR/report.sh"
+  if grep -q 'OPS_SAR_NET_LINES' "$MODULE_DIR"/report-*.sh; then false; fi
 }
 
 # ==================== 只读探测契约（docs/ARCHITECTURE.md §4.5） ====================
@@ -229,8 +229,8 @@ _probe_call() {
 }
 
 @test "ops-report: [D2] ops_collect_updates 不再直接 grep security 索引 glob" {
-  if sed -n '/^ops_collect_updates()/,/^}/p' "$MODULE_DIR/report.sh" | grep -q 'grep .*\*security\*Packages\*'; then false; fi
-  sed -n '/^ops_collect_updates()/,/^}/p' "$MODULE_DIR/report.sh" | grep -q 'security_pkgs=$(ops_security_package_names /var/lib/apt/lists || true)'
+  if sed -n '/^ops_collect_updates()/,/^}/p' "$MODULE_DIR/report-collect.sh" | grep -q 'grep .*\*security\*Packages\*'; then false; fi
+  sed -n '/^ops_collect_updates()/,/^}/p' "$MODULE_DIR/report-collect.sh" | grep -q 'security_pkgs=$(ops_security_package_names /var/lib/apt/lists || true)'
 }
 
 @test "ops-report: [D4] 失败登录来源 IP 只取最后一个 <IP> port N，用户名伪造的 from 不计入" {
@@ -452,7 +452,7 @@ kernel_ver() {
   run kernel_ver "$mock"
   [[ "$status" -eq 0 ]]
   [[ "$output" == "6.1.76-1+real" ]]
-  ! grep -q "sed 's/-amd64\$//'" "$MODULE_DIR/report.sh"
+  ! grep -q "sed 's/-amd64\$//'" "$MODULE_DIR/report-collect.sh"
 }
 
 @test "ops-report: [F4] 查不到内核包（容器 / PVE 内核 / 包已卸载）时回退 uname -v 的版本串，再回退 uname -r" {
