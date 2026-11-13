@@ -307,7 +307,9 @@ setup() {
     ui_ensure_utf8_locale
     printf "%s\n" "$LC_ALL"
   ' _ "${DEBNAS_ROOT}"
-  [[ "$status" -eq 0 && "$output" == "zh_CN.UTF-8" ]]
+  [[ "$status" -eq 0 ]]
+  # 系统未安装 zh_CN.UTF-8 时 bash 会先输出 setlocale 警告；只看最后一行
+  [[ "${lines[-1]}" == "zh_CN.UTF-8" ]]
 }
 
 @test "ui_ensure_utf8_locale: 系统无 C.UTF-8 时保持原 locale" {
