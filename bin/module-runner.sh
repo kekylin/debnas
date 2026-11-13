@@ -232,6 +232,11 @@ main() {
     return $?
   fi
 
+  # 交互模块的菜单同样依赖 UTF-8 locale（cron 模式不加载 UI，函数不存在时跳过）
+  if declare -F ui_ensure_utf8_locale >/dev/null 2>&1; then
+    ui_ensure_utf8_locale
+  fi
+
   # 解析全局参数
   parse_global_args "$@"
 

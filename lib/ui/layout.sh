@@ -313,3 +313,20 @@ _ui_a11y_announce() {
   [[ "${DEBNAS_ACCESSIBILITY:-0}" -eq 1 ]] || return 0
   printf '[DebNAS] %s\n' "$*" >&2
 }
+
+# ═══════════════════════════════════════════════════════════════
+# locale — 确保 UI 使用 UTF-8（C/POSIX 下中文按字节截断）
+# ═══════════════════════════════════════════════════════════════
+
+# 非 UTF-8 locale 且系统提供 C.UTF-8 时回退；不覆盖用户已设置的 UTF-8 locale
+# 参数：无
+# 返回：0（始终）
+ui_ensure_utf8_locale() {
+  case "${LC_ALL:-${LC_CTYPE:-${LANG:-}}}" in
+    *UTF-8|*utf8|*utf-8) return 0 ;;
+  esac
+  if locale -a 2>/dev/null | grep -qiE '^C\.utf-?8$'; then
+    export LC_ALL=C.UTF-8
+  fi
+  return 0
+}

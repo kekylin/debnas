@@ -281,3 +281,49 @@ setup() {
   [[ "$body" == *'_UI_FOOTER_UPDATE_DOT=1'* ]]
   [[ "$body" == *'_UI_FOOTER_UPDATE_DOT=0'* ]]
 }
+
+# ═══════════════════════════════════════════════════════════════
+# ui_ensure_utf8_locale — 非 UTF-8 locale 回退
+# ═══════════════════════════════════════════════════════════════
+
+@test "ui_ensure_utf8_locale: 非 UTF-8 locale 且系统有 C.UTF-8 时回退" {
+  run bash -c '
+    source "$1"/lib/ui/layout.sh
+    locale() { echo "C.utf8"; }
+    unset LC_ALL LC_CTYPE
+    export LANG=C
+    ui_ensure_utf8_locale
+    printf "%s\n" "${LC_ALL:-unset}"
+  ' _ "${DEBNAS_ROOT}"
+  [[ "$status" -eq 0 && "$output" == "C.UTF-8" ]]
+}
+
+@test "ui_ensure_utf8_locale: 已是 UTF-8 locale 时不覆盖" {
+  run bash -c '
+    source "$1"/lib/ui/layout.sh
+    locale() { echo "C"; }
+    unset LC_CTYPE
+    export LC_ALL=zh_CN.UTF-8 LANG=C
+    ui_ensure_utf8_locale
+    printf "%s\n" "$LC_ALL"
+  ' _ "${DEBNAS_ROOT}"
+  [[ "$status" -eq 0 && "$output" == "zh_CN.UTF-8" ]]
+}
+
+@test "ui_ensure_utf8_locale: 系统无 C.UTF-8 时保持原 locale" {
+  run bash -c '
+    source "$1"/lib/ui/layout.sh
+    locale() { echo "C"; }
+    unset LC_ALL LC_CTYPE
+    export LANG=C
+    ui_ensure_utf8_locale
+    printf "%s\n" "${LC_ALL:-unset}"
+  ' _ "${DEBNAS_ROOT}"
+  [[ "$status" -eq 0 && "$output" == "unset" ]]
+}
+
+@test "locale: 菜单与模块执行入口都调用 ui_ensure_utf8_locale" {
+  grep -q 'ui_ensure_utf8_locale' "${DEBNAS_ROOT}/bin/menu.sh"
+  grep -q 'ui_ensure_utf8_locale' "${DEBNAS_ROOT}/bin/module-runner.sh"
+  grep -q '^ui_ensure_utf8_locale()' "${DEBNAS_ROOT}/lib/ui/layout.sh"
+}

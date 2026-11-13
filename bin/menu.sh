@@ -412,16 +412,8 @@ setup_environment() {
 # ==================== 主入口 ====================
 
 main() {
-  # 终端宽度与文本截断依赖 UTF-8 locale；C/POSIX 下中文会按字节截断。
-  # 仅在当前 locale 不是 UTF-8 且系统提供 C.UTF-8 时回退，不覆盖用户已设置的 UTF-8 locale。
-  case "${LC_ALL:-${LC_CTYPE:-${LANG:-}}}" in
-    *UTF-8|*utf8|*utf-8) ;;
-    *)
-      if locale -a 2>/dev/null | grep -qiE '^C\.utf-?8$'; then
-        export LC_ALL=C.UTF-8
-      fi
-      ;;
-  esac
+  # 终端宽度与文本截断依赖 UTF-8 locale（C/POSIX 下中文按字节截断）
+  ui_ensure_utf8_locale
 
   # 交互界面：经典菜单（debnas-v2 样式），ui_menu 方向键导航
   ui_screen_clear
