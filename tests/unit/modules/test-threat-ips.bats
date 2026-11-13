@@ -705,3 +705,67 @@ _ct_threat_fw() {
   [[ "$output" != *"ENSURE"* ]]
   [[ "$output" == *"Cron 未安装"* ]]
 }
+
+# ==================== 边界行为补充（2026-11-13） ====================
+
+@test "threat-ips: prepare_input_file 跳过空行/整行注释，仅注释列表返回失败" {
+  local tmp
+  tmp=$(mktemp -d)
+  printf '\n   \n# 整行注释\n   # 缩进注释\n1.2.3.4 # 行内注释\n\n5.6.7.8\n' > "$tmp/in.txt"
+  printf '# 只有注释\n\n   # 仍是注释\n' > "$tmp/only.txt"
+  run _ti_run '
+    p=$(prepare_input_file "$D/in.txt") || { echo "PREP_FAIL"; exit 0; }
+    printf "CONTENT=%s\n" "$(cat "$p")"
+    : > "$D/v4"; : > "$D/v6"
+    parse_ip_entries "$p" "$D/v4" "$D/v6"
+    sed "s/^/V4:/" "$D/v4"
+    rc=0
+    prepare_input_file "$D/only.txt" || rc=$?
+    echo "ONLY_RC=$rc"
+  ' "$tmp"
+  rm -rf "$tmp"
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == *"CONTENT=1.2.3.4 # 行内注释"* ]]
+  [[ "$output" == *"V4:1.2.3.4"* ]]
+  [[ "$output" == *"V4:5.6.7.8"* ]]
+  [[ "$output" == *"2 条有效，0 条无效"* ]]
+  [[ "$output" == *"IP 列表为空或仅包含注释，无需处理"* ]]
+  [[ "$output" == *"ONLY_RC=1"* ]]
+}
+
+@test "threat-ips: IPv6 大小写/压缩写法与重复项保留，非法 IPv6 判无效" {
+  run _parse_list '2001:DB8::/32\n2001:db8::/32\n2001:db8::/32\n2001:db8:::1\nfe80::1%eth0\n::ffff:192.0.2.1\n'
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == *"V6:2001:DB8::/32"* ]]
+  [[ "$(printf '%s\n' "$output" | grep -c '^V6:2001:db8::/32$')" -eq 2 ]]
+  [[ "$output" == *"V6:::ffff:192.0.2.1"* ]]
+  [[ "$output" == *"LOG:W:无效输入：2001:db8:::1"* ]]
+  [[ "$output" == *"LOG:W:无效输入：fe80::1%eth0"* ]]
+  [[ "$output" == *"4 条有效，2 条无效"* ]]
+  [[ "$output" == *"RC=0"* ]]
+}
+
+@test "threat-ips: deduplicate_and_sort_ips 对 IPv4/IPv6 重复项去重并排序" {
+  local tmp
+  tmp=$(mktemp -d)
+  printf '5.6.7.8\n1.2.3.4\n1.2.3.4\n2001:db8::1\n2001:db8::1\n' > "$tmp/dups"
+  run _ti_run 'deduplicate_and_sort_ips "$D/dups" "$D/sorted"; cat "$D/sorted"' "$tmp"
+  rm -rf "$tmp"
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == $'1.2.3.4\n2001:db8::1\n5.6.7.8' ]]
+}
+
+@test "threat-ips: 白名单空行与注释被忽略，行内注释不影响匹配" {
+  local tmp
+  tmp=$(mktemp -d)
+  printf '# 注释行\n\n1.2.3.0/24   # 行内注释\n   203.0.113.0/24   \n' > "$tmp/whitelist"
+  printf '1.2.3.9\n203.0.113.9\n8.8.8.8\n010.020.030.040\n' > "$tmp/v4"
+  run _ti_run 'filter_protected_entries "$D/v4" IPv4; cat "$D/v4"' "$tmp"
+  rm -rf "$tmp"
+  [[ "$status" -eq 0 ]]
+  [[ "$output" != *"1.2.3.9"* ]]
+  [[ "$output" != *"203.0.113.9"* ]]
+  [[ "$output" != *"10.20.30.40"* ]]
+  [[ "$output" == *"8.8.8.8"* ]]
+  [[ "$output" == *"命中保护/白名单 3 条"* ]]
+}

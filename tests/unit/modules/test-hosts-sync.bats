@@ -465,3 +465,89 @@ DIG
   [[ "$output" == *"R=[]"* ]]
   [[ "$output" == *"R2=[1|1|1|20]"* ]]
 }
+
+# ==================== 边界行为补充（2026-11-13） ====================
+
+@test "hosts-sync: is_usable_public_ip 保留段边界与公网 IPv6 判定" {
+  run bash -c '
+    eval "$(sed -n "/^is_usable_public_ip()/,/^}/p" "$1")"
+    for ip in 100.64.0.0 100.127.255.255 172.16.0.0 172.31.255.255 \
+      198.18.0.1 198.51.100.7 203.0.113.9 192.0.2.2 192.0.0.9 169.254.3.4 \
+      224.0.0.0 256.1.1.1; do
+      is_usable_public_ip "$ip" && echo "LEAK:$ip"
+    done
+    for ip in 100.63.255.255 100.128.0.0 172.15.255.255 172.32.0.0 \
+      223.255.255.255 2606:4700::6810:84e5 2001:4860:4860::8888; do
+      is_usable_public_ip "$ip" || echo "MISS:$ip"
+    done
+    for ip in 2001:db8::1 fe80::1 fc00::1 ff02::1 64:ff9b::1 ::ffff:1.2.3.4 :: ::1; do
+      is_usable_public_ip "$ip" && echo "LEAK:$ip"
+    done
+    echo DONE
+  ' _ "${MODULE_DIR}/dns-resolve.sh"
+  [[ "$status" -eq 0 ]]
+  [[ "$output" != *"LEAK:"* ]]
+  [[ "$output" != *"MISS:"* ]]
+  [[ "$output" == *"DONE"* ]]
+}
+
+@test "hosts-sync: hosts_block_state 区分无区块/完整区块/缺 END/缺文件" {
+  local tmp
+  tmp=$(mktemp -d)
+  run bash -c '
+    set -euo pipefail
+    START_MARK="# DebNAS Hosts Start"; END_MARK="# DebNAS Hosts End"; HOSTS_FILE="$1/hosts"
+    eval "$(sed -n "/^hosts_block_state()/,/^}/p" "$2")"
+    printf "127.0.0.1 localhost\n" > "$HOSTS_FILE"
+    echo "none=$(hosts_block_state)"
+    printf "127.0.0.1 localhost\n# DebNAS Hosts Start\n1.1.1.1 a\n# DebNAS Hosts End\n" > "$HOSTS_FILE"
+    echo "ok=$(hosts_block_state)"
+    printf "127.0.0.1 localhost\n# DebNAS Hosts Start\n1.1.1.1 a\n" > "$HOSTS_FILE"
+    echo "broken=$(hosts_block_state)"
+    HOSTS_FILE="$1/hosts.missing"
+    echo "missing=$(hosts_block_state)"
+  ' _ "$tmp" "${MODULE_DIR}/hosts-manager.sh"
+  rm -rf "$tmp"
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == *"none=none"* ]]
+  [[ "$output" == *"ok=ok"* ]]
+  [[ "$output" == *"broken=broken"* ]]
+  [[ "$output" == *"missing=none"* ]]
+}
+
+@test "hosts-sync: hosts_block_state 兼容 CRLF 与重复完整区块" {
+  local tmp
+  tmp=$(mktemp -d)
+  run bash -c '
+    set -euo pipefail
+    START_MARK="# DebNAS Hosts Start"; END_MARK="# DebNAS Hosts End"; HOSTS_FILE="$1/hosts"
+    eval "$(sed -n "/^hosts_block_state()/,/^}/p" "$2")"
+    printf "127.0.0.1 localhost\r\n# DebNAS Hosts Start\r\n1.1.1.1 a\r\n# DebNAS Hosts End\r\n" > "$HOSTS_FILE"
+    echo "crlf=$(hosts_block_state)"
+    printf "127.0.0.1 localhost\r\n# DebNAS Hosts Start\r\n1.1.1.1 a\r\n" > "$HOSTS_FILE"
+    echo "crlf_broken=$(hosts_block_state)"
+    printf "127.0.0.1 localhost\n# DebNAS Hosts Start\n1.1.1.1 a\n# DebNAS Hosts End\nkeep\n# DebNAS Hosts Start\n2.2.2.2 b\n# DebNAS Hosts End\n" > "$HOSTS_FILE"
+    echo "dup=$(hosts_block_state)"
+  ' _ "$tmp" "${MODULE_DIR}/hosts-manager.sh"
+  rm -rf "$tmp"
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == *"crlf=ok"* ]]
+  [[ "$output" == *"crlf_broken=broken"* ]]
+  [[ "$output" == *"dup=ok"* ]]
+}
+
+@test "hosts-sync: render_hosts_without_block 移除多个区块并保留用户空行" {
+  local tmp
+  tmp=$(mktemp -d)
+  printf '127.0.0.1 localhost\n\n# DebNAS Hosts Start\n1.1.1.1 a\n# DebNAS Hosts End\n\nkeep1\n\nkeep2\n\n# DebNAS Hosts Start\n2.2.2.2 b\n# DebNAS Hosts End\n\n' > "$tmp/hosts"
+  run bash -c '
+    set -euo pipefail
+    START_MARK="# DebNAS Hosts Start"; END_MARK="# DebNAS Hosts End"; HOSTS_FILE="$1/hosts"
+    eval "$(sed -n "/^render_hosts_without_block()/,/^}/p" "$2")"
+    render_hosts_without_block
+  ' _ "$tmp" "${MODULE_DIR}/hosts-manager.sh"
+  rm -rf "$tmp"
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == $'127.0.0.1 localhost\n\n\nkeep1\n\nkeep2' ]]
+  [[ "$output" != *"DebNAS Hosts"* ]]
+}

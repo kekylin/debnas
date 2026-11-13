@@ -22,6 +22,8 @@
 - 菜单「检查脚本更新」的提示按普通用户收敛为四行以内：`检查更新…` / `当前版本` / `一句话结论`，版本号等状态信息统一带 `[INFO]` 标识、不再裸行展示；未签名指针回退、主备源切换等内部诊断不再显示（`_RELEASE_QUIET`）。`debnas check-update` 仍保留详细原因，便于排查
 
 ### Changed
+- 测试：补 ops-report 的 `ops_format_bytes` / `ops_pct_label` / 周期标签 / HTML 转义 / 取值计数 / 速率换算行为用例
+- 测试：补 hosts-sync 的公网 IP 边界、区块状态/CRLF/多区块移除，threat-ips 的注释过滤、去重排序、白名单与非法 IPv6 边界用例
 - 测试：补 cockpit-45drives 的状态判定、login-mail 的 PAM/通知邮箱状态、sys-check 本地检查汇总行为用例
 - 测试：补 sys-patches 的 Inst 行解析与报告内容、cockpit 的 NetworkManager 片段与包筛选、vm-components 的状态判定行为用例
 - 测试：补 docker-apps 的 compose 元数据/容器名解析、tailscale 后端状态解析行为用例
