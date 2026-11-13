@@ -302,3 +302,69 @@ _lm_run_script() {
     bash -c 'source "$1" </dev/null >/dev/null 2>&1 || exit 3; module_status' _ "$PROBE_FILE"
   [[ "$output" != warn\|PAM\ 行缺少* ]]
 }
+
+# ==================== 状态判定（行为） ====================
+
+@test "login-mail: module_status 在 PAM 不可读时返回 unknown" {
+  run bash -c '
+    DEBNAS_MODULE_ACTION=status
+    source "$1/modules/login-mail/module.sh" >/dev/null 2>&1
+    DEBNAS_PAM_SESSION_FILE="$2/no-such-pam"
+    module_status
+  ' _ "${DEBNAS_ROOT}" "${BATS_TEST_TMPDIR}"
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == unknown\|* ]]
+}
+
+@test "login-mail: module_status 识别旧路径引用、缺 seteuid 与脚本存在未生效" {
+  local d
+  d=$(mktemp -d)
+  run bash -c '
+    DEBNAS_MODULE_ACTION=status
+    source "$1/modules/login-mail/module.sh" >/dev/null 2>&1
+    d="$2"
+    DEBNAS_LOGIN_NOTIFY_SCRIPT="$d/new.sh"
+    DEBNAS_LEGACY_LOGIN_NOTIFY_SCRIPT="$d/old.sh"
+    DEBNAS_PAM_SESSION_FILE="$d/pam"
+    : > "$d/new.sh"
+
+    _layout_pam_notify_line "$d/old.sh" > "$d/pam"
+    module_status
+
+    _layout_pam_notify_line_noeuid "$d/new.sh" > "$d/pam"
+    module_status
+
+    : > "$d/pam"
+    module_status
+  ' _ "${DEBNAS_ROOT}" "$d"
+  rm -rf "$d"
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == *"warn|PAM 仍引用旧路径"* ]]
+  [[ "$output" == *"warn|PAM 行缺少 seteuid"* ]]
+  [[ "$output" == *"partial|脚本"*"存在，但"*"无 pam_exec 行"* ]]
+}
+
+@test "login-mail: module_status 已启用时按通知邮箱状态区分" {
+  local d
+  d=$(mktemp -d)
+  run bash -c '
+    DEBNAS_MODULE_ACTION=status
+    source "$1/modules/login-mail/module.sh" >/dev/null 2>&1
+    d="$2"
+    DEBNAS_LOGIN_NOTIFY_SCRIPT="$d/new.sh"
+    DEBNAS_LEGACY_LOGIN_NOTIFY_SCRIPT="$d/old.sh"
+    DEBNAS_PAM_SESSION_FILE="$d/pam"
+    : > "$d/new.sh"
+    _layout_pam_notify_line "$d/new.sh" > "$d/pam"
+
+    notify_email_get() { return 1; }
+    module_status
+
+    notify_email_get() { echo "a@example.com"; }
+    module_status
+  ' _ "${DEBNAS_ROOT}" "$d"
+  rm -rf "$d"
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == *"warn|已启用，但未设置通知邮箱"* ]]
+  [[ "$output" == *"applied|已启用 · PAM 调用"* ]]
+}

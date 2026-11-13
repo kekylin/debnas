@@ -247,3 +247,33 @@ _probe_call() {
   [[ "${lines[0]}" =~ ^(applied|running|partial|absent|warn|error|unknown)\| ]]
   [[ "${lines[0]}" != "unknown|未提供状态检测" ]]
 }
+
+# ==================== 状态判定（行为） ====================
+
+@test "cockpit-45drives: module_status 区分未安装/部分就绪/已就绪" {
+  local d
+  d=$(mktemp -d)
+  mkdir -p "$d/sources.d"
+  : > "$d/sources.d/45drives.sources"
+  : > "$d/keyring.gpg"
+  run bash -c '
+    DEBNAS_MODULE_ACTION=status
+    source "$1/modules/cockpit-45drives.sh" >/dev/null 2>&1
+    FD45_SOURCES_DIR="$2/sources.d"
+    FD45_KEYRING_FILE="$2/keyring.gpg"
+    pkg_is_installed() { return 1; }
+    module_status
+
+    pkg_is_installed() { return 0; }
+    rm -f "$2/sources.d/45drives.sources"
+    module_status
+
+    : > "$2/sources.d/45drives.sources"
+    module_status
+  ' _ "${DEBNAS_ROOT}" "$d"
+  rm -rf "$d"
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == *"absent|未安装 45Drives 官方插件"* ]]
+  [[ "$output" == *"partial|45Drives 插件部分就绪"*"45drives.sources"* ]]
+  [[ "$output" == *"applied|cockpit-file-sharing + cockpit-identities 已安装"* ]]
+}

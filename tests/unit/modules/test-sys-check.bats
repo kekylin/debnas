@@ -261,3 +261,40 @@ _assert_plan_lines() {
   ! grep -qE '^if ! check_dependencies' "$MODULE_FILE" || false
   sed -n '/^main() {/,/^}/p' "$MODULE_FILE" | grep -q 'check_dependencies'
 }
+
+# ==================== 只读状态判定（行为） ====================
+
+@test "sys-check: module_status 本地检查通过时返回 unknown" {
+  run bash -c '
+    DEBNAS_MODULE_ACTION=status
+    source "$1/modules/sys-check.sh" >/dev/null 2>&1
+    _get_os_id() { echo debian; }
+    get_system_codename() { echo bookworm; }
+    is_supported_codename() { return 0; }
+    uname() { echo x86_64; }
+    _sys_check_mem_kb() { echo 2097152; }
+    df() { echo "Filesystem 1024-blocks Used Available Capacity Mounted"; echo "/dev/sda1 100 20 20000000 20% /"; }
+    module_status
+  ' _ "${DEBNAS_ROOT}"
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == "unknown|只读工具 · 本地检查通过（bookworm/x86_64），网络连通性需执行检查" ]]
+}
+
+@test "sys-check: module_status 汇总非 Debian/架构/内存/磁盘问题" {
+  run bash -c '
+    DEBNAS_MODULE_ACTION=status
+    source "$1/modules/sys-check.sh" >/dev/null 2>&1
+    _get_os_id() { echo ubuntu; }
+    get_system_codename() { echo jammy; }
+    uname() { echo aarch64; }
+    _sys_check_mem_kb() { echo 524288; }
+    df() { echo "Filesystem 1024-blocks Used Available Capacity Mounted"; echo "/dev/sda1 100 20 1024 20% /"; }
+    module_status
+  ' _ "${DEBNAS_ROOT}"
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == warn\|* ]]
+  [[ "$output" == *"非 Debian 系统"* ]]
+  [[ "$output" == *"架构 aarch64"* ]]
+  [[ "$output" == *"内存低于 1GB"* ]]
+  [[ "$output" == *"根分区可用低于 10GB"* ]]
+}
