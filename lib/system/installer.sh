@@ -65,23 +65,11 @@ _release_quiet() {
   [[ "${_RELEASE_QUIET:-0}" -eq 1 ]]
 }
 
+# 下载单个文件（主源失败自动切换备用源；实现见 DEBNAS-DOWNLOAD 区块的 release_fetch）
+# 参数：$1 - 输出文件  $2 - 主源 URL  $3 - 备用源 URL
+# 返回：0 成功，1 失败
 installer_fetch() {
-  local out="$1" primary_url="$2" fallback_url="$3"
-  local tmo="${DEBNAS_FETCH_TIMEOUT:-30}" tries="${DEBNAS_FETCH_TRIES:-3}"
-  if ! command -v wget >/dev/null 2>&1; then
-    _release_quiet || log_error "缺少 wget 命令，无法下载发布产物（apt install wget）"
-    return 1
-  fi
-  # --timeout/--tries：网络不可达时避免无限挂起（项目红线）
-  if wget -q --timeout="$tmo" --tries="$tries" -O "$out" "$primary_url" 2>/dev/null; then
-    return 0
-  fi
-  _release_quiet || log_warning "主源下载失败，尝试备用源..."
-  if wget -q --timeout="$tmo" --tries="$tries" -O "$out" "$fallback_url" 2>/dev/null; then
-    return 0
-  fi
-  rm -f -- "${out:?}"
-  return 1
+  release_fetch "$@"
 }
 
 # 下载某个 tag 的三个发布产物（同一来源取齐，否则整体切换备用源）
@@ -103,21 +91,10 @@ installer_download_release() {
   fi
 
   log_info "从 ${region} 源下载 ${tag}..."
-  local base f ok
-  for base in "${bases[@]}"; do
-    ok=1
-    for f in "$name" SHA256SUMS SHA256SUMS.asc; do
-      if ! wget -q --timeout=30 --tries=3 -O "${outdir}/${f}" "${base}/${tag}/${f}" 2>/dev/null; then
-        ok=0
-        break
-      fi
-    done
-    if [[ "$ok" -eq 1 ]]; then
-      return 0
-    fi
-    release_discard "$outdir" "$name"
-    log_warning "源 ${base%%/releases/*} 下载失败，尝试备用源..."
-  done
+  if release_fetch_assets "$outdir" "${bases[0]}/${tag}" "${bases[1]}/${tag}" \
+       "$name" SHA256SUMS SHA256SUMS.asc; then
+    return 0
+  fi
   log_error "所有下载源均失败"
   return 1
 }
@@ -614,6 +591,97 @@ _release_verify_steps() {
 }
 # <<< DEBNAS-RELEASE-VERIFY-END
 
+# >>> DEBNAS-DOWNLOAD-BEGIN（单一来源：lib/system/installer.sh；install.sh 中的同名区块由 tools/release.sh 同步生成，勿手改）
+# 下载与解压的共用实现：debnas update（lib）与自包含 install.sh 使用同一份代码。
+# 日志：已加载 lib 时走 log_*（_RELEASE_QUIET=1 时静默）；install.sh 不加载 lib，按其 [FAIL]/[WARNING]/[INFO] 格式输出。
+
+# 下载输出统一入口
+# 参数：$1 - error|warn|info  $2 - 消息
+_release_msg() {
+  local level="$1" msg="$2"
+  if declare -F log_warning >/dev/null 2>&1; then
+    [[ "${_RELEASE_QUIET:-0}" -eq 1 ]] && return 0
+    case "$level" in
+      error) log_error "$msg" ;;
+      warn)  log_warning "$msg" ;;
+      *)     log_info "$msg" ;;
+    esac
+    return 0
+  fi
+  case "$level" in
+    error) printf '[FAIL] %s\n' "$msg" >&2 ;;
+    warn)  printf '[WARNING] %s\n' "$msg" >&2 ;;
+    *)     printf '[INFO] %s\n' "$msg" >&2 ;;
+  esac
+}
+
+# 下载单个文件（主源失败自动切换备用源）
+# 参数：$1 - 输出文件  $2 - 主源 URL  $3 - 备用源 URL  [$4 - 超时秒  $5 - 重试次数]
+# 返回：0 成功，1 失败（失败时删除输出文件）
+release_fetch() {
+  local out="$1" primary_url="$2" fallback_url="$3"
+  local tmo="${4:-${DEBNAS_FETCH_TIMEOUT:-30}}" tries="${5:-${DEBNAS_FETCH_TRIES:-3}}"
+  [[ -n "$out" && -n "$primary_url" && -n "$fallback_url" ]] || return 1
+  if ! command -v wget >/dev/null 2>&1; then
+    _release_msg error "缺少 wget 命令，无法下载发布产物（apt install wget）"
+    return 1
+  fi
+  # --timeout/--tries：网络不可达时避免无限挂起（项目红线）
+  if wget -q --timeout="$tmo" --tries="$tries" -O "$out" "$primary_url" 2>/dev/null; then
+    return 0
+  fi
+  _release_msg warn "主源下载失败，尝试备用源..."
+  if wget -q --timeout="$tmo" --tries="$tries" -O "$out" "$fallback_url" 2>/dev/null; then
+    return 0
+  fi
+  rm -f -- "${out:?}"
+  return 1
+}
+
+# 从同一来源取齐一组文件；任一文件失败则清理该来源的下载物并整体切换备用源
+# 参数：$1 - 输出目录  $2 - 主源 base URL  $3 - 备用源 base URL  $4 及以后 - 相对文件名
+# 返回：0 成功，1 失败
+release_fetch_assets() {
+  local outdir="$1" primary_base="$2" fallback_base="$3"
+  shift 3
+  [[ -n "$outdir" && -n "$primary_base" && -n "$fallback_base" && $# -gt 0 ]] || return 1
+  local base f ok label
+  label="${primary_base%%/releases/*}"
+  for base in "$primary_base" "$fallback_base"; do
+    ok=1
+    for f in "$@"; do
+      if ! wget -q --timeout="${DEBNAS_FETCH_TIMEOUT:-30}" --tries="${DEBNAS_FETCH_TRIES:-3}" \
+           -O "${outdir}/${f}" "${base}/${f}" 2>/dev/null; then
+        ok=0
+        break
+      fi
+    done
+    if (( ok )); then
+      return 0
+    fi
+    for f in "$@"; do
+      rm -f -- "${outdir:?}/${f}"
+    done
+    if [[ "$base" == "$primary_base" ]]; then
+      _release_msg warn "源 ${label} 下载失败，尝试备用源..."
+    fi
+  done
+  return 1
+}
+
+# 解压仓库压缩包
+# 参数：$1 - tarball 路径  $2 - 解压目标目录
+# 返回：0 成功，1 失败
+release_extract() {
+  local tarball="$1" extract_dir="$2"
+  [[ -n "$tarball" && -n "$extract_dir" ]] || return 1
+  mkdir -p "$extract_dir" || return 1
+  # --no-same-owner：以 root 解压时不沿用归档内记录的 uid/gid（否则文件可能归属任意普通用户，
+  # 该用户即可改写之后由 root 执行的脚本）
+  tar -xzf "$tarball" -C "$extract_dir" --strip-components=1 --no-same-owner 2>/dev/null
+}
+# <<< DEBNAS-DOWNLOAD-END
+
 # 把 ASCII armor 公钥文件转换为 gpgv 可用的二进制 keyring（不依赖 gpg 完整包）
 # 参数：$1 - armor 公钥文件  $2 - 输出 keyring 文件
 # 返回：0 成功；1 文件中没有公钥块或解码失败（多个公钥块依次拼接，见 release_dearmor）
@@ -650,18 +718,12 @@ installer_verify_release() {
   release_verify "$@"
 }
 
-# 解压仓库压缩包
+# 解压仓库压缩包（实现见 DEBNAS-DOWNLOAD 区块的 release_extract）
 # 参数：$1 - tarball 路径
 #       $2 - 解压目标目录
 # 返回：0 成功，1 失败
 installer_extract() {
-  local tarball="$1"
-  local extract_dir="$2"
-
-  mkdir -p "$extract_dir"
-  # --no-same-owner：以 root 解压时不沿用归档内记录的 uid/gid（否则文件可能归属任意普通用户，
-  # 该用户即可改写之后由 root 执行的脚本）
-  if ! tar -xzf "$tarball" -C "$extract_dir" --strip-components=1 --no-same-owner 2>/dev/null; then
+  if ! release_extract "$1" "$2"; then
     log_error "解压失败"
     return 1
   fi

@@ -8,15 +8,17 @@
 #   bash tools/release.sh --bump <tag>             # 把 install.sh 默认版本、lib/system/args.sh 的
 #                                                  # DEBNAS_VERSION 与 README 安装命令改为 <tag>
 #   bash tools/release.sh --sync-verify            # 把 lib/system/installer.sh 的共用区块同步到 install.sh
+#   bash tools/release.sh --sync-download          # 同上（下载/解压区块）；两个参数同步全部共用区块
 #   bash tools/release.sh --check-keys             # 检查 install.sh 内嵌公钥与 keys/ 是否一致（支持多把）
 #   bash tools/release.sh <tag> <GPG 密钥 ID>       # 生成发布产物到 dist/<tag>/、签名并自检，
 #                                                  # 并生成版本指针 LATEST / LATEST.asc
 #   bash tools/release.sh --sign-latest <tag> <GPG 密钥 ID>
 #                                                  # 单独（重新）生成版本指针 LATEST / LATEST.asc
 #
-# 共用代码单一来源：lib/system/installer.sh 中的 DEBNAS-RELEASE-VERIFY（发布产物校验）与
-#   DEBNAS-DEPLOY（安装目录整树替换 + 更新锁 + 全局命令包装脚本）区块；install.sh 必须自包含，
-#   其中的同名区块由 --embed-key / --bump / --sync-verify 同步生成，构建发布时检查 tag 内两份是否一致。
+# 共用代码单一来源：lib/system/installer.sh 中的 DEBNAS-RELEASE-VERIFY（发布产物校验）、
+#   DEBNAS-DOWNLOAD（下载与解压）与 DEBNAS-DEPLOY（安装目录整树替换 + 更新锁 + 全局命令包装脚本）区块；
+#   install.sh 必须自包含，其中的同名区块由 --embed-key / --bump / --sync-verify / --sync-download 同步生成，
+#   构建发布时检查 tag 内两份是否一致。
 #
 # 版本指针：仓库根的 LATEST（一行 tag）与 LATEST.asc（发布密钥对它的分离签名）。debnas update 从
 #   main 分支 raw 地址取这两个文件，用已安装目录 keys/ 里的公钥验签后才采用其中的版本号；
@@ -140,11 +142,12 @@ usage() {
   awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "${BASH_SOURCE[0]}"
 }
 
-# ==================== 共用区块同步（--sync-verify） ====================
+# ==================== 共用区块同步（--sync-verify / --sync-download） ====================
 # install.sh 必须自包含，其中与 lib/system/installer.sh 共用的代码以区块形式内嵌：
 #   DEBNAS-RELEASE-VERIFY  发布产物签名/SHA256 校验
+#   DEBNAS-DOWNLOAD        下载与解压（release_fetch / release_fetch_assets / release_extract）
 #   DEBNAS-DEPLOY          安装目录整树替换（暂存 → 切换 → 回滚）与更新锁
-SHARED_BLOCKS=(DEBNAS-RELEASE-VERIFY DEBNAS-DEPLOY)
+SHARED_BLOCKS=(DEBNAS-RELEASE-VERIFY DEBNAS-DOWNLOAD DEBNAS-DEPLOY)
 
 # 输出文件中某区块（含起止标记行；标记行之后的说明文字不计入比较）
 # 参数：$1 - 文件  $2 - 区块名（默认 DEBNAS-RELEASE-VERIFY）
@@ -197,12 +200,12 @@ sync_verify_block() {
   fi
   if cmp -s "$new_install" "$INSTALL_SH"; then
     rm -rf -- "${tmpd:?}"
-    info "install.sh 共用区块（发布校验 + 部署）已与 lib/system/installer.sh 一致"
+    info "install.sh 共用区块（发布校验 + 下载 + 部署）已与 lib/system/installer.sh 一致"
     return 0
   fi
   cat "$new_install" > "$INSTALL_SH"
   rm -rf -- "${tmpd:?}"
-  ok "已把 lib/system/installer.sh 的共用区块（发布校验 + 部署）同步到 install.sh"
+  ok "已把 lib/system/installer.sh 的共用区块（发布校验 + 下载 + 部署）同步到 install.sh"
 }
 
 # ==================== --embed-key ====================
@@ -606,8 +609,8 @@ main() {
       [[ $# -eq 2 ]] || die "用法: tools/release.sh --bump <tag>"
       bump_tag "$2"
       ;;
-    --sync-verify)
-      [[ $# -eq 1 ]] || die "用法: tools/release.sh --sync-verify"
+    --sync-verify|--sync-download)
+      [[ $# -eq 1 ]] || die "用法: tools/release.sh ${1}"
       sync_verify_block
       ;;
     --check-keys)

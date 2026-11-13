@@ -70,7 +70,7 @@ teardown() {
 
 @test "release-sync: install.sh 单文件可运行（不加载 lib 即有全部校验函数）" {
   cp "${DEBNAS_ROOT}/install.sh" "${WORK}/install.sh"
-  run bash -c 'source "$1"; for f in release_verify release_check_sig release_dearmor release_discard deploy_install_wrapper release_valid_tag release_valid_branch verify_release dearmor_pubkey is_valid_tag is_valid_branch; do declare -F "$f" >/dev/null || { echo "缺少 $f"; exit 1; }; done; declare -F log_error >/dev/null && exit 2; is_valid_tag v3.1.0 && ! is_valid_tag ../x' _ "${WORK}/install.sh"
+  run bash -c 'source "$1"; for f in release_verify release_check_sig release_dearmor release_discard deploy_install_wrapper release_valid_tag release_valid_branch verify_release dearmor_pubkey is_valid_tag is_valid_branch release_fetch release_fetch_assets release_extract; do declare -F "$f" >/dev/null || { echo "缺少 $f"; exit 1; }; done; declare -F log_error >/dev/null && exit 2; is_valid_tag v3.1.0 && ! is_valid_tag ../x' _ "${WORK}/install.sh"
   [[ "$status" -eq 0 ]]
 }
 
@@ -147,3 +147,47 @@ _dblock() {
 }
 
 # 全局命令包装脚本（deploy_install_wrapper，同在 DEBNAS-DEPLOY 区块）的用例见 test-installer-compat.bats
+
+# ==================== DEBNAS-DOWNLOAD 区块（下载与解压，install.sh 与 update 共用） ====================
+
+_dlblock() {
+  awk '/^# >>> DEBNAS-DOWNLOAD-BEGIN/ { p = 1 } p { print } /^# <<< DEBNAS-DOWNLOAD-END/ { p = 0 }' "$1"
+}
+
+@test "release-sync: 两份下载区块逐字一致、标记各恰好一个" {
+  local a b f
+  a=$(_dlblock "${DEBNAS_ROOT}/lib/system/installer.sh")
+  b=$(_dlblock "${DEBNAS_ROOT}/install.sh")
+  [[ "$a" == *"release_fetch()"* && "$a" == *"release_fetch_assets()"* && "$a" == *"release_extract()"* ]]
+  [[ "$a" == "$b" ]]
+  for f in "${DEBNAS_ROOT}/lib/system/installer.sh" "${DEBNAS_ROOT}/install.sh"; do
+    [[ "$(grep -c '^# >>> DEBNAS-DOWNLOAD-BEGIN' "$f")" -eq 1 && "$(grep -c '^# <<< DEBNAS-DOWNLOAD-END' "$f")" -eq 1 ]]
+  done
+}
+
+@test "release-sync: --sync-download 恢复被手改的下载区块" {
+  local repo="${WORK}/repo"
+  mkdir -p "${repo}/tools" "${repo}/lib/system"
+  cp "${DEBNAS_ROOT}/install.sh" "${repo}/install.sh"
+  cp "${DEBNAS_ROOT}/tools/release.sh" "${repo}/tools/release.sh"
+  cp "${DEBNAS_ROOT}/lib/system/installer.sh" "${repo}/lib/system/installer.sh"
+  sed -i 's/尝试备用源/被手改/' "${repo}/install.sh"
+  run cmp -s <(_dlblock "${repo}/install.sh") <(_dlblock "${repo}/lib/system/installer.sh")
+  [[ "$status" -ne 0 ]]
+  run bash "${repo}/tools/release.sh" --sync-download
+  [[ "$status" -eq 0 ]]
+  cmp -s "${repo}/install.sh" "${DEBNAS_ROOT}/install.sh"
+}
+
+@test "install.sh: 下载与解压走 DEBNAS-DOWNLOAD 区块函数" {
+  sed -n '/^download_release()/,/^}/p' "${DEBNAS_ROOT}/install.sh" | grep -q 'release_fetch_assets'
+  sed -n '/^download_repo()/,/^}/p' "${DEBNAS_ROOT}/install.sh" | grep -q 'release_fetch '
+  sed -n '/^extract_repo()/,/^}/p' "${DEBNAS_ROOT}/install.sh" | grep -q 'release_extract'
+  run bash -c 'source "$1"; for f in release_fetch release_fetch_assets release_extract; do declare -F "$f" >/dev/null || { echo "缺少 $f"; exit 1; }; done; declare -F log_error >/dev/null && exit 2; echo OK' _ "${DEBNAS_ROOT}/install.sh"
+  [[ "$status" -eq 0 && "$output" == *OK* ]]
+}
+
+@test "release-sync: 下载区块日志在 install.sh 下为 [FAIL]/[WARNING] 格式" {
+  run bash -c 'source "$1"; _release_msg error "x"; _release_msg warn "y"' _ "${DEBNAS_ROOT}/install.sh"
+  [[ "$output" == *"[FAIL] x"* && "$output" == *"[WARNING] y"* ]]
+}
