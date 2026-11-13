@@ -235,40 +235,106 @@ mark_normal_exit() {
 # 已持有的锁（锁名 → 1）：同一进程（含其命令替换子 shell）内嵌套调用同名锁时直接执行，避免自锁
 declare -gA _DEBNAS_LOCKS_HELD=()
 
+# 获取互斥锁（低层 API；fd 写入调用方变量）
+# 参数：$1 - 锁名（[A-Za-z0-9_-]，默认锁文件 <DEBNAS_TMP_BASE>/<name>.lock）
+#       $2 - 接收 fd 的变量名（无法加锁时置空）
+#       --file <绝对路径>  自定义锁文件（调用方保证目录安全；拒绝符号链接）
+#       --timeout <秒>     等待秒数（默认 30）
+#       --nonblock         不等待，立即失败
+#       --required         无法加锁时返回 1；默认降级为直接执行（返回 0，fd 为空）
+# 返回：0 已加锁或降级；1 参数错误、锁被占用/超时，或 --required 下无法加锁
+lock_acquire() {
+  local name="${1:?lock_acquire: 缺少锁名}"
+  local fdvar="${2:?lock_acquire: 缺少 fd 变量名}"
+  shift 2
+  local file="" timeout=30 mode="wait" required=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --file) file="${2:-}"; [[ -n "$file" ]] || return 1; shift 2 ;;
+      --timeout) timeout="${2:-}"; [[ "$timeout" =~ ^[0-9]+$ ]] || return 1; shift 2 ;;
+      --nonblock) mode="nonblock"; shift ;;
+      --required) required=1; shift ;;
+      *) return 1 ;;
+    esac
+  done
+  [[ "$fdvar" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 1
+  [[ "$name" =~ ^[A-Za-z0-9_-]+$ ]] || return 1
+  printf -v "$fdvar" '%s' ""
+
+  # 无 flock：默认降级；--required 时失败
+  if ! command -v flock >/dev/null 2>&1; then
+    (( required )) && return 1
+    return 0
+  fi
+
+  if [[ -z "$file" ]]; then
+    # 锁文件放在受属主校验保护的临时基目录（root 为 /run/debnas）下
+    if declare -F init_temp_dir >/dev/null 2>&1; then
+      init_temp_dir 2>/dev/null || { (( required )) && return 1; return 0; }
+    elif [[ ! -d "$DEBNAS_TMP_BASE" || -L "$DEBNAS_TMP_BASE" || ! -O "$DEBNAS_TMP_BASE" ]]; then
+      (( required )) && return 1
+      return 0
+    fi
+    file="${DEBNAS_TMP_BASE}/${name}.lock"
+  fi
+  [[ "$file" == /* && ! -L "$file" ]] || return 1
+
+  # 注意：不能写成 exec {fd}>>file 2>/dev/null——不带命令的 exec 会把 2>/dev/null 也永久作用于
+  # 当前 shell，之后的日志与报错全部消失（表现为模块静默"成功"）。用 { } 包住重定向。
+  # 局部 fd 用独立名字，避免与调用方传入的变量（常名 fd）在动态作用域下冲突。
+  local _lock_fd=""
+  { exec {_lock_fd}>>"$file"; } 2>/dev/null || _lock_fd=""
+  if [[ -z "$_lock_fd" ]]; then
+    (( required )) && return 1
+    return 0
+  fi
+
+  local rc=0
+  if [[ "$mode" == "nonblock" ]]; then
+    flock -n "$_lock_fd" || rc=$?
+  else
+    flock -w "$timeout" "$_lock_fd" || rc=$?
+  fi
+  if (( rc != 0 )); then
+    exec {_lock_fd}>&-
+    return 1
+  fi
+  printf -v "$fdvar" '%s' "$_lock_fd"
+  return 0
+}
+
+# 释放 lock_acquire 获取的锁
+# 参数：$1 - fd（空或非数字时忽略）
+lock_release() {
+  local fd="${1:-}"
+  [[ "$fd" =~ ^[0-9]+$ ]] || return 0
+  # 同 lock_acquire：裸 exec 的重定向会永久作用于当前 shell，必须用 { } 包住
+  { exec {fd}>&-; } 2>/dev/null || true
+  return 0
+}
+
 # 在互斥锁内执行命令（crontab、debnas.conf、state 文件的读改写用，防并发写丢更新）
 # 参数：$1 - 锁名（[A-Za-z0-9_-]），其余 - 要执行的命令及参数
 # 返回：命令的退出码；等待锁超时（30s）返回 1
-# 说明：锁文件放在受属主校验保护的临时基目录（root 为 /run/debnas）下；无 flock 命令或基目录
-#       不可用时退化为直接执行（与旧行为一致，不因加锁失败而不能工作）
+# 说明：同名锁可重入；无 flock 命令或基目录不可用时退化为直接执行
 debnas_locked() {
   local name="${1:?debnas_locked: 缺少锁名}"
   shift
-  local fd="" rc=0
   # 已持有同名锁：直接执行
   if [[ -n "${_DEBNAS_LOCKS_HELD[$name]:-}" ]]; then
     "$@"
     return
   fi
-  # 注意：不能写成 exec {fd}>>file 2>/dev/null——不带命令的 exec 会把 2>/dev/null 也永久作用于
-  # 当前 shell，之后的日志与报错全部消失（表现为模块静默"成功"）。这里先判断可写再打开
-  local lock_file="${DEBNAS_TMP_BASE}/${name}.lock"
-  if command -v flock >/dev/null 2>&1 && [[ "$name" =~ ^[A-Za-z0-9_-]+$ ]] && init_temp_dir 2>/dev/null \
-     && [[ ( -f "$lock_file" && ! -L "$lock_file" && -w "$lock_file" ) || ( ! -e "$lock_file" && ! -L "$lock_file" ) ]]; then
-    # 注意：不能写成 exec {fd}>>file 2>/dev/null——不带命令的 exec 会把 2>/dev/null 也永久作用于
-    # 当前 shell，之后的日志与报错全部消失（表现为模块静默"成功"）。用 { } 包住重定向。
-    { exec {fd}>>"$lock_file"; } 2>/dev/null || fd=""
-  fi
-  if [[ -n "$fd" ]] && ! flock -w 30 "$fd"; then
-    exec {fd}>&-
+  local fd="" rc=0
+  if ! lock_acquire "$name" fd --timeout 30; then
     if declare -F log_error >/dev/null 2>&1; then
       log_error "等待锁超时（${name}），可能有另一个 DebNAS 进程正在修改，请稍后重试"
     fi
     return 1
   fi
-  # 无法加锁（无 flock/基目录不可用）时同样标记，调用方据此判断"已在锁内"，不会递归
   _DEBNAS_LOCKS_HELD[$name]=1
   "$@" || rc=$?
   unset '_DEBNAS_LOCKS_HELD[$name]'
-  [[ -z "$fd" ]] || exec {fd}>&-
+  lock_release "$fd"
   return "$rc"
 }

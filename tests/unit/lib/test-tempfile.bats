@@ -237,6 +237,34 @@ teardown() {
   [[ "$output" == *"in-f"*"after rc=3"*"stderr-still-visible"*"second-ok"* ]]
 }
 
+@test "lock_acquire: --nonblock 锁被占用时返回 1" {
+  command -v flock >/dev/null 2>&1 || skip "需要 flock"
+  local fd1="" rc=0
+  lock_acquire t3 fd1 --required || rc=$?
+  [[ "$rc" -eq 0 && -n "$fd1" ]]
+  run lock_acquire t3 fd2 --nonblock --required
+  [[ "$status" -ne 0 ]]
+  lock_release "$fd1"
+}
+
+@test "lock_acquire: --timeout 等待超时后返回 1" {
+  command -v flock >/dev/null 2>&1 || skip "需要 flock"
+  local fd1="" rc=0
+  lock_acquire t4 fd1 --required || rc=$?
+  [[ "$rc" -eq 0 && -n "$fd1" ]]
+  run lock_acquire t4 fd2 --timeout 1 --required
+  [[ "$status" -ne 0 ]]
+  lock_release "$fd1"
+}
+
+@test "lock_acquire: 拒绝符号链接锁文件" {
+  mkdir -p "$DEBNAS_TMP_BASE"
+  ln -sfn /tmp/debnas-lock-target "$DEBNAS_TMP_BASE/evil.lock" 2>/dev/null || skip "当前环境不支持符号链接"
+  run lock_acquire evil fd --required
+  [[ "$status" -ne 0 ]]
+  rm -f "$DEBNAS_TMP_BASE/evil.lock"
+}
+
 @test "module-probe: _module_probe_wait 打开睡眠管道后 stderr 仍可见" {
   run bash -c 'source "$1/lib/core/constants.sh"; source "$1/lib/core/colors.sh"; source "$1/lib/core/logging.sh"
     source "$1/lib/system/utils.sh"; source "$1/lib/system/module-registry.sh"; source "$1/lib/system/module-probe.sh"

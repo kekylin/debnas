@@ -553,6 +553,8 @@ _deploy_msg() {
 }
 
 # 加更新锁（非阻塞；同一进程重复调用直接返回）。锁随进程退出自动释放，也可 deploy_unlock 提前释放
+# 说明：跨 install.sh / debnas update 的共享锁，本函数位于 DEBNAS-DEPLOY 同步区块，
+#       修改需同步 install.sh（tools/release.sh --sync-verify）与 test-release-sync。
 # 返回：0 已加锁（或系统无 flock 命令时告警后放行）；1 另一个安装/更新正在进行或锁文件无法打开
 deploy_lock() {
   [[ -z "${_DEBNAS_DEPLOY_LOCK_FD:-}" ]] || return 0

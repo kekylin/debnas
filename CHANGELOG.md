@@ -21,6 +21,7 @@
 - 菜单「检查脚本更新」的提示按普通用户收敛为四行以内：`检查更新…` / `当前版本` / `一句话结论`，版本号等状态信息统一带 `[INFO]` 标识、不再裸行展示；未签名指针回退、主备源切换等内部诊断不再显示（`_RELEASE_QUIET`）。`debnas check-update` 仍保留详细原因，便于排查
 
 ### Changed
+- 锁实现收敛：`lib/system/tempfile.sh` 新增 `lock_acquire` / `lock_release` 句柄 API（属主/符号链接校验、`--timeout` / `--nonblock` / `--required`），`debnas_locked`、hosts-sync 与 threat-ips 的锁统一走该 API；`deploy_lock` 作为跨 `install.sh` / `update` 的共享锁保留并注明同步要求
 - `lib/system/cron.sh` 的交互菜单（启用/禁用定时任务）移入 `lib/ui/cron-menu.sh`，system 层不再反向依赖 UI 层；无调用方的 `cron_show_status` 已删除
 - `docs/` 恢复为不入库（开发文档按项目约定只保留在维护者本地）：从仓库移除并重新加入 `.gitignore`；`tests/` 仍入库供 CI 使用
 - 一键方案 `basic` / `secure` 改为安装 `cockpit-45drives`（45Drives 官方插件）

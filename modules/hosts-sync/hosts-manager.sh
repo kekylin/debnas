@@ -215,28 +215,17 @@ hosts_block_state() {
   ' "${HOSTS_FILE}"
 }
 
-# hosts 读改写互斥（定时任务与手动操作可能同时运行）；fd 8 持有锁，进程退出自动释放
-# 锁目录优先 /run/lock；回退时使用受属主校验的 DebNAS 临时基目录（0700），
-# 并拒绝符号链接锁文件，避免 /tmp 下固定路径被本地用户预建后由 root 跟随。
+# hosts 读改写互斥（定时任务与手动操作可能同时运行）
+# 锁统一由 tempfile.sh 的 lock_acquire 管理（属主/符号链接校验、60s 等待）
+_HOSTS_LOCK_FD=""
 _hosts_lock() {
-  local lock_dir="/run/lock" lock_file
-  if [[ -d "$lock_dir" && -w "$lock_dir" && ! -L "$lock_dir" ]]; then
-    lock_file="${lock_dir}/debnas-hosts-sync.lock"
-  else
-    lock_dir="${DEBNAS_TMP_BASE:-/tmp/debnas}"
-    if [[ ! -e "$lock_dir" && ! -L "$lock_dir" ]]; then
-      mkdir -m 700 -- "$lock_dir" 2>/dev/null || true
-    fi
-    [[ -d "$lock_dir" && ! -L "$lock_dir" && -O "$lock_dir" ]] || return 1
-    lock_file="${lock_dir}/debnas-hosts-sync.lock"
-  fi
-  [[ ! -L "$lock_file" ]] || { echo "锁文件是符号链接，拒绝使用：${lock_file}" >&2; return 1; }
-  exec 8>>"$lock_file" || return 1
-  flock -w 60 8
+  _HOSTS_LOCK_FD=""
+  lock_acquire "hosts-sync" _HOSTS_LOCK_FD --timeout 60 --required
 }
 
 _hosts_unlock() {
-  exec 8>&-
+  lock_release "${_HOSTS_LOCK_FD:-}"
+  _HOSTS_LOCK_FD=""
 }
 
 # 将内容写回 /etc/hosts：经 write_file_if_changed 原子替换（保留权限/属主，旧文件备份到 /var/backups/debnas；

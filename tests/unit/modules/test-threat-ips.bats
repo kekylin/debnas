@@ -307,9 +307,9 @@ _parse_list() {
   grep -A20 '^reload_firewalld()' "${MODULE_DIR}/firewall.sh" | grep -q 'service_ensure fail2ban restarted'
 }
 
-@test "threat-ips: 更新与禁用使用 flock 互斥" {
-  grep -q 'flock' "${MODULE_DIR}/cron.sh"
-  grep -A6 '^update_threat_ips()' "${MODULE_DIR}/cron.sh" >/dev/null
+@test "threat-ips: 更新与禁用使用锁互斥" {
+  grep -A10 '^acquire_update_lock()' "${MODULE_DIR}/cron.sh" | grep -q 'lock_acquire'
+  grep -A30 '^lock_acquire()' "${DEBNAS_ROOT}/lib/system/tempfile.sh" | grep -q 'flock'
   grep -A20 '^update_threat_ips()' "${MODULE_DIR}/cron.sh" | grep -q 'acquire_update_lock'
 }
 

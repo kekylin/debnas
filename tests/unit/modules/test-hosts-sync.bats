@@ -181,12 +181,13 @@ parse_meta() {
     create_temp_file() { mktemp; }
     log_info() { :; }; log_error() { echo "$*" >&2; }; log_warning() { :; }
     eval "$(sed -n "/^write_file_if_changed()/,/^}/p" "$3")"
+    eval "$(sed -n "/^lock_acquire()/,/^}/p;/^lock_release()/,/^}/p" "$4")"
     eval "$(sed -n "/^render_hosts_without_block()/,/^}/p;/^hosts_block_state()/,/^}/p;/^_hosts_lock()/,/^}/p;/^_hosts_unlock()/,/^}/p;/^write_hosts_file()/,/^}/p;/^remove_hosts_block()/,/^}/p" "$1")"
     TMP_DIR="$2"; export DEBNAS_TMP_BASE="$2"
     remove_hosts_block
     stat -c "MODE=%a" "$HOSTS_FILE"
     cat "$HOSTS_FILE"
-  ' _ "${MODULE_DIR}/hosts-manager.sh" "$tmp" "${DEBNAS_ROOT}/lib/system/utils.sh"
+  ' _ "${MODULE_DIR}/hosts-manager.sh" "$tmp" "${DEBNAS_ROOT}/lib/system/utils.sh" "${DEBNAS_ROOT}/lib/system/tempfile.sh"
   rm -rf "$tmp"
   [[ "$status" -eq 0 ]]
   [[ "$output" == *"MODE=644"* ]]
@@ -367,6 +368,7 @@ _hm_run() {
     log_info() { :; }; log_success() { :; }; log_warning() { echo "W:$*"; }; log_error() { echo "E:$*"; }
     debnas_backup_file() { cp -- "$1" "$D/backup"; }
     eval "$(sed -n "/^write_file_if_changed()/,/^}/p" "$3/lib/system/utils.sh")"
+    source "$3/lib/system/tempfile.sh"
     source "$3/modules/hosts-sync/hosts-manager.sh"
     process_all_domains() { echo "140.82.112.3 github.com" >> "$1"; SUCCESS_DOMAINS=1; TOTAL_DOMAINS=1; }
     rc=0
@@ -414,9 +416,10 @@ _hm_run() {
   rm -rf "$tmp"
 }
 
-@test "hosts-sync: hosts 写入走 write_file_if_changed 并加 flock (B7)" {
+@test "hosts-sync: hosts 写入走 write_file_if_changed 并加锁 (B7)" {
   grep -A10 '^write_hosts_file()' "${MODULE_DIR}/hosts-manager.sh" | grep -q 'write_file_if_changed'
-  grep -A25 '^_hosts_lock()' "${MODULE_DIR}/hosts-manager.sh" | grep -q 'flock'
+  grep -A5 '^_hosts_lock()' "${MODULE_DIR}/hosts-manager.sh" | grep -q 'lock_acquire'
+  grep -A30 '^lock_acquire()' "${DEBNAS_ROOT}/lib/system/tempfile.sh" | grep -q 'flock'
   grep -A40 '^update_hosts()' "${MODULE_DIR}/hosts-manager.sh" | grep -q '_hosts_lock'
   grep -A12 '^remove_hosts_block()' "${MODULE_DIR}/hosts-manager.sh" | grep -q '_hosts_lock'
 }
