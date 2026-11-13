@@ -11,7 +11,7 @@
 #   探测时在子 shell 中设置 DEBNAS_MODULE_ACTION=status|plan 后 source 模块，
 #   只得到函数定义而不执行 main 与任何交互逻辑。
 #   **未加守卫的模块绝不 source**（否则会直接执行 main），一律走回退结果。
-# 依赖：module-registry.sh（get_module_path/get_module_field）
+# 依赖：module-registry.sh（get_module_path/get_module_field）、tempfile.sh（create_temp_file）
 
 set -euo pipefail
 IFS=$'\n\t'
@@ -153,7 +153,7 @@ module_probe() {
 
   local path="" tmp timeout rc=0
   get_module_field_var path "$module_name" "path"
-  tmp=$(mktemp 2>/dev/null) || tmp=""
+  tmp=$(create_temp_file "module-probe" 2>/dev/null) || tmp=""
   if [[ -z "$tmp" ]]; then
     [[ "$action" == "status" ]] && printf 'unknown|无法创建临时文件\n' || printf 'info|%s|无法创建临时文件\n' "$module_name"
     return 0

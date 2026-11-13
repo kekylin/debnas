@@ -262,7 +262,10 @@ config_delete() {
   fi
 
   if [[ -f "$conf_file" ]]; then
-    sed -i "/^[[:space:]]*${key//./\\.}[[:space:]]*=/d" "$conf_file" 2>/dev/null || true
+    if ! sed -i "/^[[:space:]]*${key//./\\.}[[:space:]]*=/d" "$conf_file" 2>/dev/null; then
+      log_error "删除配置项失败：${key}"
+      return 1
+    fi
   fi
   return 0
 }

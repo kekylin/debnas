@@ -20,6 +20,7 @@ setup() {
   export MARKER
 
   source "${DEBNAS_ROOT}/lib/system/utils.sh"
+  source "${DEBNAS_ROOT}/lib/system/tempfile.sh"
   source "${DEBNAS_ROOT}/lib/system/state.sh"
   source "${DEBNAS_ROOT}/lib/system/module-registry.sh"
   source "${DEBNAS_ROOT}/lib/system/module-probe.sh"

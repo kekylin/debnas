@@ -183,6 +183,7 @@ log_stop_file() {
   if [[ "$_DEBNAS_FILE_LOGGING" == "1" ]] && [[ -n "$_DEBNAS_LOG_FILE" ]]; then
     echo "=== 日志结束 $(date '+%Y-%m-%d %H:%M:%S') ===" >> "$_DEBNAS_LOG_FILE" 2>/dev/null || true
     _DEBNAS_FILE_LOGGING=0
+    _DEBNAS_LOG_FILE=""
   fi
   return 0
 }

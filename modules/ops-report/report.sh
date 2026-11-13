@@ -762,12 +762,19 @@ ops_collect_updates() {
   fi
 
   if command -v apt-get >/dev/null 2>&1 && command -v timeout >/dev/null 2>&1; then
-    local upgrade_preview
-    upgrade_preview=$(timeout 30 apt-get -s upgrade 2>/dev/null || true)
-    OPS_PENDING_UPDATE_COUNT=$(printf '%s\n' "$upgrade_preview" | grep -c '^Inst ' || true)
-    OPS_PENDING_SECURITY_COUNT=$(printf '%s\n' "$upgrade_preview" \
-      | grep -ci 'Debian-Security\|security' || true)
-    OPS_PENDING_REGULAR_COUNT=$((OPS_PENDING_UPDATE_COUNT > OPS_PENDING_SECURITY_COUNT ? OPS_PENDING_UPDATE_COUNT - OPS_PENDING_SECURITY_COUNT : 0))
+    local upgrade_preview up_rc=0
+    upgrade_preview=$(timeout 30 apt-get -s upgrade 2>/dev/null) || up_rc=$?
+    if [[ "$up_rc" -ne 0 && -z "$upgrade_preview" ]]; then
+      # 模拟升级失败/超时与“确实为 0”不可区分；用 -1 表示未知，界面显示“待解析”
+      OPS_PENDING_UPDATE_COUNT=-1
+      OPS_PENDING_SECURITY_COUNT=-1
+      OPS_PENDING_REGULAR_COUNT=-1
+    else
+      OPS_PENDING_UPDATE_COUNT=$(printf '%s\n' "$upgrade_preview" | grep -c '^Inst ' || true)
+      OPS_PENDING_SECURITY_COUNT=$(printf '%s\n' "$upgrade_preview" \
+        | grep -ci 'Debian-Security\|security' || true)
+      OPS_PENDING_REGULAR_COUNT=$((OPS_PENDING_UPDATE_COUNT > OPS_PENDING_SECURITY_COUNT ? OPS_PENDING_UPDATE_COUNT - OPS_PENDING_SECURITY_COUNT : 0))
+    fi
   fi
 
   local os_version kernel_version ssl_version docker_version
@@ -2222,6 +2229,9 @@ ops_render_anomaly_table() {
   port_state="${OPS_LISTEN_PORT_BASELINE_STATE:-待基线}"; port_note="${OPS_LISTEN_PORT_BASELINE_NOTE:-未建立监听端口基线，暂不判定新增}"
   disk_state="待周期数据"; disk_note="需 sysstat 磁盘采样"
   security_state="未发现"; security_note="无待装安全更新"
+  if [[ "${OPS_PENDING_SECURITY_COUNT:-0}" -eq -1 ]]; then
+    security_state="未知"; security_note="apt 模拟升级失败，待装更新数未知"
+  fi
   service_state="未发现"; service_note="无失败服务"
   login_state="无数据"; login_note="无登录日志数据"
   [[ -z "${OPS_LOGIN_SOURCE:-}" && -n "${OPS_LOGIN_SOURCE_NOTE:-}" ]] && login_note="无登录数据源（未安装 wtmpdb / last）"
@@ -2627,8 +2637,8 @@ $([[ -z "${OPS_LOGIN_SOURCE_NOTE:-}" ]] || printf '      <p class="muted">%s</p>
         <div class="metric"><div class="k">已安装更新包</div><div class="v">${OPS_UPDATE_COUNT} 个</div></div>
         <div class="metric"><div class="k">安全更新已装</div><div class="v">$(ops_installed_count_label "${OPS_SECURITY_INSTALLED_COUNT:-0}")</div></div>
         <div class="metric"><div class="k">常规更新已装</div><div class="v">$(ops_installed_count_label "${OPS_REGULAR_INSTALLED_COUNT:-0}")</div></div>
-        <div class="metric"><div class="k">待装安全更新</div><div class="v">${OPS_PENDING_SECURITY_COUNT} 个</div></div>
-        <div class="metric"><div class="k">待装常规更新</div><div class="v">${OPS_PENDING_REGULAR_COUNT} 个</div></div>
+        <div class="metric"><div class="k">待装安全更新</div><div class="v">$(ops_installed_count_label "${OPS_PENDING_SECURITY_COUNT:-0}")</div></div>
+        <div class="metric"><div class="k">待装常规更新</div><div class="v">$(ops_installed_count_label "${OPS_PENDING_REGULAR_COUNT:-0}")</div></div>
       </div>
       <h3>系统版本更新</h3>
       <table>

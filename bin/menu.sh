@@ -360,7 +360,7 @@ main_menu_loop() {
   if [[ ${#ACTIVE_CATEGORIES[@]} -eq 0 ]]; then
     log_error "未发现任何可用模块，请检查 modules/ 目录"
     ui_cursor_show
-    exit "${ERROR_MODULE_NOT_FOUND:-1}"
+    exit "${ERROR_MODULE_NOT_FOUND}"
   fi
 
   local choice exit_code menu_result
