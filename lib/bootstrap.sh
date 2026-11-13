@@ -56,6 +56,7 @@ if [[ "${DEBNAS_CRON_MODE:-0}" -eq 0 ]]; then
   source "${_DEBNAS_ROOT}/lib/ui/log.sh"
   source "${_DEBNAS_ROOT}/lib/ui/progress.sh"
   source "${_DEBNAS_ROOT}/lib/ui/dialog.sh"
+  source "${_DEBNAS_ROOT}/lib/ui/cron-menu.sh"
 fi
 
 # ==================== Module Registry ====================

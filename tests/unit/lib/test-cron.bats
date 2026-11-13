@@ -412,6 +412,16 @@ _cron_nocron_run() {
   [[ "$output" == "RC=0" ]]
 }
 
+@test "cron: 交互菜单位于 UI 层，system 层不再依赖 ui_*" {
+  grep -q '^cron_settings_menu()' "${DEBNAS_ROOT}/lib/ui/cron-menu.sh"
+  grep -q '^cron_enable_interactive()' "${DEBNAS_ROOT}/lib/ui/cron-menu.sh"
+  run grep -q '^cron_settings_menu()' "${DEBNAS_ROOT}/lib/system/cron.sh"
+  [[ "$status" -ne 0 ]]
+  run grep -qE '(^|[^_a-z])ui_(input|menu)([^_a-z]|$)' "${DEBNAS_ROOT}/lib/system/cron.sh"
+  [[ "$status" -ne 0 ]]
+  grep -q 'lib/ui/cron-menu.sh' "${DEBNAS_ROOT}/lib/bootstrap.sh"
+}
+
 @test "cron_register: 非 root 且无 crontab 命令时报错提示安装，返回非 0" {
   [[ $EUID -ne 0 ]] || skip "仅非 root 下验证"
   run _cron_nocron_run 'rc=0; cron_register test-module "0 3 * * *" || rc=$?; echo "RC=$rc"'
