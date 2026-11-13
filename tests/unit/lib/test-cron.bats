@@ -38,6 +38,51 @@ teardown() {
   [[ -z "$result" ]]
 }
 
+@test "_get_current_crontab: cron 明确报 no crontab 时按空处理并返回 0" {
+  cat > "$MOCK_BIN/crontab" << 'INNEREOF'
+#!/usr/bin/env bash
+if [[ "$1" == "-l" ]]; then
+  echo "no crontab for root" >&2
+  exit 1
+fi
+exit 0
+INNEREOF
+  chmod +x "$MOCK_BIN/crontab"
+  run _get_current_crontab
+  [[ "$status" -eq 0 ]]
+  [[ -z "$output" ]]
+}
+
+@test "_get_current_crontab: 其他读取错误返回 1" {
+  cat > "$MOCK_BIN/crontab" << 'INNEREOF'
+#!/usr/bin/env bash
+if [[ "$1" == "-l" ]]; then
+  echo "crontab: cannot open /var/spool/cron/crontabs/root: Permission denied" >&2
+  exit 1
+fi
+exit 0
+INNEREOF
+  chmod +x "$MOCK_BIN/crontab"
+  run _get_current_crontab
+  [[ "$status" -ne 0 ]]
+}
+
+@test "cron_register: 读取失败时拒绝写入，不覆盖用户 crontab" {
+  echo "0 * * * * /usr/bin/user-job" > "$CRON_STATE"
+  cat > "$MOCK_BIN/crontab" << 'INNEREOF'
+#!/usr/bin/env bash
+if [[ "$1" == "-l" ]]; then
+  echo "crontab: Permission denied" >&2
+  exit 1
+fi
+exit 0
+INNEREOF
+  chmod +x "$MOCK_BIN/crontab"
+  run cron_register test-module "0 1 * * *"
+  [[ "$status" -ne 0 ]]
+  [[ "$(cat "$CRON_STATE")" == "0 * * * * /usr/bin/user-job" ]]
+}
+
 # ==================== _set_crontab 测试 ====================
 
 @test "_set_crontab: 成功写入 crontab" {
@@ -270,7 +315,8 @@ teardown() {
 }
 
 @test "cron_register: 并发注册持锁，不丢条目" {
-  export DEBNAS_TMP_BASE="$BATS_TMPDIR/cron-lock-base"
+  # 使用每个测试独立的临时目录，避免上次运行（尤其 root）留下的目录导致 rm 失败
+  export DEBNAS_TMP_BASE="$BATS_TEST_TMPDIR/cron-lock-base"
   rm -rf "$DEBNAS_TMP_BASE"
   source "${DEBNAS_ROOT}/lib/system/tempfile.sh"
   # 读写之间留出时间窗，不加锁时并发注册必然互相覆盖

@@ -26,10 +26,17 @@ _get_installed_version() {
 # 参数：$1 - 版本号
 _save_version() {
   local version="$1"
-  local state_dir
+  local state_dir tmp
   state_dir=$(dirname "$DEBNAS_VERSION_STATE")
-  mkdir -p "$state_dir" 2>/dev/null || true
-  echo "$version" > "$DEBNAS_VERSION_STATE"
+  if ! mkdir -p "$state_dir" 2>/dev/null; then
+    log_warning "无法创建版本状态目录：${state_dir}"
+    return 1
+  fi
+  tmp=$(mktemp "${DEBNAS_VERSION_STATE}.XXXXXX" 2>/dev/null) || return 1
+  if ! printf '%s\n' "$version" > "$tmp" || ! mv -fT -- "$tmp" "$DEBNAS_VERSION_STATE"; then
+    rm -f -- "$tmp" 2>/dev/null || true
+    return 1
+  fi
 }
 
 # 比较版本号（简单字符串比较，日期版本号适用）
@@ -219,7 +226,7 @@ migration_run() {
 
   # 首次安装或版本未知：仅记录版本，不执行迁移
   if [[ -z "$installed_version" ]]; then
-    _save_version "$current_version"
+    _save_version "$current_version" || log_warning "版本状态写入失败，下次启动会再次尝试迁移检查"
     :
     return 0
   fi
@@ -251,7 +258,7 @@ migration_run() {
   fi
 
   # 更新版本记录
-  _save_version "$current_version"
+  _save_version "$current_version" || log_warning "版本状态写入失败，下次启动会再次尝试迁移检查"
 
   if [[ "$migration_failed" -eq 1 ]]; then
     log_warning "部分迁移步骤失败，请检查日志"

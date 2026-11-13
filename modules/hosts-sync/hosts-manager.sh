@@ -189,6 +189,7 @@ render_hosts_without_block() {
       if (line ~ /^[[:space:]]*$/) { blanks = blanks line "\n"; return }
       printf "%s%s\n", blanks, line; blanks = ""
     }
+    { sub(/\r$/, "") }
     !inblock && $0 == start { inblock = 1; held = $0 "\n"; next }
     inblock {
       if ($0 == end) { inblock = 0; held = ""; next }
@@ -207,6 +208,7 @@ render_hosts_without_block() {
 hosts_block_state() {
   [[ -f "${HOSTS_FILE}" ]] || { echo none; return 0; }
   awk -v start="$START_MARK" -v end="$END_MARK" '
+    { sub(/\r$/, "") }
     !inb && $0 == start { inb = 1; seen = 1; next }
     inb && $0 == end { inb = 0; next }
     END { print (inb ? "broken" : (seen ? "ok" : "none")) }
@@ -214,10 +216,22 @@ hosts_block_state() {
 }
 
 # hosts 读改写互斥（定时任务与手动操作可能同时运行）；fd 8 持有锁，进程退出自动释放
+# 锁目录优先 /run/lock；回退时使用受属主校验的 DebNAS 临时基目录（0700），
+# 并拒绝符号链接锁文件，避免 /tmp 下固定路径被本地用户预建后由 root 跟随。
 _hosts_lock() {
-  local lock_dir="/run/lock"
-  [[ -d "${lock_dir}" && -w "${lock_dir}" ]] || lock_dir="${TMP_DIR:-/tmp}"
-  exec 8>>"${lock_dir}/debnas-hosts-sync.lock" || return 1
+  local lock_dir="/run/lock" lock_file
+  if [[ -d "$lock_dir" && -w "$lock_dir" && ! -L "$lock_dir" ]]; then
+    lock_file="${lock_dir}/debnas-hosts-sync.lock"
+  else
+    lock_dir="${DEBNAS_TMP_BASE:-/tmp/debnas}"
+    if [[ ! -e "$lock_dir" && ! -L "$lock_dir" ]]; then
+      mkdir -m 700 -- "$lock_dir" 2>/dev/null || true
+    fi
+    [[ -d "$lock_dir" && ! -L "$lock_dir" && -O "$lock_dir" ]] || return 1
+    lock_file="${lock_dir}/debnas-hosts-sync.lock"
+  fi
+  [[ ! -L "$lock_file" ]] || { echo "锁文件是符号链接，拒绝使用：${lock_file}" >&2; return 1; }
+  exec 8>>"$lock_file" || return 1
   flock -w 60 8
 }
 
@@ -241,7 +255,8 @@ write_hosts_file() {
 # 从 /etc/hosts 移除 DebNAS 区块（禁用同步时调用）
 remove_hosts_block() {
   [[ -f "${HOSTS_FILE}" ]] || return 0
-  if ! grep -qxF "$START_MARK" "${HOSTS_FILE}"; then
+  # 兼容 Windows 编辑过的 CRLF 文件：比较前去掉行尾 \r
+  if ! awk -v m="$START_MARK" '{ sub(/\r$/, "") } $0 == m { found = 1 } END { exit !found }' "${HOSTS_FILE}" 2>/dev/null; then
     return 0
   fi
   local temp_hosts rc=0
@@ -428,7 +443,14 @@ update_hosts() {
     echo "无法创建临时文件" >&2
     return 1
   }
-  render_hosts_without_block > "${hosts_content}"
+  # 读取失败时 render 可能输出空内容；此时若继续追加 DebNAS 区块并写回，
+  # 会把用户条目全部清空，因此必须中止
+  if ! render_hosts_without_block > "${hosts_content}"; then
+    _hosts_unlock
+    rm -f "${block_content}" "${hosts_content}"
+    echo "读取 ${HOSTS_FILE} 失败，拒绝写入" >&2
+    return 1
+  fi
 
   local need_blank_line=0
   if [[ -s "${hosts_content}" ]]; then

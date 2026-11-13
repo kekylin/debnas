@@ -1,4 +1,4 @@
-<h1 align="center">基于Debian搭建HomeNAS<br />
+<h1 align="center">DebNAS — 基于 Debian 搭建 NAS<br />
 </h1>
 
 一个将Debian系统快速配置成准NAS系统的脚本。可视化WebUI操作界面，可以轻松实现文件共享、照片备份、家庭影音、管理Docker、管理虚拟机、建立RAID等功能，使得Debian系统能够高效稳定地承担NAS任务。
@@ -63,6 +63,7 @@ wget https://github.com/kekylin/debnas/raw/v2026.11.1/install.sh && bash install
 #### 完整性校验与信任边界
 - 安装脚本默认下载固定发布版本的代码包（GitHub/Gitee Release 附件），先用脚本内嵌的发布公钥通过 `gpgv` 验证 `SHA256SUMS` 的 GPG 签名并核对签名者指纹，再用 `sha256sum` 校验代码包；任一步失败即中止安装。`debnas update` 使用已安装目录中的公钥做同样的校验。
 - `debnas update` 查询"最新版本号"时，读取 main 分支上的 `LATEST` 与它的签名 `LATEST.asc`，同样用已安装的发布公钥验签，通过才采用；签名对不上则拒绝自动更新（可用 `debnas update --tag <版本号>` 指定版本，代码包照常验签）。自动发现的版本只升不降。
+- 只想确认是否有新版本时可运行 `debnas check-update`：只读取并验签 `LATEST` 指针，与已安装版本比较，不下载代码包、不持更新锁、不改动安装目录；退出码 `0`=已是最新、`1`=有新版本、`2`=检查失败（公钥缺失 / 指针验签失败 / 网络不可达）。
 - 签名保护的是之后下载的代码包；`install.sh` 本身经 HTTPS 从代码托管平台获取，它的可信度取决于下载渠道。上面的命令指向**发布 tag 下的 `install.sh`**（而不是随时变动的 main 分支），发布后内容不再变化。谨慎的用户可从 Release 页面下载 `install.sh`、`SHA256SUMS`、`SHA256SUMS.asc`，用 `gpg --verify SHA256SUMS.asc SHA256SUMS && sha256sum -c --ignore-missing SHA256SUMS` 自行核验后再执行。
 - 安装指定版本：`bash install.sh --tag <版本号>`。
 - 开发调试可按分支安装（**不做任何校验**）：`bash install.sh --unsigned --branch dev`，脚本会醒目警告并要求手动输入 `yes`，非交互环境下拒绝执行。
@@ -73,7 +74,7 @@ wget https://github.com/kekylin/debnas/raw/v2026.11.1/install.sh && bash install
 Cockpit  
 一个基于 Web 的服务器图形界面，在 Web 浏览器中查看您的服务器并使用鼠标执行系统任务。启动容器、管理存储、配置网络和检查日志都很容易。基本上，您可以将 Cockpit 视为图形“桌面界面”。
 Cockpit是直接使用系统账户进行登陆使用，出于安全考虑，Cockpit默认禁用root账户登陆，建议使用您安装系统时创建的第一个用户登陆。
-Samba / NFS 共享在 Cockpit 左侧菜单「共享管理」中配置（DebNAS 自研插件）。如更习惯 45Drives 的 File Sharing 插件，可在 `/etc/debnas/debnas.conf` 设置 `file_sharing_ui=45drives` 后重新运行「安装共享管理面板」，两者共用同一份配置，切换后共享不丢失。
+Samba / NFS 共享在 Cockpit 左侧菜单「File Sharing」中配置，由一键方案中的「安装 45Drives 官方插件」模块自动安装。
   ```shell
 https://localhost:9090
   ```

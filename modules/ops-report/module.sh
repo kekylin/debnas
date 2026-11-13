@@ -2,7 +2,7 @@
 # @module: ops-report
 # @name: 运维报告
 # @category: 系统维护
-# @depends: sar,sadc,smartctl
+# @depends: sar,smartctl
 # @version: 1.0.0
 # @order: 70
 # @interactive: true

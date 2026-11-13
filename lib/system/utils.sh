@@ -8,7 +8,7 @@ IFS=$'\n\t'
 
 # ==================== 底层 OS 信息获取函数 ====================
 
-# os-release 路径（不设 readonly，允许测试覆盖；与 lib/ui/sysinfo.sh 共用同名变量）
+# os-release 路径（不设 readonly，允许测试覆盖）
 DEBNAS_OS_RELEASE="${DEBNAS_OS_RELEASE:-/etc/os-release}"
 
 # 读取 os-release 中的单个字段
@@ -259,14 +259,11 @@ is_supported_codename() {
 get_system_name() {
   if command -v lsb_release >/dev/null 2>&1; then
     lsb_release -is
-  else
-    if [[ -f /etc/os-release ]]; then
-      # shellcheck source=/dev/null
-      (. /etc/os-release && echo "${NAME:-}")
-    else
-      echo "未知"
-    fi
+    return
   fi
+  local name=""
+  name=$(_os_release_field NAME) || name=""
+  echo "${name:-未知}"
 }
 
 # 获取系统版本

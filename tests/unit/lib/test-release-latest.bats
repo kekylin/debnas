@@ -486,3 +486,91 @@ _lib_verify() {
   run bash "${REPO}/tools/release.sh" --check-keys
   [[ "$status" -eq 0 ]]
 }
+
+# ==================== release_check_latest（debnas check-update 共用）====================
+
+# 在隔离进程中调用 release_check_latest，打印状态行（避免影响 BATS 的 set -e）
+# 参数：$1 - 已安装版本（DEBNAS_VERSION）
+_run_check_latest() {
+  run bash -c '
+    set -uo pipefail
+    log_info() { echo "INFO: $*" >&2; }; log_success() { echo "OK: $*" >&2; }
+    log_warning() { echo "WARN: $*" >&2; }; log_error() { echo "ERROR: $*" >&2; }
+    DEBNAS_VERSION="$3"
+    source "$1/lib/system/installer.sh"
+    rc=0
+    release_check_latest "$2" "$4" global || rc=$?
+    echo "rc=$rc installed=${_REL_INSTALLED_TAG:-} latest=${_REL_LATEST_TAG:-} err=${_REL_ERROR:-}"
+  ' _ "${DEBNAS_ROOT}" "${INST}" "$1" "$WORK"
+}
+
+@test "release_check_latest: 指针版本等于已安装版本 → 返回 0（已是最新）" {
+  _publish_latest v1.0.0 "$GNUPGHOME_OLD"
+  printf 'tag=v1.0.0\nbranch=\nverified=1\n' > "${INST}/RELEASE"
+  _run_check_latest v1.0.0
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == *"rc=0 installed=v1.0.0 latest=v1.0.0 err="* ]]
+}
+
+@test "release_check_latest: 指针版本更高 → 返回 1（有新版本）" {
+  _publish_latest v1.2.0 "$GNUPGHOME_OLD"
+  printf 'tag=v1.0.0\nbranch=\nverified=1\n' > "${INST}/RELEASE"
+  _run_check_latest v1.0.0
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == *"rc=1 installed=v1.0.0 latest=v1.2.0"* ]]
+}
+
+@test "release_check_latest: 指针版本更低（回放） → 返回 2，原因 older" {
+  _publish_latest v0.9.0 "$GNUPGHOME_OLD"
+  printf 'tag=v1.0.0\nbranch=\nverified=1\n' > "${INST}/RELEASE"
+  _run_check_latest v1.0.0
+  [[ "$output" == *"rc=2"* && "$output" == *"err=older"* ]]
+}
+
+@test "release_check_latest: 指针被篡改 → 返回 2，原因 untrusted，不回退 install.sh" {
+  _publish_latest v9.9.9 "$GNUPGHOME_OLD"
+  echo "v9.9.8" > "${WWW}/global/LATEST"
+  cp "${WWW}/global/LATEST" "${WWW}/cn/LATEST"
+  _publish_installer_tag v9.9.9
+  printf 'tag=v1.0.0\nbranch=\nverified=1\n' > "${INST}/RELEASE"
+  _run_check_latest v1.0.0
+  [[ "$output" == *"rc=2"* && "$output" == *"err=untrusted"* && "$output" != *"latest=v9.9.9"* ]]
+}
+
+@test "release_check_latest: 指针未发布 → 回退 install.sh 版本号并照常比较" {
+  _publish_installer_tag v1.5.0
+  printf 'tag=v1.0.0\nbranch=\nverified=1\n' > "${INST}/RELEASE"
+  _run_check_latest v1.0.0
+  [[ "$output" == *"WARN: 未取到已签名的版本指针"* ]]
+  [[ "$output" == *"rc=1"* && "$output" == *"latest=v1.5.0"* ]]
+}
+
+@test "release_check_latest: 指针与 install.sh 都取不到 → 返回 2，原因 unavailable" {
+  printf 'tag=v1.0.0\nbranch=\nverified=1\n' > "${INST}/RELEASE"
+  _run_check_latest v1.0.0
+  [[ "$output" == *"rc=2"* && "$output" == *"err=unavailable"* ]]
+}
+
+@test "release_check_latest: 安装目录缺发布公钥 → 返回 2，原因 no-key" {
+  rm -rf "${INST}/keys"
+  _run_check_latest v1.0.0
+  [[ "$output" == *"rc=2"* && "$output" == *"err=no-key"* ]]
+}
+
+@test "release_check_latest: 没有 RELEASE 标记时用代码内 DEBNAS_VERSION 比较" {
+  rm -f "${INST}/RELEASE"
+  _publish_latest v1.0.0 "$GNUPGHOME_OLD"
+  _run_check_latest v1.0.0
+  [[ "$output" == *"rc=0"* && "$output" == *"installed=v1.0.0"* ]]
+}
+
+@test "release_check_error_text: 失败原因各有可读说明（CLI 与菜单共用）" {
+  run release_check_error_text no-key
+  [[ "$output" == *"缺少发布公钥"* ]]
+  run release_check_error_text untrusted
+  [[ "$output" == *"签名校验未通过"* ]]
+  run release_check_error_text older v0.9.0 v1.0.0
+  [[ "$output" == *"v0.9.0"* && "$output" == *"低于当前版本"* ]]
+  run release_check_error_text unavailable
+  [[ "$output" == *"无法获取最新版本号"* ]]
+}

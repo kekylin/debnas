@@ -29,9 +29,9 @@ export NO_COLOR=1
 }
 
 @test "ops-report: 不重复写入系统 logrotate 配置" {
-  ! grep -q '/var/log/wtmp {' "$MODULE_DIR/setup.sh"
-  ! grep -q '/var/log/btmp {' "$MODULE_DIR/setup.sh"
-  ! grep -q '/var/lib/wtmpdb/wtmp.db {' "$MODULE_DIR/setup.sh"
+  if grep -q '/var/log/wtmp {' "$MODULE_DIR/setup.sh"; then false; fi
+  if grep -q '/var/log/btmp {' "$MODULE_DIR/setup.sh"; then false; fi
+  if grep -q '/var/lib/wtmpdb/wtmp.db {' "$MODULE_DIR/setup.sh"; then false; fi
   grep -q 'duplicate log entry' "$MODULE_DIR/setup.sh"
 }
 
@@ -59,8 +59,8 @@ export NO_COLOR=1
   grep -q '"生成最近 7 天报告"' "$MODULE_DIR/module.sh"
   grep -q '"生成最近 30 天报告"' "$MODULE_DIR/module.sh"
   grep -q '"生成最近 365 天报告"' "$MODULE_DIR/module.sh"
-  ! grep -q '"生成最近 180 天报告"' "$MODULE_DIR/module.sh"
-  ! grep -q '"启用数据采集"' "$MODULE_DIR/module.sh"
+  if grep -q '"生成最近 180 天报告"' "$MODULE_DIR/module.sh"; then false; fi
+  if grep -q '"启用数据采集"' "$MODULE_DIR/module.sh"; then false; fi
   ! grep -q '"查看数据覆盖状态"' "$MODULE_DIR/module.sh"
 }
 
@@ -134,9 +134,10 @@ export NO_COLOR=1
 
   run ops_render_disk_io_chart
   [[ "$status" -eq 0 ]]
-  [[ "$output" == *'text x="112.0" y="174">0.0'* ]]
-  [[ "$output" == *'text x="310.0" y="174">0.3'* ]]
-  [[ "$output" == *'text x="442.0" y="174">0.5'* ]]
+  # 图表高度随磁盘数动态计算：单块盘时 grid_bottom=40，横轴标签 y=63
+  [[ "$output" == *'text x="112.0" y="63">0.0'* ]]
+  [[ "$output" == *'text x="310.0" y="63">0.3'* ]]
+  [[ "$output" == *'text x="442.0" y="63">0.5'* ]]
 }
 
 @test "ops-report: 网络图按数据量自动缩放" {
@@ -333,8 +334,8 @@ export NO_COLOR=1
   source "$MODULE_DIR/report.sh"
   grep -A6 '\$(ops_render_disk_io_chart)' "$MODULE_DIR/report.sh" | grep -q '磁盘容量预测'
   grep -q 'kernel_version=\$(ops_kernel_pkg_version)' "$MODULE_DIR/report.sh"
-  ! grep -q "linux-image-amd64 2>/dev/null" "$MODULE_DIR/report.sh"
-  ! grep -q 'note="\${note:+- }' "$MODULE_DIR/report.sh"
+  if grep -q "linux-image-amd64 2>/dev/null" "$MODULE_DIR/report.sh"; then false; fi
+  if grep -q 'note="\${note:+- }' "$MODULE_DIR/report.sh"; then false; fi
   OPS_DISK_FORECAST="sda|37|7|1.00|53"
   run ops_render_disk_forecast_table
   [[ "$status" -eq 0 ]]

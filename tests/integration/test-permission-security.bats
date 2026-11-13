@@ -11,7 +11,7 @@ DEBNAS_ROOT="${DEBNAS_ROOT:-$(cd "${BATS_TEST_DIRNAME}/../.." && pwd)}"
 
   grep -q 'configure_su_restrictions' "$security_sh"
   grep -A20 'configure_su_restrictions()' "$security_sh" | grep -q 'pam_wheel'
-  grep -A20 'configure_su_restrictions()' "$security_sh" | grep -q 'write_file_if_changed'
+  grep -A40 'configure_su_restrictions()' "$security_sh" | grep -q 'write_file_if_changed'
 }
 
 # ==================== TC-P1-SEC-002: 损坏的 PAM 文件处理 ====================

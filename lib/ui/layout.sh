@@ -31,6 +31,7 @@ cursor_move() {
 ui_detect_size() {
   COLUMNS=$(tput cols 2>/dev/null || echo 80)
   LINES=$(tput lines 2>/dev/null || echo 24)
+  _ui_compute_width
 }
 
 ui_is_compact_mode() {
@@ -44,6 +45,69 @@ _UI_BREAD_INDENT=5
 _UI_ITEM_INDENT=7
 _UI_COMPACT_INDENT=4
 
+# 内容栏宽度：终端宽度的一半，居中显示（经典菜单的界面宽度）
+_UI_CONTENT_WIDTH=0
+_UI_LEFT_MARGIN=0
+_UI_BREAD_X=5
+_UI_ITEM_X=7
+_UI_COMPACT_X=4
+
+_ui_compute_width() {
+  local cols="${COLUMNS:-80}"
+  _UI_CONTENT_WIDTH=$(( cols / 2 ))
+  (( _UI_CONTENT_WIDTH < 20 )) && _UI_CONTENT_WIDTH=20
+  (( _UI_CONTENT_WIDTH > cols )) && _UI_CONTENT_WIDTH=$cols
+  # 内容栏靠左，不做整体居中
+  _UI_LEFT_MARGIN=0
+  _UI_BREAD_X=$_UI_BREAD_INDENT
+  _UI_ITEM_X=$_UI_ITEM_INDENT
+  _UI_COMPACT_X=$_UI_COMPACT_INDENT
+}
+
+# 单个字符的显示宽度（CJK 双宽）→ _UI_CHAR_W
+_UI_CHAR_W=1
+_ui_char_width() {
+  local c="$1" cp
+  if [[ "$c" == [\ -~] ]]; then _UI_CHAR_W=1; return 0; fi
+  printf -v cp '%d' "'$c" 2>/dev/null || { _UI_CHAR_W=1; return 0; }
+  if (( (cp >= 0x1100 && cp <= 0x115F) \
+    || (cp >= 0x2E80 && cp <= 0x303E) || (cp >= 0x3041 && cp <= 0x33FF) \
+    || (cp >= 0x3400 && cp <= 0x4DBF) || (cp >= 0x4E00 && cp <= 0x9FFF) \
+    || (cp >= 0xA000 && cp <= 0xA4CF) || (cp >= 0xAC00 && cp <= 0xD7A3) \
+    || (cp >= 0xF900 && cp <= 0xFAFF) || (cp >= 0xFE30 && cp <= 0xFE6F) \
+    || (cp >= 0xFF00 && cp <= 0xFF60) || (cp >= 0xFFE0 && cp <= 0xFFE6) \
+    || (cp >= 0x1F300 && cp <= 0x1F64F) || (cp >= 0x1F900 && cp <= 0x1F9FF) \
+    || (cp >= 0x20000 && cp <= 0x3FFFD) )); then
+    _UI_CHAR_W=2
+  else
+    _UI_CHAR_W=1
+  fi
+}
+
+# 按显示宽度截断文本（超宽时末尾加 …），结果写入 _UI_FIT_TEXT / _UI_FIT_WIDTH
+_UI_FIT_TEXT=""
+_UI_FIT_WIDTH=0
+_ui_fit_text() {
+  local s="$1" max="${2:-0}" out="" w=0 i c cw last
+  (( max < 1 )) && { _UI_FIT_TEXT=""; _UI_FIT_WIDTH=0; return 0; }
+  for (( i = 0; i < ${#s}; i++ )); do
+    c="${s:i:1}"
+    _ui_char_width "$c"; cw=$_UI_CHAR_W
+    if (( w + cw > max )); then
+      while (( ${#out} > 0 && w + 1 > max )); do
+        last="${out: -1}"
+        _ui_char_width "$last"
+        out="${out:0:${#out}-1}"
+        w=$(( w - _UI_CHAR_W ))
+      done
+      out+="…"; w=$(( w + 1 ))
+      break
+    fi
+    out+="$c"; w=$(( w + cw ))
+  done
+  _UI_FIT_TEXT="$out"; _UI_FIT_WIDTH=$w
+}
+
 # 光标保存标志：1=已保存（导航模式），0=未保存（模块执行后模式）
 declare -g _UI_CURSOR_SAVED=0
 
@@ -55,10 +119,10 @@ _UI_NEEDS_REDRAW=0
 
 ui_handle_resize() {
   ui_detect_size
-  # 终端尺寸变化后，光标保存的位置可能无效，重置标志
+  # 终端尺寸变化后，保存的光标位置不再可信；清屏后由各界面（菜单/对话框）在
+  # REDRAW 分支从屏幕顶部整屏重绘。此处不打印 Header，避免与重绘内容叠加。
   _UI_CURSOR_SAVED=0
   printf '\033[H\033[J'
-  ui_header
   _UI_NEEDS_REDRAW=1
 }
 
@@ -116,6 +180,8 @@ ui_clear_menu_area() {
 ui_screen_init() {
   # 模块输出后旧保存位置已失效，以当前光标位置为基准重绘
   _UI_CURSOR_SAVED=0
+  # 此处会完整渲染 Header，先前的尺寸变化已无需要处理的重绘
+  _UI_NEEDS_REDRAW=0
 
   ui_detect_size
 
@@ -190,29 +256,19 @@ declare -g _UI_MENU_SNAPSHOT_BREADCRUMB=""
 
 # 打印菜单快照到终端（格式与真实菜单一致）
 _ui_print_menu_snapshot() {
-  local cols="${COLUMNS:-$(tput cols 2>/dev/null || echo 80)}"
   local bc="${_UI_MENU_SNAPSHOT_BREADCRUMB:-}"
   local focused="${_UI_MENU_SNAPSHOT_FOCUSED:-0}"
 
   cursor_show 2>/dev/null || printf '\033[?25h'
   printf '\n'
+  [[ "${_UI_CONTENT_WIDTH:-0}" -gt 0 ]] || _ui_compute_width
 
-  # Header
-  if [[ "${_UI_COMPACT_MODE:-0}" -eq 1 ]]; then
-    printf '\n'
-    printf '%*sDebNAS\n' "${_UI_BREAD_INDENT:-2}" ''
-    printf '\n'
-  else
-    local padding=$(( (cols - 6) / 2 ))
-    [[ $padding -lt 0 ]] && padding=0
-    printf '\n'
-    printf '%*s%s\n' "$padding" '' "DebNAS"
-    printf '\n\n'
-  fi
+  # Header（与 ui_header 共用半宽内容栏）
+  ui_header
 
   # 面包屑
   if [[ -n "$bc" ]]; then
-    printf '%*s%b%s%b\n' "$_UI_BREAD_INDENT" '' "${COLOR_DIM:-}" "$bc" "${COLOR_RESET:-}"
+    printf '%*s%b%s%b\n' "$_UI_BREAD_X" '' "${COLOR_DIM:-}" "$bc" "${COLOR_RESET:-}"
   fi
 
   # 菜单项
@@ -220,9 +276,9 @@ _ui_print_menu_snapshot() {
   for i in "${!_UI_MENU_SNAPSHOT_ITEMS[@]}"; do
     item="${_UI_MENU_SNAPSHOT_ITEMS[$i]}"
     if [[ "$i" -eq "$focused" ]]; then
-      printf '%*s%b> %s%b\n' "$_UI_BREAD_INDENT" '' "${COLOR_CYAN:-}" "$item" "${COLOR_RESET:-}"
+      printf '%*s%b> %s%b\n' "$_UI_BREAD_X" '' "${COLOR_CYAN:-}" "$item" "${COLOR_RESET:-}"
     else
-      printf '%*s%s\n' "$_UI_ITEM_INDENT" '' "$item"
+      printf '%*s%s\n' "$_UI_ITEM_X" '' "$item"
     fi
   done
 
@@ -233,14 +289,13 @@ _ui_print_menu_snapshot() {
   else
     shortcuts+="  Q 退出"
   fi
-  local version="${DEBNAS_VERSION:-v3.0.0}"
-  local margin="${_UI_BREAD_INDENT:-2}"
-  local ftr_padding=$((cols - margin - ${#shortcuts} - ${#version} - 2))
-  if [[ "$ftr_padding" -lt 1 ]]; then
-    printf "%b%*s%s%b\n" "${COLOR_DIM:-}" "$margin" '' "$shortcuts" "${COLOR_RESET:-}"
+  # Footer（一级菜单且有新版本时带绿点）
+  if [[ -z "$bc" && -n "${_UI_UPDATE_HINT:-}" ]]; then
+    _UI_FOOTER_UPDATE_DOT=1
   else
-    printf "%b%*s%s%*s%b\n" "${COLOR_DIM:-}" "$margin" '' "$shortcuts" "$ftr_padding" "$version" "${COLOR_RESET:-}"
+    _UI_FOOTER_UPDATE_DOT=0
   fi
+  ui_footer "$shortcuts"
 
   # 光标保存位置已失效（快照改变了光标位置）
   _UI_CURSOR_SAVED=0

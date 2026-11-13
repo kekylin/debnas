@@ -135,13 +135,13 @@ M
 }
 
 @test "ops-report: 转义纯 bash 实现（无 sed 子进程）且漂移表只转 & < >" {
-  ! sed -n '/^ops_html_escape()/,/^}/p' "$MODULE_DIR/report.sh" | grep -q 'sed'
+  if sed -n '/^ops_html_escape()/,/^}/p' "$MODULE_DIR/report.sh" | grep -q 'sed'; then false; fi
   run bash -c 'set -euo pipefail; source "$1/security.sh"; ops_drift_escape "a&<b>\"x"' _ "$MODULE_DIR"
   [[ "$output" == 'a&amp;&lt;b&gt;"x' ]]
 }
 
 @test "ops-report: 定时任务状态走 cron_state，sysstat 原始输出不再拼进 shell 变量" {
-  ! grep -q '_ops_cron_state' "$MODULE_DIR/module.sh"
+  if grep -q '_ops_cron_state' "$MODULE_DIR/module.sh"; then false; fi
   grep -q 'cron_state "ops-report"' "$MODULE_DIR/module.sh"
   ! grep -q 'OPS_SAR_NET_LINES' "$MODULE_DIR/report.sh"
 }
@@ -229,7 +229,7 @@ _probe_call() {
 }
 
 @test "ops-report: [D2] ops_collect_updates 不再直接 grep security 索引 glob" {
-  ! sed -n '/^ops_collect_updates()/,/^}/p' "$MODULE_DIR/report.sh" | grep -q 'grep .*\*security\*Packages\*'
+  if sed -n '/^ops_collect_updates()/,/^}/p' "$MODULE_DIR/report.sh" | grep -q 'grep .*\*security\*Packages\*'; then false; fi
   sed -n '/^ops_collect_updates()/,/^}/p' "$MODULE_DIR/report.sh" | grep -q 'security_pkgs=$(ops_security_package_names /var/lib/apt/lists || true)'
 }
 
@@ -552,7 +552,7 @@ ensure_login_source() {
   [[ "$status" -eq 0 ]]
   [[ "$output" != *"APT:"* && "$output" == *"WARN:未找到 last / wtmpdb"* && "$output" == *"RC:0"* ]]
   # 不手改 PAM：模块里没有写 /etc/pam.d 或直接调用 pam-auth-update 的代码（注释除外）
-  ! grep -v '^[[:space:]]*#' "$MODULE_DIR"/*.sh | grep -q '/etc/pam\.d\|pam-auth-update[^ 自（]'
+  if grep -v '^[[:space:]]*#' "$MODULE_DIR"/*.sh | grep -q '/etc/pam\.d\|pam-auth-update[^ 自（]'; then false; fi
   grep -q 'ops_ensure_login_source$' "$MODULE_DIR/setup.sh"
 }
 
@@ -569,6 +569,8 @@ login_note() {
 @test "ops-report: [L3] 报告登录一节：数据源缺失 / 刚装上还没有记录 / 有记录 三种情况的说明" {
   local p="${BATS_TEST_TMPDIR}/bare-l5"
   bare_path "$p"
+  # bare_path 会把 /usr/bin/journalctl 链接进来；先移除链接再写测试桩
+  rm -f "$p/journalctl"
   printf '#!/bin/sh\nexit 0\n' > "$p/journalctl"; chmod +x "$p/journalctl"
   run login_note "$p" 13
   [[ "$status" -eq 0 ]]

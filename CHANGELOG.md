@@ -14,8 +14,38 @@
 
 ## [未发布]
 
+### Added
+- `debnas check-update`：只读版本检测——用已安装目录的发布公钥验签 main 分支的 `LATEST` 指针，与已安装版本比较；不下载代码包、不持更新锁、不修改安装目录。退出码 `0`=已是最新、`1`=有新版本、`2`=检查失败（公钥缺失 / 指针验签失败 / 网络不可达 / 指针回放）。`debnas update` 与它共用 `release_check_latest`，两处判断不会再分叉
+- 一级菜单「关于项目」改为二级菜单：**项目简介**（原「关于项目」的简介内容 + 当前版本）、**检查脚本更新**（检查新版本，确认后调用 `debnas update --tag <最新版本>`；非交互环境只检查不更新）。检查逻辑与 `debnas check-update` 共用 `installer.sh` 的 `release_check_latest` / `release_check_error_text`，与 `debnas update` 的判断口径一致
+- 首页 footer 版本号前新增「有新版本」绿色圆点：启动只读本地缓存（`/var/lib/debnas/state/update-check`，默认 6 小时有效），缺失或过期时由后台 detached 进程静默检查已签名 `LATEST` 指针并写回（flock 去重、5 秒超时，不阻塞首屏）；仅一级菜单显示，版本号放不下时只保留圆点。`debnas update` 成功或菜单内更新完成后清除缓存
+- 菜单「检查脚本更新」的提示按普通用户收敛为四行以内：`检查更新…` / `当前版本` / `一句话结论`，版本号等状态信息统一带 `[INFO]` 标识、不再裸行展示；未签名指针回退、主备源切换等内部诊断不再显示（`_RELEASE_QUIET`）。`debnas check-update` 仍保留详细原因，便于排查
+
 ### Changed
 - `docs/` 恢复为不入库（开发文档按项目约定只保留在维护者本地）：从仓库移除并重新加入 `.gitignore`；`tests/` 仍入库供 CI 使用
+- 一键方案 `basic` / `secure` 改为安装 `cockpit-45drives`（45Drives 官方插件）
+- 交互菜单仅保留 debnas-v2 经典样式（居中 DebNAS 标题、`>` 焦点、灰色快捷键栏，无边框）；不再通过 `DEBNAS_UI` 切换界面
+- 经典菜单内容栏宽度改为**终端宽度的一半**（最少 20 列），从左侧开始（靠左，不整体居中）：Header 在内容栏内居中，面包屑、菜单项、Footer 在内容栏内左对齐；Footer 放不下版本号时省略版本号，优先保留完整快捷键
+
+### Fixed
+- 2026-11-13 全面审查修复（第一批 P0/P1）：
+  - crontab 读取失败不再当成空 crontab：`_get_current_crontab` 仅在 cron 明确报 `no crontab for` 时按空处理，`cron_register`/`cron_register_variant`/`cron_unregister` 读取失败时拒绝写回，避免覆盖用户任务；卸载不再以 `crontab -r` 作为兜底，删除失败会报错并返回非 0
+  - `/etc/hosts` 渲染失败时中止写入（此前读错误会用仅含 DebNAS 区块的内容覆盖用户条目）；兼容 CRLF；hosts 锁拒绝符号链接并使用受保护的回退目录
+  - firewalld 新建 public 区文件写入失败（rc=2）时中止，不再继续安装/启动 firewalld；fail2ban 配置写入失败或服务未启动时返回失败，并始终确保 `fail2ban started`；security/fail2ban/cockpit/cockpit-net/cockpit-ext/wallpaper/mail-account 的写入失败不再被当作“未变更”
+  - threat-ips 禁用时仅在 firewalld 查询成功、且文件确为 DebNAS 生成（含 ipthreat）时删除 drop.xml，删除前集中备份；锁文件不再用 `>` 截断或跟随符号链接
+  - 运维报告：RAID 降级检测改为解析 `/proc/mdstat` 的 `[n/m]`、`[U_]`/`[_U]`、`(F)`；更新次数按 120 秒会话统计；移除无数据来源的“意外停电”指标；dpkg 日志不再 `tail -100` 截断；journalctl 加 `-q`；监听端口快照不再截断 30 行；周期重启只统计 Started；`@depends` 去掉不在 PATH 的 sadc
+  - `apt_install_packages` 改用只认 installed 的 `pkg_is_installed`；无 fuser 时不再用 flock 误判 APT 锁，apt 调用统一加 `DPkg::Lock::Timeout`；dependency/apt-pinning 统一走 APT 抽象；`ensure_command` 对缺失且无包映射的系统命令返回失败
+  - `@debian_min` 在 preflight 中真正生效（支持主版本号与代号）；wallpaper 声明 `@debian_min: 13`，避免在 Debian 12 上必然失败
+  - `debnas <模块> --cron` 改写恢复可用；`update`/`check-update`/菜单检查更新优先使用 CLI/环境传入的 region
+  - 测试门禁：ShellCheck 覆盖 `tests/`、缺失 shellcheck 视为失败、统计 skip；修复 22 处位于非末行的无效 `!` 否定断言；新增 crontab 读取失败、apt config-files、`@debian_min`、`service_is_installed` 负向用例
+  - 其他：security 的 PAM NUL 检测改用 od；login-mail 使用 C.UTF-8；sys-check 的 df 加 -P；fail2ban 声明 mail 依赖（Tier 1）；APT pinning 清理前备份并登记清单
+  - 第二批（P2/P3 收敛）：`file_logging=0` 现在真正关闭文件日志（未配置时默认启用）；`@module` 预扫描修复字段顺序/空值丢字段；cron 变体按 5 个调度字段精确匹配（不再前缀误删）；RELEASE 标记与版本状态原子写入；`keyring --label` 参数校验；`config_write` 目录创建失败返回错误；`feature_enabled` 不再 fork cat；`tempfile` 锁 fd 打开失败不再污染全局 stderr；`get_system_name` 不再 source os-release；`sources.sh` 移除加载时命令替换；sys-patches 的 `echo -e` 改 `printf '%b'`；footer 版本默认值改为“未知”；docs/ 同步 ARCHITECTURE/DEV_GUIDE/PROJECT_OVERVIEW/TECH_DEBT 的 API 名、模块/用例数与包装脚本说明
+- 交互菜单在终端尺寸变化（SIGWINCH，含启动瞬间触发的情况）后按方向键会在旧帧下方再叠一帧、屏幕上出现重复菜单：`ui_handle_resize` 只清屏并置重绘标志，菜单 `REDRAW` 分支改为整屏重绘（清屏 → Header → 菜单）并重新保存光标位置；循环 wrap / 数字跳转使旧焦点滚出可视区时，先按菜单区整块清除再重绘
+- 运维报告磁盘容量快照的"同日"判断改用本地日界：原先按 `epoch/86400`（UTC 日界），东八区早上 8 点前后同一本地日采集的两条样本都会保留，同一天重复生成报告时基线被冲掉
+- 经典菜单底部快捷键与版本号粘连（`Q 退出v2026.11.1`）：`printf "%*s"` 的宽度小于版本号长度时不补空格，间距改为单独打印，保证两者之间至少 2 个空格
+
+### Removed
+- 删除方案 A 双栏 TUI 仪表盘及 `lib/ui/dashboard.sh`、`lib/ui/textwidth.sh`、`lib/ui/sysinfo.sh`、模块状态批量采集代码与相关测试；`bin/module-runner.sh --probe` 的只读探测契约保留
+- 删除自研 Cockpit 共享管理插件 `cockpit-shares`：管理面板只保留「安装 45Drives 官方插件」，不再有 `file_sharing_ui` 二选一开关；模块总数由 27 个减为 26 个
 
 ## [v2026.11.1] - 2026-11-10
 

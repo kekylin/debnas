@@ -318,7 +318,7 @@ MOCKEOF
   grep -qx 'Content-Type: text/plain; charset=UTF-8' "$d/mail"
   local subj w decoded=""
   subj=$(awk '/^Subject: /{s=substr($0,10); f=1; next} f && /^ /{s=s $0; next} {f=0} END{print s}' "$d/mail")
-  ! LC_ALL=C grep -q '[^ -~]' <<< "$subj"
+  if LC_ALL=C grep -q '[^ -~]' <<< "$subj"; then false; fi
   for w in $subj; do
     [[ "${#w}" -le 75 ]]
     w="${w#=?UTF-8?B?}"; w="${w%?=}"

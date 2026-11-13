@@ -113,9 +113,32 @@ _cron_has_marker() {
 
 # 获取当前用户的 crontab 内容
 # 参数：无
-# 输出：crontab 内容
+# 输出：crontab 内容（无 crontab 时为空）
+# 返回：0 成功或确认无 crontab；1 读取失败（权限/spool 损坏/命令不可用等）
+# 说明：cron_register* 会以该内容为基线写回 crontab，读取失败若当成空会导致用户任务被覆盖；
+#       仅当 cron 明确报告 "no crontab for <user>" 时才按空处理，其余失败一律返回 1。
 _get_current_crontab() {
-  crontab -l 2>/dev/null || true
+  local out="" err_file err="" rc=0
+  err_file=$(mktemp 2>/dev/null) || err_file=""
+  if [[ -n "$err_file" ]]; then
+    out=$(crontab -l 2>"$err_file") || rc=$?
+    err=$(<"$err_file") || err=""
+    rm -f -- "$err_file"
+  else
+    out=$(crontab -l 2>/dev/null) || rc=$?
+  fi
+  if [[ $rc -eq 0 ]]; then
+    # 保留行结构（末尾换行）：cron_state 等调用方用 while read 逐行读取，
+    # 没有末尾换行时最后一行不会被 read 处理
+    [[ -n "$out" ]] && printf '%s\n' "$out"
+    return 0
+  fi
+  # Debian cron：无 crontab 时 stderr 为 "no crontab for <user>"
+  if [[ "$err" == *"no crontab for"* ]]; then
+    return 0
+  fi
+  printf '%s\n' "${err:-crontab -l 失败（退出码 ${rc}）}" >&2
+  return 1
 }
 
 # 写入 crontab
@@ -196,13 +219,20 @@ cron_register() {
   local cron_cmd="${schedule} DEBNAS_CRON_MODE=1 ${DEBNAS_BIN} run ${module_name} ${marker}"
 
   # 获取当前 crontab，移除该模块的旧主条目
+  # 读取失败时不能以空内容为基线写回（会覆盖用户任务），必须中止
   local current_crontab
-  current_crontab=$(_get_current_crontab)
+  if ! current_crontab=$(_get_current_crontab); then
+    log_error "无法读取当前 crontab，拒绝覆盖；请检查 cron 服务与 spool 权限"
+    return 1
+  fi
 
   # 只按主条目后缀 " run <模块> <标记>" 精确匹配；变体条目（run <模块> <参数> <标记>，
   # 如 ops-report 的年报）同样以标记结尾，按标记匹配会被一起删掉
   local new_crontab
-  new_crontab=$(printf '%s\n' "$current_crontab" | _cron_filter_out_marker " run ${module_name} ${marker}" || true)
+  if ! new_crontab=$(printf '%s\n' "$current_crontab" | _cron_filter_out_marker " run ${module_name} ${marker}"); then
+    log_error "过滤 crontab 失败，拒绝写入"
+    return 1
+  fi
 
   # 追加新条目（确保末尾有换行）
   if [[ -n "$new_crontab" ]]; then
@@ -252,8 +282,12 @@ cron_register_variant() {
   _cron_ensure_ready || return 1
 
   cron_cmd="${schedule} DEBNAS_CRON_MODE=1 ${DEBNAS_BIN} run ${module_name} ${command_args} ${marker}"
+  # 读取失败时不能以空内容为基线写回（会覆盖用户任务），必须中止
   local current_crontab
-  current_crontab=$(_get_current_crontab)
+  if ! current_crontab=$(_get_current_crontab); then
+    log_error "无法读取当前 crontab，拒绝覆盖；请检查 cron 服务与 spool 权限"
+    return 1
+  fi
 
   if grep -Fxq -- "$cron_cmd" <<<"$current_crontab"; then
     return 0
@@ -261,13 +295,18 @@ cron_register_variant() {
 
   # 移除同一模块同调度但参数不同的旧条目，保留其他条目
   local new_crontab
-  new_crontab=$(printf '%s\n' "$current_crontab" | \
+  if ! new_crontab=$(printf '%s\n' "$current_crontab" | \
     _DEBNAS_CRON_MARKER="$marker" _DEBNAS_CRON_SCHED="$schedule" awk '
     BEGIN { m = ENVIRON["_DEBNAS_CRON_MARKER"]; ml = length(m); s = ENVIRON["_DEBNAS_CRON_SCHED"] }
     { line = $0; sub(/[[:space:]]+$/, "", line) }
-    length(line) >= ml && substr(line, length(line) - ml + 1) == m && index($0, s) == 1 { next }
+    # 只删除调度字段完全相同（前 5 个字段）的旧变体；不能用 index($0, s)==1 前缀匹配，
+    # 否则 "0 0 * * 1" 会误删 "0 0 * * 1,3"
+    length(line) >= ml && substr(line, length(line) - ml + 1) == m && ($1 " " $2 " " $3 " " $4 " " $5) == s { next }
     { print }
-  ' | sed '/^$/d' || true)
+  ' | sed '/^$/d'); then
+    log_error "过滤 crontab 失败，拒绝写入"
+    return 1
+  fi
 
   if [[ -n "$new_crontab" ]]; then
     new_crontab="${new_crontab}
@@ -296,8 +335,12 @@ cron_unregister() {
   marker=$(_cron_entry_marker "$module_name")
 
   # 获取当前 crontab
+  # 读取失败时不能用空内容继续（后续 crontab -r 可能删除整份任务），必须中止
   local current_crontab
-  current_crontab=$(_get_current_crontab)
+  if ! current_crontab=$(_get_current_crontab); then
+    log_error "无法读取当前 crontab，拒绝修改；请检查 cron 服务与 spool 权限"
+    return 1
+  fi
 
   # 检查是否存在该模块的条目（行尾精确匹配，避免误删同前缀模块）
   if ! printf '%s\n' "$current_crontab" | _cron_has_marker "$marker"; then
@@ -306,7 +349,10 @@ cron_unregister() {
 
   # 移除该模块的条目
   local new_crontab
-  new_crontab=$(printf '%s\n' "$current_crontab" | _cron_filter_out_marker "$marker" || true)
+  if ! new_crontab=$(printf '%s\n' "$current_crontab" | _cron_filter_out_marker "$marker"); then
+    log_error "过滤 crontab 失败，拒绝修改"
+    return 1
+  fi
 
   # 写入 crontab（如果为空则移除整个 crontab）
   if [[ -z "$new_crontab" ]]; then
@@ -326,7 +372,8 @@ cron_unregister() {
 # 返回：始终 0
 cron_list() {
   local current_crontab
-  current_crontab=$(_get_current_crontab)
+  # 只读查询：读取失败按空处理（不能因 set -e 终止列表命令）
+  current_crontab=$(_get_current_crontab 2>/dev/null || true)
 
   if [[ -z "$current_crontab" ]]; then
     echo "无定时任务"
@@ -366,7 +413,8 @@ cron_is_registered() {
   local marker
   marker=$(_cron_entry_marker "$module_name")
   local current_crontab
-  current_crontab=$(_get_current_crontab)
+  # 只读查询：读取失败按“未注册”处理
+  current_crontab=$(_get_current_crontab 2>/dev/null || true)
 
   printf '%s\n' "$current_crontab" | _cron_has_marker "$marker"
 }
@@ -406,7 +454,7 @@ cron_state() {
       echo "on"
       return 0
     fi
-  done < <(_get_current_crontab)
+  done < <(_get_current_crontab 2>/dev/null || true)
   echo "off"
   return 0
 }
@@ -420,7 +468,7 @@ cron_get_schedule() {
   local marker line
   marker=$(_cron_entry_marker "$module_name")
   # 只取主调度条目（"run <模块> <标记>"），跳过带附加参数的变体条目
-  line=$(_get_current_crontab | grep -F -- " run ${module_name} ${marker}" | head -1) || true
+  line=$(_get_current_crontab 2>/dev/null | grep -F -- " run ${module_name} ${marker}" | head -1) || true
   [[ -n "$line" ]] || return 1
   local f1 f2 f3 f4 f5
   IFS=$' \t' read -r f1 f2 f3 f4 f5 _ <<< "$line"

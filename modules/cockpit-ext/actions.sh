@@ -60,13 +60,18 @@ $origins_line"
 $origins_line"
   fi
 
-  if write_file_if_changed "$config_file" "$new_config"; then
+  local wrc=0
+  write_file_if_changed "$config_file" "$new_config" || wrc=$?
+  if [[ "$wrc" -eq 0 ]]; then
     log_info "Origins 配置已更新。"
     if service_ensure "cockpit" "restarted"; then
       log_success "外网访问已启用"
     else
       log_warning "Cockpit 服务重启失败，请手动重启。"
     fi
+  elif [[ "$wrc" -eq 2 ]]; then
+    log_error "写入 ${config_file} 失败"
+    return 1
   else
     log_info "配置未变更，跳过重启。"
   fi
@@ -91,9 +96,14 @@ disable_cockpit_ext() {
       # write_file_if_changed 不接受空内容：只剩 Origins 时保留空的 [WebService] 段
       new_config="[WebService]"
     fi
-    if write_file_if_changed "$config_file" "$new_config"; then
+    local wrc=0
+    write_file_if_changed "$config_file" "$new_config" || wrc=$?
+    if [[ "$wrc" -eq 0 ]]; then
       config_changed=1
       log_success "已删除 Cockpit 外网访问配置。"
+    elif [[ "$wrc" -eq 2 ]]; then
+      log_error "写入 ${config_file} 失败"
+      return 1
     else
       log_info "未检测到外网访问参数，跳过操作。"
     fi

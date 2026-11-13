@@ -5,6 +5,7 @@
 # @depends: exim4
 # @version: 1.0.0
 # @order: 60
+# @interactive: true
 # 功能：设置发送邮件账户
 
 set -euo pipefail
@@ -264,7 +265,13 @@ configure_smarthost_protocol() {
     [[ -f "$macros_file" ]] || return 0
     new_content="# DebNAS: no local macros"
   fi
-  write_file_if_changed "$macros_file" "$new_content" || true
+  local wrc=0
+  write_file_if_changed "$macros_file" "$new_content" || wrc=$?
+  if [[ "$wrc" -eq 2 ]]; then
+    log_error "写入 ${macros_file} 失败"
+    return 1
+  fi
+  return 0
 }
 
 # 生成 Exim4 邮件服务器配置文件
@@ -272,7 +279,7 @@ generate_exim_config() {
   local email_domain="$1" smarthost="$2"
   local exim_smarthost
   exim_smarthost=$(to_exim_smarthost "$smarthost")
-  configure_smarthost_protocol "$exim_smarthost"
+  configure_smarthost_protocol "$exim_smarthost" || return 1
   local exim_config="dc_eximconfig_configtype='satellite'
 dc_other_hostnames=''
 dc_local_interfaces='127.0.0.1 ; ::1'
@@ -286,7 +293,12 @@ dc_use_split_config='false'
 dc_hide_mailname='true'
 dc_mailname_in_oh='true'
 dc_localdelivery='mail_spool'"
-  write_file_if_changed "/etc/exim4/update-exim4.conf.conf" "$exim_config" || true
+  local wrc=0
+  write_file_if_changed "/etc/exim4/update-exim4.conf.conf" "$exim_config" || wrc=$?
+  if [[ "$wrc" -eq 2 ]]; then
+    log_error "写入 /etc/exim4/update-exim4.conf.conf 失败"
+    return 1
+  fi
   local conf_err
   conf_err=$(update-exim4.conf 2>&1) || {
     log_error "更新 Exim4 配置失败：${conf_err}"
@@ -304,8 +316,17 @@ configure_smtp_auth() {
   fi
   chmod 640 "$passwd_file"
   chown root:Debian-exim "$passwd_file" 2>/dev/null || true
-  write_file_if_changed "$passwd_file" "*.$email_domain:${email}:${password}" 640 || true
-  write_file_if_changed "/etc/email-addresses" "root: $email" || true
+  local wrc=0
+  write_file_if_changed "$passwd_file" "*.$email_domain:${email}:${password}" 640 || wrc=$?
+  if [[ "$wrc" -eq 2 ]]; then
+    log_error "写入 ${passwd_file} 失败"
+    return 1
+  fi
+  wrc=0
+  write_file_if_changed "/etc/email-addresses" "root: $email" || wrc=$?
+  if [[ "$wrc" -eq 2 ]]; then
+    log_warning "写入 /etc/email-addresses 失败，root 发件地址映射可能未生效"
+  fi
   # 通知收件邮箱写到 /etc/debnas/notify_email（640 root），旧位置改为符号链接，见 lib/system/layout.sh
   notify_email_set "$notify_email" || log_warning "写入通知邮箱失败：${DEBNAS_NOTIFY_EMAIL_FILE}"
 }

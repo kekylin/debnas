@@ -1,13 +1,13 @@
 #!/bin/bash
 # @module: cockpit-45drives
-# @name: 安装 45Drives 扩展
+# @name: 安装 45Drives 官方插件
 # @category: 管理面板
 # @depends: curl
 # @depend_modules: cockpit
-# @version: 1.1.0
+# @version: 2.0.0
 # @order: 31
-# 功能：安装 45Drives Cockpit 扩展组件（文件共享、身份管理）
-# 说明：Debian 12/13 均通过 45Drives 官方仓库安装；与 DebNAS 自研「共享管理」插件（cockpit-shares）二选一
+# 功能：安装 45Drives Cockpit 官方插件（文件共享、身份管理）
+# 说明：Debian 12/13 均通过 45Drives 官方仓库安装；这是 DebNAS 唯一的共享管理界面
 
 set -euo pipefail
 IFS=$'\n\t'
@@ -85,62 +85,6 @@ Signed-By: ${FD45_KEYRING_FILE}"
 	fi
 }
 
-# ==================== 与 DebNAS 自研共享管理插件二选一 ====================
-
-# 自研插件安装目录（与 modules/cockpit-shares/module.sh 中 SHARES_PLUGIN_DIR 相同的固定常量）
-DEBNAS_SHARES_PLUGIN_DIR="/usr/share/cockpit/debnas-shares"
-
-# 删除自研插件目录：只接受非空且严格等于固定常量的路径
-# 参数：$1 - 待删除目录
-remove_debnas_shares_plugin_dir() {
-	local dir="$1"
-	if [[ -z "$dir" || "$dir" != "$DEBNAS_SHARES_PLUGIN_DIR" ]]; then
-		log_error "拒绝删除非预期目录：${dir:-（空）}"
-		return 1
-	fi
-	[[ -d "$dir" && ! -L "$dir" ]] || return 0
-	rm -rf -- "$dir"
-	log_success "已移除 DebNAS 共享管理插件：${dir}"
-}
-
-# 读取 file_sharing_ui（只读，小写；非法值按 debnas）
-# 未设置且已装 cockpit-file-sharing（老用户升级）按 45drives，与 cockpit-shares 的 shares_ui_choice 一致
-_fd45_ui_choice() {
-	local v
-	v=$(config_read "global" "file_sharing_ui" "" 2>/dev/null) || v=""
-	if [[ -z "$v" ]] && pkg_is_installed cockpit-file-sharing; then
-		echo "45drives"
-		return 0
-	fi
-	[[ -n "$v" ]] || v="debnas"
-	v="${v,,}"
-	case "$v" in
-	debnas | 45drives) echo "$v" ;;
-	*) echo "debnas" ;;
-	esac
-}
-
-# 检测到自研插件时提示二选一：交互模式询问；非交互 / --yes 时仅当 file_sharing_ui=45drives 才移除
-# 返回：0 可继续安装 45Drives，1 用户取消
-ensure_debnas_shares_removed() {
-	local choice
-	[[ -d "$DEBNAS_SHARES_PLUGIN_DIR" ]] || return 0
-	log_warning "检测到 DebNAS 共享管理插件（${DEBNAS_SHARES_PLUGIN_DIR}），两种共享管理插件只能保留一个"
-	if [[ -t 0 && "${DEBNAS_FORCE_YES:-0}" -ne 1 ]]; then
-		if [[ "$(ui_confirm "移除 DebNAS 共享管理插件，改用 45Drives？" "两者共用 Samba 注册表与 /etc/exports.d/cockpit-file-sharing.exports，已有共享不会丢失。")" != "0" ]]; then
-			log_error "已取消：保留 DebNAS 共享管理插件"
-			return 1
-		fi
-	else
-		choice=$(_fd45_ui_choice)
-		if [[ "$choice" != "45drives" ]]; then
-			log_error "非交互模式下不自动替换：请先在 /etc/debnas/debnas.conf 设置 file_sharing_ui=45drives"
-			return 1
-		fi
-	fi
-	remove_debnas_shares_plugin_dir "$DEBNAS_SHARES_PLUGIN_DIR"
-}
-
 install_45drives_components_repo() {
 	log_info "通过源安装 45Drives 组件..."
 	if ! apt_install_packages cockpit-file-sharing cockpit-identities; then
@@ -154,28 +98,15 @@ install_45drives_components_repo() {
 # 当前状态：一行 "状态码|说明"（只读、< 300ms、不联网）
 module_status() {
 	local IFS=$' \n\t'
-	local choice fs=0 ids=0 src=0 key=0
+	local fs=0 ids=0 src=0 key=0
 	local -a lacks=()
-	choice=$(_fd45_ui_choice)
 	pkg_is_installed cockpit-file-sharing && fs=1
 	pkg_is_installed cockpit-identities && ids=1
 	[[ -f "${FD45_SOURCES_DIR}/45drives.sources" ]] && src=1
 	[[ -f "$FD45_KEYRING_FILE" ]] && key=1
 
 	if [[ $fs -eq 0 && $ids -eq 0 ]]; then
-		if [[ "$choice" == "45drives" ]]; then
-			echo "absent|未安装 45Drives 插件（file_sharing_ui=45drives，执行后启用）"
-		else
-			echo "absent|未安装（file_sharing_ui=debnas，共享管理使用 DebNAS 自研插件）"
-		fi
-		return 0
-	fi
-	if [[ $fs -eq 1 && "$choice" != "45drives" ]]; then
-		echo "warn|已安装 cockpit-file-sharing，与配置 file_sharing_ui=${choice} 不一致（运行 cockpit-shares 会卸载它）"
-		return 0
-	fi
-	if [[ $fs -eq 1 && -d "$DEBNAS_SHARES_PLUGIN_DIR" ]]; then
-		echo "warn|45Drives 与 DebNAS 共享管理插件同时存在（${DEBNAS_SHARES_PLUGIN_DIR}）"
+		echo "absent|未安装 45Drives 官方插件"
 		return 0
 	fi
 	[[ $fs -eq 1 ]] || lacks+=("cockpit-file-sharing")
@@ -192,7 +123,7 @@ module_status() {
 # 预演：每行 "类型|目标|备注"（无副作用；不联网；与 main 的判断保持一致；已满足的不列）
 module_plan() {
 	local IFS=$' \n\t'
-	local codename choice repo_url key_url legacy
+	local codename repo_url key_url legacy
 	local -a missing=() pkg
 	codename=$(get_system_codename 2>/dev/null) || codename=""
 	case "$codename" in
@@ -202,15 +133,6 @@ module_plan() {
 		return 0
 		;;
 	esac
-	choice=$(_fd45_ui_choice)
-
-	if [[ -d "$DEBNAS_SHARES_PLUGIN_DIR" ]]; then
-		if [[ "$choice" == "45drives" ]]; then
-			echo "risk|${DEBNAS_SHARES_PLUGIN_DIR}|删除 DebNAS 共享管理插件（rm -rf，不另做备份；交互模式先确认）；Samba 注册表与 NFS 导出共享不受影响"
-		else
-			echo "risk|${DEBNAS_SHARES_PLUGIN_DIR}|二选一：交互确认后删除 DebNAS 共享管理插件（rm -rf，不另做备份）；非交互执行且 file_sharing_ui=${choice} 时会中止"
-		fi
-	fi
 
 	command -v gpg >/dev/null 2>&1 || echo "pkg|gnupg|apt 安装（用于校验 45Drives 公钥指纹）"
 	repo_url=$(config_get_url repo_45drives_url "$FD45_DEFAULT_REPO_URL" 2>/dev/null) \
@@ -233,9 +155,6 @@ module_plan() {
 	else
 		echo "info|cockpit-file-sharing cockpit-identities|已安装，跳过"
 	fi
-	if [[ "$choice" != "45drives" ]]; then
-		echo "write|${DEBNAS_GLOBAL_CONF:-/etc/debnas/debnas.conf}|config_write 写入 file_sharing_ui=45drives（原地更新，不另做备份）"
-	fi
 	echo "info|端口|不新增端口与服务（共享服务端口由 Samba/NFS 决定，界面经 Cockpit 访问）"
 	return 0
 }
@@ -251,11 +170,8 @@ main() {
 	case "${system_codename}" in
 	"bookworm"|"trixie")
 		log_info "Debian ${system_codename}: 45Drives 仓库"
-		ensure_debnas_shares_removed || exit "${ERROR_GENERAL}"
 		configure_45drives_repo "${system_codename}" || exit "${ERROR_DEPENDENCY}"
 		install_45drives_components_repo || exit "${ERROR_GENERAL}"
-		# 记录选择，避免之后运行一键方案时又切回自研插件
-		config_write "global" "file_sharing_ui" "45drives" || log_warning "写入 file_sharing_ui=45drives 失败"
 		;;
 	*)
 		log_error "不支持的 Debian 版本: ${system_codename}"

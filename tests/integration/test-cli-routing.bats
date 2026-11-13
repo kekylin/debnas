@@ -304,10 +304,8 @@ extract_function() {
 # ==================== TC-P0-CLI-015: --cron 参数改写 ====================
 
 @test "CLI: --cron 改写 module --cron → run module (TC-P0-CLI-015)" {
-  # grep 验证 main() 中 --cron 改写逻辑存在
-  # line 266-277: 检测 args[-1] == "--cron"，将 args 改写为 (run "${cron_args[@]}")
-  grep -A12 'local last_arg=' "$DEBNAS_BIN" | grep -q '\-\-cron'
-  grep -A12 'local last_arg=' "$DEBNAS_BIN" | grep -q 'args=(run'
+  # parse_global_args 已消费 --cron；main() 在 DEBNAS_CRON_MODE=1 且首参数不是子命令时补 run
+  grep -A8 'DEBNAS_CRON_MODE:-0' "$DEBNAS_BIN" | grep -q 'args=(run'
 }
 
 # ==================== TC-P0-CLI-016: 全局标志无子命令 ====================

@@ -13,11 +13,6 @@ _DEBNAS_ROOT="$(cd "${_DEBNAS_SCRIPT%/*}/.." && pwd)"  # readlink -f 输出绝�
 # 加载统一库
 source "${_DEBNAS_ROOT}/lib/bootstrap.sh"
 
-# 方案 A 仪表盘（仅交互菜单使用，不放进 bootstrap，避免拖慢每个模块的加载）
-source "${_DEBNAS_ROOT}/lib/ui/textwidth.sh"
-source "${_DEBNAS_ROOT}/lib/ui/sysinfo.sh"
-source "${_DEBNAS_ROOT}/lib/ui/dashboard.sh"
-
 # ==================== 部署方案 ====================
 
 declare -a SOLUTION_NAMES=()
@@ -112,8 +107,8 @@ execute_auto_modules() {
 # Phase 2 新菜单循环 — 方向键导航
 # ═══════════════════════════════════════════════════════════════
 
-# 关于项目：直接打印概况后返回一级菜单
-handle_about_project() {
+# 关于项目 → 项目简介：打印概况
+show_project_intro() {
   local separator
   separator=$(printf '%*s' 46 '' | tr ' ' '-')
   printf '\n'
@@ -123,9 +118,125 @@ handle_about_project() {
   printf '\n'
   printf '    作者：%b%s%b\n' "$COLOR_DIM" "kekylin" "$COLOR_RESET"
   printf '    地址：%b%s%b\n' "$COLOR_DIM" "https://github.com/kekylin/debnas" "$COLOR_RESET"
+  printf '    当前版本：%s\n' "${DEBNAS_VERSION:-未知}"
   printf '\n'
   printf '%s\n' "$separator"
   printf '\n'
+}
+
+# 关于项目 → 检查脚本更新：只读检查版本指针，确认后调用 debnas update
+# 检查逻辑与 debnas check-update / debnas update 共用 release_check_latest
+handle_script_update() {
+  local install_dir="/opt/debnas"
+  # 开发态（从源码目录运行）没有安装标记，用当前代码版本与仓库内的公钥比较
+  [[ -d "$install_dir" ]] || install_dir="${_DEBNAS_ROOT:-${DEBNAS_ROOT:-.}}"
+
+  # 优先级：CLI/环境（DEBNAS_REGION）> 配置文件 > 默认 cn
+  local region="${DEBNAS_REGION:-}"
+  if [[ -z "$region" ]]; then
+    region=$(config_read "global" "region" "" 2>/dev/null) || region=""
+  fi
+  [[ -n "$region" ]] || region="cn"
+
+  local tmp_dir
+  tmp_dir=$(create_temp_dir "menu-update") || { log_error "无法创建临时目录"; return 1; }
+
+  log_info "检查更新..."
+  local rel_rc=0
+  # 面向普通用户：不输出回退来源、主备源切换等内部诊断，只保留最终结论
+  _RELEASE_QUIET=1
+  release_check_latest "$install_dir" "$tmp_dir" "$region" || rel_rc=$?
+  _RELEASE_QUIET=0
+  rm -rf -- "${tmp_dir:?}"
+
+  local current="${_REL_INSTALLED_TAG:-${DEBNAS_VERSION:-未知}}"
+  local latest="${_REL_LATEST_TAG:-}"
+
+  # 版本号属于状态信息，统一带 [INFO] 标识，不直接裸行展示
+  log_info "当前版本：${current}"
+  if [[ -n "$latest" ]]; then
+    log_info "最新版本：${latest}"
+  fi
+
+  case "$rel_rc" in
+    0)
+      log_success "已是最新版本（${current}）"
+      return 0
+      ;;
+    1)
+      log_warning "发现新版本：${latest}"
+      ;;
+    *)
+      # 只用面向用户的一句话结论（内部原因见 debnas check-update 的详细输出）
+      if [[ "${_REL_ERROR:-}" == "older" ]]; then
+        log_warning "$(release_check_user_text "$_REL_ERROR")"
+      else
+        log_error "$(release_check_user_text "${_REL_ERROR:-}")"
+      fi
+      return 0
+      ;;
+  esac
+
+  # 非交互环境：只报告，不擅自更新
+  if [[ ! -t 0 ]]; then
+    log_info "非交互环境，仅检查不更新；如需更新请执行：debnas update --tag ${latest}"
+    return 0
+  fi
+
+  local answer
+  answer=$(ui_confirm "更新到 ${latest}？" "当前版本：${current}\n最新版本：${latest}\n\n将下载发布包并校验 GPG 签名与 SHA256，更新过程中请勿关闭终端。")
+  if [[ "$answer" != "0" ]]; then
+    log_info "已取消更新"
+    return 0
+  fi
+
+  log_info "开始更新到 ${latest}..."
+  if bash "${_DEBNAS_ROOT}/bin/debnas" update --tag "$latest"; then
+    update_check_cache_clear
+    _UI_UPDATE_HINT=""
+    log_success "更新完成，重新进入 DebNAS 后使用新版本"
+  else
+    log_error "更新失败，详见上方输出"
+  fi
+  return 0
+}
+
+# 关于项目二级菜单：项目简介 / 检查脚本更新
+handle_about_sub_menu() {
+  local -a items=("项目简介" "检查脚本更新")
+  ui_screen_switch  # 清 L1 菜单区 + 渲染 L2 Header
+  # 计算旧 L2 区域总行数（Header + 面包屑 + 菜单项 + 底部标签）
+  local _hdr_h=4 _bc_lines=1 _ftr_lines=1
+  [[ "${_UI_COMPACT_MODE:-0}" -eq 1 ]] && _hdr_h=3
+  local _old_area=$((_hdr_h + _bc_lines + ${#items[@]} + _ftr_lines))
+
+  local choice exit_code menu_result
+  while true; do
+    menu_result=$(mktemp)
+    UI_MENU_BACK_LABEL="← 返回上级" UI_MENU_RESULT_FILE="$menu_result" ui_menu "关于项目" "${items[@]}" || {
+      exit_code=$?
+      rm -f "$menu_result"
+      case $exit_code in
+        254) return 0 ;;   # Esc：返回一级菜单
+        255) ui_cursor_show; log_info "用户退出 DebNAS"; exit 0 ;;
+        *)   return 0 ;;
+      esac
+    }
+    choice=$(cat "$menu_result")
+    rm -f "$menu_result"
+
+    # 清除子菜单 → 打印快照（留在 scrollback）→ 内容输出追加在快照下方
+    ui_clear_menu_area "$_old_area"
+    declare -f _ui_print_menu_snapshot >/dev/null 2>&1 && _ui_print_menu_snapshot
+
+    case "$choice" in
+      0) show_project_intro ;;
+      1) handle_script_update ;;
+    esac
+
+    # 在输出末尾重绘 Header + L2 菜单
+    ui_screen_init
+  done
 }
 
 # 部署方案子菜单（新）
@@ -210,12 +321,40 @@ handle_auto_sub_menu() {
   done
 }
 
+# ==================== 首页新版本提示 ====================
+# 一级菜单 footer 的绿点：缓存有效期内直接显示；缺失/过期时后台补一次（结果下次启动生效）
+_UI_UPDATE_HINT=""
+
+update_hint_init() {
+  _UI_UPDATE_HINT=""
+  local install_dir="/opt/debnas"
+  [[ -d "$install_dir" ]] || install_dir="${_DEBNAS_ROOT:-${DEBNAS_ROOT:-.}}"
+
+  if update_check_cache_read && update_check_cache_fresh; then
+    if [[ "${_UC_STATE:-}" == "newer" && -n "${_UC_LATEST:-}" ]]; then
+      _UI_UPDATE_HINT="$_UC_LATEST"
+    fi
+    return 0
+  fi
+
+  # 缓存缺失/过期：后台静默检查，不阻塞首屏
+  # 优先级：CLI/环境（DEBNAS_REGION）> 配置文件 > 默认 cn
+  local region="${DEBNAS_REGION:-}"
+  if [[ -z "$region" ]]; then
+    region=$(config_read "global" "region" "" 2>/dev/null) || region=""
+  fi
+  [[ -n "$region" ]] || region="cn"
+  update_check_spawn "$region" "$install_dir"
+  return 0
+}
+
 # 主菜单循环（新）
 main_menu_loop() {
   # Ctrl+C 在菜单导航中静默忽略（子进程中由 module-runner 自行处理）
   trap ':' INT
 
   build_active_categories
+  update_hint_init
 
   # 空分类保护：无模块也无方案时直接退出
   if [[ ${#ACTIVE_CATEGORIES[@]} -eq 0 ]]; then
@@ -224,15 +363,12 @@ main_menu_loop() {
     exit "${ERROR_MODULE_NOT_FOUND:-1}"
   fi
 
-  local choice exit_code menu_result preserve_output=0
+  local choice exit_code menu_result
   local first_entry=1
   while true; do
     if [[ $first_entry -eq 1 ]]; then
       ui_screen_init    # 首次：无旧菜单需清除
       first_entry=0
-    elif [[ $preserve_output -eq 1 ]]; then
-      ui_screen_init    # 关于项目后：菜单追加在简介下方，不清除已打印内容
-      preserve_output=0
     else
       ui_screen_switch  # 从子菜单返回：清子菜单区 + 渲染 L1
     fi
@@ -251,8 +387,7 @@ main_menu_loop() {
 
     local category="${ACTIVE_CATEGORIES[$choice]}"
     if [[ "$category" == "关于项目" ]]; then
-      handle_about_project
-      preserve_output=1
+      handle_about_sub_menu
     elif [[ "$category" == "一键部署" ]]; then
       handle_solution_sub_menu
     else
@@ -277,13 +412,8 @@ setup_environment() {
 # ==================== 主入口 ====================
 
 main() {
-  # 界面选择：TTY + UTF-8 时使用方案 A 双栏仪表盘；非 TTY 或 DEBNAS_UI=classic 回退旧版菜单
-  local use_dashboard=0
-  if ui_dashboard_available; then
-    use_dashboard=1
-  else
-    ui_screen_clear    # 旧版界面：仅此一次清屏（仪表盘使用备用屏幕，不清主屏）
-  fi
+  # 交互界面：经典菜单（debnas-v2 样式），ui_menu 方向键导航
+  ui_screen_clear
 
   setup_environment
 
@@ -296,14 +426,6 @@ main() {
   discover_modules 2>/dev/null
   load_solutions
 
-  if [[ $use_dashboard -eq 1 ]]; then
-    if ui_dashboard_main "${_MENU_TMP_DIR:-}"; then
-      log_info "用户退出 DebNAS"
-      exit 0
-    fi
-    # 仪表盘初始化失败（如无可用模块）：回退旧版菜单
-    ui_screen_clear
-  fi
   main_menu_loop
 }
 

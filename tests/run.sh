@@ -8,7 +8,7 @@
 #   unit    — BATS 单元测试
 #   all     — 顺序执行 syntax + static + unit
 #
-# VM 集成测试（第 5 层）请参见 tests/test-plan.md，通过 SSH 手动执行。
+# VM 集成测试（第 6 层）请参见 tests/test-plan.md，通过 SSH 手动/AI 辅助执行。
 
 set -euo pipefail
 
@@ -58,9 +58,9 @@ run_static_analysis() {
   echo "=== 第 2 层：ShellCheck 静态分析 ==="
 
   if ! command -v shellcheck &>/dev/null; then
-    echo "[SKIP] shellcheck 未安装，跳过静态分析"
+    echo "[FAIL] shellcheck 未安装，无法进行静态分析"
     echo "  安装方法: sudo apt install shellcheck"
-    return 0
+    return 1
   fi
 
   local errors=0
@@ -89,6 +89,13 @@ run_static_analysis() {
     fi
   done < <(find "${DEBNAS_ROOT}"/modules -mindepth 2 -name '*.sh' -print0)
 
+  # ShellCheck tests/（BATS 文件；此前未纳入门禁，SC2314 等错误长期不可见）
+  while IFS= read -r -d '' f; do
+    if ! shellcheck --severity=error -x -P SCRIPTDIR "$f" 2>&1; then
+      ((errors++)) || true
+    fi
+  done < <(find "${DEBNAS_ROOT}/tests" -name '*.bats' -print0)
+
   if (( errors > 0 )); then
     echo "[FAIL] ShellCheck: ${errors} 处 error 级别问题"
     return 1
@@ -113,6 +120,11 @@ run_unit_tests() {
   local bats_rc=0
   bats_output=$(bats --recursive "${SCRIPT_DIR}/unit/" 2>&1) || bats_rc=$?
   echo "$bats_output"
+
+  # 统计跳过用例（缺 gpg/jq 等环境时），避免“全绿”掩盖未执行项
+  local skip_count
+  skip_count=$(grep -c '^ok .*# skip' <<<"$bats_output" || true)
+  echo "[INFO] 跳过用例: ${skip_count:-0}"
 
   # 检查是否有 not ok 行（真实测试失败）
   # 不能用 echo | grep -q：pipefail 下 grep 提前退出使 echo 收到 SIGPIPE，管道返回 141，失败被漏报
@@ -144,6 +156,8 @@ case "$TEST_TYPE" in
     bats_rc=0
     bats_output=$(bats --recursive "${SCRIPT_DIR}/integration/" 2>&1) || bats_rc=$?
     echo "$bats_output"
+    skip_count=$(grep -c '^ok .*# skip' <<<"$bats_output" || true)
+    echo "[INFO] 跳过用例: ${skip_count:-0}"
     if [[ $bats_rc -ne 0 ]] || grep -q '^not ok ' <<<"$bats_output"; then
       exit 1
     fi

@@ -9,9 +9,25 @@ IFS=$'\n\t'
 # 参数：$1 - 等待秒数（0 表示不等待）
 acquire_update_lock() {
   local wait_seconds="${1:-0}"
-  local lock_dir="/run/lock"
-  [[ -d "${lock_dir}" && -w "${lock_dir}" ]] || lock_dir="/tmp"
-  exec 9>"${lock_dir}/debnas-threat-ips.lock" || return 1
+  local lock_dir="/run/lock" lock_file
+  # 优先使用系统锁目录；回退时使用受属主校验的 DebNAS 临时基目录（0700），
+  # 并拒绝符号链接锁文件，避免 /tmp 下固定路径被本地用户预建后由 root 跟随/截断
+  if [[ -d "$lock_dir" && -w "$lock_dir" && ! -L "$lock_dir" ]]; then
+    lock_file="${lock_dir}/debnas-threat-ips.lock"
+  else
+    lock_dir="${DEBNAS_TMP_BASE:-/tmp/debnas}"
+    if [[ ! -e "$lock_dir" && ! -L "$lock_dir" ]]; then
+      mkdir -m 700 -- "$lock_dir" 2>/dev/null || true
+    fi
+    [[ -d "$lock_dir" && ! -L "$lock_dir" && -O "$lock_dir" ]] || return 1
+    lock_file="${lock_dir}/debnas-threat-ips.lock"
+  fi
+  [[ ! -L "$lock_file" ]] || {
+    log_error "锁文件是符号链接，拒绝使用：${lock_file}"
+    return 1
+  }
+  # 用 >> 而非 >：即使路径异常也不会截断已有文件
+  exec 9>>"$lock_file" || return 1
   if [[ "${wait_seconds}" -gt 0 ]]; then
     flock -w "${wait_seconds}" 9
   else

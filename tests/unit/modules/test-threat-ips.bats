@@ -295,7 +295,7 @@ _parse_list() {
 
 
 @test "threat-ips: 更新流程不再先清空 IPSet（解析成功后才增量同步）" {
-  ! grep -q 'clear_all_ipsets' "${MODULE_DIR}/firewall.sh"
+  if grep -q 'clear_all_ipsets' "${MODULE_DIR}/firewall.sh"; then false; fi
   grep -A40 '^filter_and_add_ips()' "${MODULE_DIR}/firewall.sh" | grep -q 'sync_ipset_entries'
 }
 
@@ -494,7 +494,7 @@ _ti_sync() {
   FW_FAIL_ADD=8.8.8.8 run _ti_sync "$tmp"
   [[ "$output" == *"RC=1"* ]]
   [[ "$output" == *"添加条目失败"* ]]
-  ! grep -q 'remove 7.7.7.7' "$tmp/state/log"
+  if grep -q 'remove 7.7.7.7' "$tmp/state/log"; then false; fi
   [[ "$(sort "$tmp/state/permanent" | tr '\n' ' ')" == "1.2.3.4 7.7.7.7 " ]]
   rm -rf "$tmp"
 }

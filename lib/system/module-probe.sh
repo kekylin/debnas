@@ -1,5 +1,5 @@
 #!/bin/bash
-# 功能：模块只读探测契约（module_status / module_plan）加载器 + 状态缓存
+# 功能：模块只读探测契约（module_status / module_plan）加载器
 # 说明：
 #   模块可选实现两个只读函数（契约详见 docs/ARCHITECTURE.md §4.5）：
 #     module_status  → 输出一行  状态码|简短说明
@@ -11,15 +11,13 @@
 #   探测时在子 shell 中设置 DEBNAS_MODULE_ACTION=status|plan 后 source 模块，
 #   只得到函数定义而不执行 main 与任何交互逻辑。
 #   **未加守卫的模块绝不 source**（否则会直接执行 main），一律走回退结果。
-# 依赖：module-registry.sh（get_module_path/get_module_field）、state.sh（state_get）
+# 依赖：module-registry.sh（get_module_path/get_module_field）
 
 set -euo pipefail
 IFS=$'\n\t'
 
 # 守卫行：模块入口文件中有以此开头的行（行首、非注释）才视为支持探测
 readonly MODULE_PROBE_GUARD_RE='^if \[\[ "\$\{DEBNAS_MODULE_ACTION:-run\}" == "run" \]\]'
-# 只读工具约定：module_status 返回 unknown 且说明以此开头时，不用执行记录改写为 applied
-readonly MODULE_STATUS_READONLY_PREFIX='只读工具'
 
 # 合法取值
 readonly MODULE_STATUS_CODES=" applied running partial absent warn error unknown "
@@ -30,13 +28,6 @@ MODULE_PROBE_STATUS_TIMEOUT="${MODULE_PROBE_STATUS_TIMEOUT:-3}"
 MODULE_PROBE_PLAN_TIMEOUT="${MODULE_PROBE_PLAN_TIMEOUT:-8}"
 
 declare -g _MP_CLEAN=""
-
-# 状态缓存：模块名 → "code|desc"
-declare -g -A _MODULE_STATUS=()
-# 异步采集中的模块：模块名 → pid
-declare -g -A _MODULE_PROBE_PIDS=()
-declare -g _MODULE_PROBE_T0=""
-declare -g _MODULE_PROBE_DIR=""
 
 # ==================== 规范化 ====================
 
@@ -223,108 +214,4 @@ _module_probe_wait() {
   local rc=0
   wait "$pid" 2>/dev/null || rc=$?
   return "$rc"
-}
-
-# ==================== 状态缓存（仪表盘批量/异步采集） ====================
-
-# 合并执行记录：模块未提供状态检测时，用 module-runner 写入的 state 文件补充
-# 约定：只读工具（sys-check、service-query 等）没有"已应用"概念，其 module_status 返回
-#       "unknown|只读工具 …"；说明以 MODULE_STATUS_READONLY_PREFIX 开头的 unknown 原样保留，
-#       不因有成功执行记录而改写为 applied（docs/ARCHITECTURE.md §4.5.1）
-# 参数：$1 — 模块名，$2 — "code|desc"
-# 输出：stdout 合并后的 "code|desc"
-module_status_merge_state() {
-  local module_name="$1" result="$2"
-  local code="${result%%|*}" desc="${result#*|}"
-  [[ "$code" == "unknown" ]] || { printf '%s\n' "$result"; return 0; }
-  [[ "$desc" == "${MODULE_STATUS_READONLY_PREFIX}"* ]] && { printf '%s\n' "$result"; return 0; }
-  local last=""
-  last=$(state_get "$module_name" "last_result" 2>/dev/null) || last=""
-  case "$last" in
-    success) printf 'applied|已执行（按 DebNAS 执行记录，模块未提供状态检测）\n' ;;
-    fail)    printf 'error|上次执行失败（按 DebNAS 执行记录）\n' ;;
-    *)       printf '%s\n' "$result" ;;
-  esac
-}
-
-# 启动异步状态采集
-# 参数：$1 — 缓存目录，其余 — 模块名列表
-# 说明：每个支持契约的模块在独立后台子 shell 中探测，结果写 <dir>/<模块>.status；
-#       不支持契约的模块立即写入回退结果（不 fork）
-module_status_collect_start() {
-  local dir="${1:?module_status_collect_start: 缺少缓存目录}"
-  shift
-  _MODULE_PROBE_DIR="$dir"
-  _MODULE_PROBE_T0="${EPOCHREALTIME/[.,]/}"
-  local module_name path
-  for module_name in "$@"; do
-    [[ -n "$module_name" ]] || continue
-    # 已在采集中的先终止，避免旧结果覆盖
-    if [[ -n "${_MODULE_PROBE_PIDS[$module_name]:-}" ]]; then
-      bg_group_kill "${_MODULE_PROBE_PIDS[$module_name]}"
-      unset '_MODULE_PROBE_PIDS[$module_name]'
-    fi
-    rm -f "${dir}/${module_name}.status" 2>/dev/null || true
-    if ! module_probe_supported "$module_name"; then
-      _MODULE_STATUS["$module_name"]=$(module_status_merge_state "$module_name" "unknown|未提供状态检测")
-      continue
-    fi
-    get_module_field_var path "$module_name" "path" || continue
-    _MODULE_STATUS["$module_name"]="pending|检测中"
-    bg_group_begin
-    (
-      raw=$( _module_probe_exec "$path" status "$module_name" 2>/dev/null ) || raw="${raw:-error|状态检测失败}"
-      printf '%s\n' "$raw" > "${dir}/${module_name}.status.tmp" 2>/dev/null \
-        && mv -f "${dir}/${module_name}.status.tmp" "${dir}/${module_name}.status" 2>/dev/null
-    ) </dev/null >/dev/null 2>&1 &
-    _MODULE_PROBE_PIDS["$module_name"]=$!
-    bg_group_end
-  done
-  return 0
-}
-
-# 轮询异步采集结果，超时的终止并标记
-# 参数：$1 — 超时秒数（可选，默认 MODULE_PROBE_STATUS_TIMEOUT）
-# 返回：0 全部完成，1 仍有进行中的
-module_status_collect_poll() {
-  local timeout="${1:-$MODULE_PROBE_STATUS_TIMEOUT}"
-  local dir="$_MODULE_PROBE_DIR" module_name raw now elapsed
-  [[ ${#_MODULE_PROBE_PIDS[@]} -gt 0 ]] || return 0
-  now="${EPOCHREALTIME/[.,]/}"
-  elapsed=$(( (now - ${_MODULE_PROBE_T0:-$now}) / 1000 ))
-  for module_name in "${!_MODULE_PROBE_PIDS[@]}"; do
-    if [[ -f "${dir}/${module_name}.status" ]]; then
-      raw=$(< "${dir}/${module_name}.status") || raw=""
-      _MODULE_STATUS["$module_name"]=$(module_status_merge_state "$module_name" "$(module_status_normalize "$raw")")
-      unset '_MODULE_PROBE_PIDS[$module_name]'
-    elif ! kill -0 "${_MODULE_PROBE_PIDS[$module_name]}" 2>/dev/null; then
-      # 进程已退出但没有结果文件（加载失败/被 set -e 终止）
-      [[ -f "${dir}/${module_name}.status" ]] && continue
-      _MODULE_STATUS["$module_name"]=$(module_status_merge_state "$module_name" "unknown|状态检测失败")
-      unset '_MODULE_PROBE_PIDS[$module_name]'
-    elif (( elapsed >= timeout * 1000 )); then
-      bg_group_kill "${_MODULE_PROBE_PIDS[$module_name]}"
-      _MODULE_STATUS["$module_name"]=$(module_status_merge_state "$module_name" "unknown|状态检测超时")
-      unset '_MODULE_PROBE_PIDS[$module_name]'
-    fi
-  done
-  [[ ${#_MODULE_PROBE_PIDS[@]} -eq 0 ]]
-}
-
-# 终止全部进行中的采集（退出仪表盘时调用）
-module_status_collect_stop() {
-  local module_name
-  for module_name in "${!_MODULE_PROBE_PIDS[@]}"; do
-    bg_group_kill "${_MODULE_PROBE_PIDS[$module_name]}"
-  done
-  _MODULE_PROBE_PIDS=()
-  return 0
-}
-
-# 读取缓存的模块状态
-# 参数：$1 — 模块名
-# 输出：stdout "code|desc"（无缓存时 unknown）
-module_status_get() {
-  local module_name="${1:?module_status_get: 缺少模块名}"
-  printf '%s\n' "${_MODULE_STATUS[$module_name]:-unknown|未检测}"
 }

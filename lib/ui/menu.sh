@@ -207,6 +207,19 @@ ui_menu() {
     [[ $idx -ge $_ui_scroll_offset && $idx -lt $(( _ui_scroll_offset + _ui_visible_slots )) ]]
   }
 
+  # 重算可见窗口 + 滚动钳位 + 总行数
+  # 顺序固定为 计算→钳位→计算：钳位依赖可见槽位，若用上一帧的槽位会算错滚动偏移
+  _ui_menu_refresh_layout() {
+    _ui_menu_calc_visible
+    _ui_menu_clamp_scroll
+    _ui_menu_calc_visible
+    if [[ $_ui_needs_scroll -eq 0 ]]; then
+      total_lines=$(( breadcrumb_lines + item_count + bottom_lines ))
+    else
+      total_lines=$(( breadcrumb_lines + _ui_top_ind + _ui_visible_slots + _ui_bot_ind + bottom_lines ))
+    fi
+  }
+
   # ---- 行号映射（0-based，Content 区域内） ----
   # 0: 面包屑, 1: (空行), breadcrumb_lines+...: 菜单项/指示器, total_lines-1: 底部标签
   _item_to_line() {
@@ -223,7 +236,7 @@ ui_menu() {
     local i vis_i
     # 面包屑
     if [[ -n "$breadcrumb" ]]; then
-      printf '%*s%b%s%b\n' "$_UI_BREAD_INDENT" '' "$COLOR_DIM" "$breadcrumb" "$COLOR_RESET"
+      printf '%*s%b%s%b\n' "$_UI_BREAD_X" '' "$COLOR_DIM" "$breadcrumb" "$COLOR_RESET"
     fi
 
     if [[ $_ui_needs_scroll -eq 0 ]]; then
@@ -231,54 +244,60 @@ ui_menu() {
       if [[ "${_UI_COMPACT_MODE:-0}" -eq 1 ]]; then
         for i in "${!items[@]}"; do
           if [[ $i -eq $focus_idx ]]; then
-            printf '%*s%b%d. %s%b\n' "$_UI_COMPACT_INDENT" '' "$COLOR_CYAN" "$((i + 1))" "${items[$i]}" "$COLOR_RESET"
+            printf '%*s%b%d. %s%b\n' "$_UI_COMPACT_X" '' "$COLOR_CYAN" "$((i + 1))" "${items[$i]}" "$COLOR_RESET"
           else
-            printf '%*s%d. %s\n' "$_UI_COMPACT_INDENT" '' "$((i + 1))" "${items[$i]}"
+            printf '%*s%d. %s\n' "$_UI_COMPACT_X" '' "$((i + 1))" "${items[$i]}"
           fi
         done
       else
         for i in "${!items[@]}"; do
           if [[ $i -eq $focus_idx ]]; then
-            printf '%*s%b> %s%b\n' "$_UI_BREAD_INDENT" '' "$COLOR_CYAN" "${items[$i]}" "$COLOR_RESET"
+            printf '%*s%b> %s%b\n' "$_UI_BREAD_X" '' "$COLOR_CYAN" "${items[$i]}" "$COLOR_RESET"
           else
-            printf '%*s%s\n' "$_UI_ITEM_INDENT" '' "${items[$i]}"
+            printf '%*s%s\n' "$_UI_ITEM_X" '' "${items[$i]}"
           fi
         done
       fi
     else
       # 滚动模式：只渲染可见项 + 指示器
       if [[ $_ui_top_ind -eq 1 ]]; then
-        printf '%*s%b↑ 更多...%b\n' "$_UI_ITEM_INDENT" '' "$COLOR_DIM" "$COLOR_RESET"
+        printf '%*s%b↑ 更多...%b\n' "$_UI_ITEM_X" '' "$COLOR_DIM" "$COLOR_RESET"
       fi
       vis_i=0
       if [[ "${_UI_COMPACT_MODE:-0}" -eq 1 ]]; then
         for (( i = _ui_scroll_offset; i < _ui_scroll_offset + _ui_visible_slots; i++ )); do
           if [[ $i -eq $focus_idx ]]; then
-            printf '%*s%b%d. %s%b\n' "$_UI_COMPACT_INDENT" '' "$COLOR_CYAN" "$((i + 1))" "${items[$i]}" "$COLOR_RESET"
+            printf '%*s%b%d. %s%b\n' "$_UI_COMPACT_X" '' "$COLOR_CYAN" "$((i + 1))" "${items[$i]}" "$COLOR_RESET"
           else
-            printf '%*s%d. %s\n' "$_UI_COMPACT_INDENT" '' "$((i + 1))" "${items[$i]}"
+            printf '%*s%d. %s\n' "$_UI_COMPACT_X" '' "$((i + 1))" "${items[$i]}"
           fi
           ((vis_i++)) || true
         done
       else
         for (( i = _ui_scroll_offset; i < _ui_scroll_offset + _ui_visible_slots; i++ )); do
           if [[ $i -eq $focus_idx ]]; then
-            printf '%*s%b> %s%b\n' "$_UI_BREAD_INDENT" '' "$COLOR_CYAN" "${items[$i]}" "$COLOR_RESET"
+            printf '%*s%b> %s%b\n' "$_UI_BREAD_X" '' "$COLOR_CYAN" "${items[$i]}" "$COLOR_RESET"
           else
-            printf '%*s%s\n' "$_UI_ITEM_INDENT" '' "${items[$i]}"
+            printf '%*s%s\n' "$_UI_ITEM_X" '' "${items[$i]}"
           fi
           ((vis_i++)) || true
         done
       fi
       if [[ $_ui_bot_ind -eq 1 ]]; then
-        printf '%*s%b↓ 更多...%b\n' "$_UI_ITEM_INDENT" '' "$COLOR_DIM" "$COLOR_RESET"
+        printf '%*s%b↓ 更多...%b\n' "$_UI_ITEM_X" '' "$COLOR_DIM" "$COLOR_RESET"
       fi
     fi
 
-    # 底部标签
+    # 底部标签（仅一级菜单在"有新版本"时显示绿点）
     if [[ -n "$back_label" ]]; then
+      _UI_FOOTER_UPDATE_DOT=0
       ui_footer "↑↓ 选择  Enter 确认  Esc 返回"
     elif [[ "$enable_quit" -eq 1 ]]; then
+      if [[ -z "$breadcrumb" && -n "${_UI_UPDATE_HINT:-}" ]]; then
+        _UI_FOOTER_UPDATE_DOT=1
+      else
+        _UI_FOOTER_UPDATE_DOT=0
+      fi
       ui_footer "↑↓ 选择  Enter 确认  Q 退出"
     fi
   }
@@ -295,34 +314,40 @@ ui_menu() {
 
     case "$type" in
       breadcrumb)
-        printf '%*s%b%s%b\n' "$_UI_BREAD_INDENT" '' "$COLOR_DIM" "$breadcrumb" "$COLOR_RESET"
+        printf '%*s%b%s%b\n' "$_UI_BREAD_X" '' "$COLOR_DIM" "$breadcrumb" "$COLOR_RESET"
         ;;
       bottom)
         if [[ -n "$back_label" ]]; then
+          _UI_FOOTER_UPDATE_DOT=0
           ui_footer "↑↓ 选择  Enter 确认  Esc 返回"
         elif [[ "$enable_quit" -eq 1 ]]; then
+          if [[ -z "$breadcrumb" && -n "${_UI_UPDATE_HINT:-}" ]]; then
+            _UI_FOOTER_UPDATE_DOT=1
+          else
+            _UI_FOOTER_UPDATE_DOT=0
+          fi
           ui_footer "↑↓ 选择  Enter 确认  Q 退出"
         fi
         ;;
       scroll_indicator)
         if [[ "$idx" == "top" ]]; then
-          printf '%*s%b↑ 更多...%b\n' "$_UI_ITEM_INDENT" '' "$COLOR_DIM" "$COLOR_RESET"
+          printf '%*s%b↑ 更多...%b\n' "$_UI_ITEM_X" '' "$COLOR_DIM" "$COLOR_RESET"
         else
-          printf '%*s%b↓ 更多...%b\n' "$_UI_ITEM_INDENT" '' "$COLOR_DIM" "$COLOR_RESET"
+          printf '%*s%b↓ 更多...%b\n' "$_UI_ITEM_X" '' "$COLOR_DIM" "$COLOR_RESET"
         fi
         ;;
       item)
         if [[ "${_UI_COMPACT_MODE:-0}" -eq 1 ]]; then
           if [[ $idx -eq $focus_idx ]]; then
-            printf '%*s%b%d. %s%b\n' "$_UI_COMPACT_INDENT" '' "$COLOR_CYAN" "$((idx + 1))" "${items[$idx]}" "$COLOR_RESET"
+            printf '%*s%b%d. %s%b\n' "$_UI_COMPACT_X" '' "$COLOR_CYAN" "$((idx + 1))" "${items[$idx]}" "$COLOR_RESET"
           else
-            printf '%*s%d. %s\n' "$_UI_COMPACT_INDENT" '' "$((idx + 1))" "${items[$idx]}"
+            printf '%*s%d. %s\n' "$_UI_COMPACT_X" '' "$((idx + 1))" "${items[$idx]}"
           fi
         else
           if [[ $idx -eq $focus_idx ]]; then
-            printf '%*s%b> %s%b\n' "$_UI_BREAD_INDENT" '' "$COLOR_CYAN" "${items[$idx]}" "$COLOR_RESET"
+            printf '%*s%b> %s%b\n' "$_UI_BREAD_X" '' "$COLOR_CYAN" "${items[$idx]}" "$COLOR_RESET"
           else
-            printf '%*s%s\n' "$_UI_ITEM_INDENT" '' "${items[$idx]}"
+            printf '%*s%s\n' "$_UI_ITEM_X" '' "${items[$idx]}"
           fi
         fi
         ;;
@@ -335,7 +360,16 @@ ui_menu() {
     local old_idx=$1 new_idx=$2
 
     if ! _ui_menu_item_visible "$old_idx"; then
-      # 旧焦点已不可见（如 NUM 跳转或循环 wrap）→ 全量重绘
+      # 旧焦点已滚出可视区（循环 wrap / 数字跳转）→ 从菜单顶部整块清除后重绘
+      # 直接在当前位置渲染会在旧帧下方再叠一帧，屏幕上留下重复菜单
+      if [[ "${_UI_CURSOR_SAVED:-0}" -eq 1 ]]; then
+        printf '\033[u'
+        printf '\033[%dA' "$total_lines"
+        printf '\r\033[J'
+      else
+        printf '\033[H\033[J'
+        ui_header
+      fi
       _ui_menu_render_all
       printf '\033[s'
       _UI_CURSOR_SAVED=1
@@ -355,13 +389,7 @@ ui_menu() {
 
   # ---- 全量重绘辅助（更新 total_lines + 渲染 + 保存光标） ----
   _ui_menu_full_redraw() {
-    _ui_menu_calc_visible
-    _ui_menu_clamp_scroll
-    if [[ $_ui_needs_scroll -eq 0 ]]; then
-      total_lines=$(( breadcrumb_lines + item_count + bottom_lines ))
-    else
-      total_lines=$(( breadcrumb_lines + _ui_top_ind + _ui_visible_slots + _ui_bot_ind + bottom_lines ))
-    fi
+    _ui_menu_refresh_layout
     _ui_menu_render_all
     printf '\033[s'
     _UI_CURSOR_SAVED=1
@@ -390,13 +418,23 @@ ui_menu() {
         ;;
       REDRAW)
         _UI_NEEDS_REDRAW=0
-        # 重新计算布局参数（紧凑模式可能随 ui_screen_init 更新，但不在 SIGWINCH 中变化）
-        # 与首次渲染保持一致：面包屑后无空行，两种模式均为 1 行
-        # （旧实现此处为 2，窗口缩放后行号计算偏移一行，局部刷新错位）
+        # 尺寸变化后整屏重绘：清屏 → 重新检测尺寸/紧凑模式 → Header → 菜单
+        # 只重绘菜单内容会在旧帧下方再叠一帧，屏幕上出现重复菜单
+        ui_detect_size
+        if ui_is_compact_mode; then
+          _UI_COMPACT_MODE=1
+          header_height=3
+        else
+          _UI_COMPACT_MODE=0
+          header_height=4
+        fi
+        # 面包屑固定占 1 行（紧凑模式同样无空行）
         breadcrumb_lines=0
         if [[ -n "$breadcrumb" ]]; then
           breadcrumb_lines=1
         fi
+        printf '\033[H\033[J'
+        ui_header
         _ui_menu_full_redraw
         _ui_a11y_announce "屏幕已刷新，焦点: ${items[$focus_idx]} ($((focus_idx + 1))/${item_count})"
         ;;
@@ -407,12 +445,7 @@ ui_menu() {
         else
           focus_idx=$((item_count - 1))  # 循环到末项（§5.1）
         fi
-        _ui_menu_clamp_scroll
-        _ui_menu_calc_visible
-        # 若指示器变化（边界情况），全量重绘
-        if [[ $_ui_needs_scroll -eq 1 ]]; then
-          total_lines=$(( breadcrumb_lines + _ui_top_ind + _ui_visible_slots + _ui_bot_ind + bottom_lines ))
-        fi
+        _ui_menu_refresh_layout
         _ui_menu_move_focus "$old_focus" "$focus_idx"
         _ui_a11y_announce "焦点: ${items[$focus_idx]} ($((focus_idx + 1))/${item_count})"
         ;;
@@ -423,11 +456,7 @@ ui_menu() {
         else
           focus_idx=0  # 循环到首项（§5.1）
         fi
-        _ui_menu_clamp_scroll
-        _ui_menu_calc_visible
-        if [[ $_ui_needs_scroll -eq 1 ]]; then
-          total_lines=$(( breadcrumb_lines + _ui_top_ind + _ui_visible_slots + _ui_bot_ind + bottom_lines ))
-        fi
+        _ui_menu_refresh_layout
         _ui_menu_move_focus "$old_focus" "$focus_idx"
         _ui_a11y_announce "焦点: ${items[$focus_idx]} ($((focus_idx + 1))/${item_count})"
         ;;
@@ -461,11 +490,7 @@ ui_menu() {
         if [[ $idx -ge 0 && $idx -lt $item_count ]]; then
           old_focus=$focus_idx
           focus_idx=$idx
-          _ui_menu_clamp_scroll
-          _ui_menu_calc_visible
-          if [[ $_ui_needs_scroll -eq 1 ]]; then
-            total_lines=$(( breadcrumb_lines + _ui_top_ind + _ui_visible_slots + _ui_bot_ind + bottom_lines ))
-          fi
+          _ui_menu_refresh_layout
           _ui_menu_move_focus "$old_focus" "$focus_idx"
           _ui_a11y_announce "跳转至: ${items[$focus_idx]} ($((focus_idx + 1))/${item_count})"
         fi

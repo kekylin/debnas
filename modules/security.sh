@@ -68,9 +68,14 @@ su_restriction_safe_to_apply() {
 configure_su_restrictions() {
   log_info "配置 su 权限限制..."
   local current_content new_content
+  if [[ -e /etc/pam.d/su && ! -r /etc/pam.d/su ]]; then
+    log_error "无法读取 /etc/pam.d/su，拒绝覆盖"
+    return 1
+  fi
   current_content=$(cat /etc/pam.d/su 2>/dev/null) || current_content=""
   # 检测 PAM 文件是否已损坏（含 NUL 字节等非文本内容）
-  if [[ -f /etc/pam.d/su ]] && grep -qP '\x00' /etc/pam.d/su 2>/dev/null; then
+  # grep -P '\x00' 在 GNU grep 的二进制模式下匹配不到 NUL，改用 od 逐字节检查
+  if [[ -f /etc/pam.d/su ]] && od -An -v -tx1 /etc/pam.d/su 2>/dev/null | grep -w '00' >/dev/null; then
     log_error "/etc/pam.d/su 已损坏（含二进制内容），请手动修复"
     return 1
   fi
@@ -82,11 +87,13 @@ configure_su_restrictions() {
   su_restriction_safe_to_apply "$current_content" || return 0
   new_content=$(awk -v rule="auth       required   pam_wheel.so group=sudo use_uid" '
     { print } !done && /^[[:space:]]*auth[[:space:]].*pam_rootok\.so/ { print rule; done = 1 }' <<< "$current_content")
-  if write_file_if_changed "/etc/pam.d/su" "$new_content"; then
-    log_success "已添加 su 限制配置（仅 sudo 组成员可 su）。"
-  else
-    log_info "su 限制配置未变更。"
-  fi
+  local wrc=0
+  write_file_if_changed "/etc/pam.d/su" "$new_content" || wrc=$?
+  case "$wrc" in
+    0) log_success "已添加 su 限制配置（仅 sudo 组成员可 su）。" ;;
+    1) log_info "su 限制配置未变更。" ;;
+    *) log_error "写入 /etc/pam.d/su 失败"; return 1 ;;
+  esac
 }
 
 # 配置超时自动注销和命令历史记录，提升安全与审计能力
@@ -107,6 +114,10 @@ configure_timeout_and_logging() {
 
   # 读取当前 /etc/profile 内容，检查 DebNAS 审计配置块是否已存在
   local current_content
+  if [[ -e /etc/profile && ! -r /etc/profile ]]; then
+    log_error "无法读取 /etc/profile，拒绝覆盖"
+    return 1
+  fi
   current_content=$(cat /etc/profile 2>/dev/null) || current_content=""
 
   # shellcheck disable=SC2016
@@ -124,8 +135,13 @@ fi'
   if [[ "$current_content" == *"$_SECURITY_PROFILE_MARKER"* ]]; then
     if [[ "$current_content" == *"$_SECURITY_LEGACY_HISTDIR_SIG"* ]]; then
       # 迁移旧版审计配置块中的不安全 HISTDIR 片段
-      if write_file_if_changed "/etc/profile" "${current_content/"$_SECURITY_LEGACY_HISTDIR_SIG"/"$new_histdir_block"}"; then
+      local wrc=0
+      write_file_if_changed "/etc/profile" "${current_content/"$_SECURITY_LEGACY_HISTDIR_SIG"/"$new_histdir_block"}" || wrc=$?
+      if [[ "$wrc" -eq 0 ]]; then
         log_success "已升级命令记录日志目录的安全检查。"
+      elif [[ "$wrc" -eq 2 ]]; then
+        log_error "写入 /etc/profile 失败"
+        return 1
       fi
       return 0
     fi
@@ -153,11 +169,13 @@ fi
 
   local new_content="${current_content}${profile_addition}"
 
-  if write_file_if_changed "/etc/profile" "$new_content"; then
-    log_success "已添加超时和命令记录日志配置。"
-  else
-    log_info "超时和命令记录日志配置未变更。"
-  fi
+  local wrc=0
+  write_file_if_changed "/etc/profile" "$new_content" || wrc=$?
+  case "$wrc" in
+    0) log_success "已添加超时和命令记录日志配置。" ;;
+    1) log_info "超时和命令记录日志配置未变更。" ;;
+    *) log_error "写入 /etc/profile 失败"; return 1 ;;
+  esac
 }
 
 # ==================== 只读探测契约（docs/ARCHITECTURE.md §4.5） ====================
@@ -273,8 +291,8 @@ module_plan() {
 main() {
   check_dependencies "${REQUIRED_CMDS[@]}" || { log_error "依赖缺失，请先安装必备命令：${REQUIRED_CMDS[*]}。"; exit "${ERROR_DEPENDENCY}"; }
   log_info "配置系统安全..."
-  configure_su_restrictions
-  configure_timeout_and_logging
+  configure_su_restrictions || exit "${ERROR_GENERAL}"
+  configure_timeout_and_logging || exit "${ERROR_GENERAL}"
   log_success "安全加固 就绪"
 }
 

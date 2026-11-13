@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# 测试: lib/system/module-probe.sh — 模块只读探测契约（module_status / module_plan）加载器与状态缓存
+# 测试: lib/system/module-probe.sh — 模块只读探测契约（module_status / module_plan）加载器
 # 技术: 临时模块目录（DEBNAS_MODULES_DIR）+ 守卫/未守卫/超时/非法输出夹具
 
 load '../../helpers/common-setup'
@@ -24,7 +24,6 @@ setup() {
   source "${DEBNAS_ROOT}/lib/system/module-registry.sh"
   source "${DEBNAS_ROOT}/lib/system/module-probe.sh"
   _MODULE_REGISTRY=(); _DISCOVERED_MODULES=(); _MODULES_DISCOVERED=0
-  _MODULE_STATUS=(); _MODULE_PROBE_PIDS=()
   _DEBNAS_BOOTSTRAPPED=1
   MODULE_PROBE_STATUS_TIMEOUT=2
   MODULE_PROBE_PLAN_TIMEOUT=2
@@ -106,7 +105,6 @@ EOF
 }
 
 teardown() {
-  module_status_collect_stop 2>/dev/null || true
   pkill -f 'sleep 37[.]4242' 2>/dev/null || true
   rm -rf "$TEST_MODULES_DIR" "$DEBNAS_STATE_DIR"
   rm -f "$MARKER"
@@ -188,27 +186,6 @@ EOF
   [ -z "$(pgrep -f 'sleep 37[.]4242')" ]
 }
 
-@test "module_status_collect: 超时与 stop 都终止整个进程组（不留孤儿进程）" {
-  local dir="$BATS_TMPDIR/probe-cache-orphan" i
-  rm -rf "$dir"; mkdir -p "$dir"
-  module_status_collect_start "$dir" orphan
-  for (( i = 0; i < 40; i++ )); do
-    module_status_collect_poll 1 && break
-    sleep 0.05
-  done
-  [ "$(module_status_get orphan)" = "unknown|状态检测超时" ]
-  sleep 0.3
-  [ -z "$(pgrep -f 'sleep 37[.]4242')" ]
-  # 采集中途退出仪表盘（stop）同样不留孤儿
-  module_status_collect_start "$dir" orphan
-  sleep 0.3
-  pgrep -f 'sleep 37[.]4242' >/dev/null
-  module_status_collect_stop
-  sleep 0.3
-  [ -z "$(pgrep -f 'sleep 37[.]4242')" ]
-  rm -rf "$dir"
-}
-
 @test "module_probe: 未知动作返回 2" {
   run module_probe good destroy
   [ "$status" -eq 2 ]
@@ -258,56 +235,6 @@ EOF
 @test "module_status_normalize: 只有状态码没有说明" {
   run module_status_normalize "absent"
   [ "$output" = "absent|" ]
-}
-
-# ==================== 执行记录合并 ====================
-
-@test "module_status_merge_state: unknown + 成功记录 → applied" {
-  state_mark_success nofunc 1.0.0
-  run module_status_merge_state nofunc "unknown|未提供状态检测"
-  [[ "$output" == applied\|* ]]
-}
-
-@test "module_status_merge_state: unknown + 失败记录 → error" {
-  state_mark_fail nofunc x
-  run module_status_merge_state nofunc "unknown|未提供状态检测"
-  [[ "$output" == error\|* ]]
-}
-
-@test "module_status_merge_state: 只读工具的 unknown 不被执行记录改写" {
-  state_mark_success nofunc 1.0.0
-  run module_status_merge_state nofunc "unknown|只读工具 · 本地检查通过"
-  [ "$output" = "unknown|只读工具 · 本地检查通过" ]
-}
-
-@test "module_status_merge_state: 模块自报状态优先于执行记录" {
-  state_mark_success good 1.0.0
-  run module_status_merge_state good "absent|未安装"
-  [ "$output" = "absent|未安装" ]
-}
-
-# ==================== 异步采集 ====================
-
-@test "module_status_collect: 并行采集，未守卫模块立即回退，超时被终止" {
-  local dir="$BATS_TMPDIR/probe-cache"
-  rm -rf "$dir"; mkdir -p "$dir"
-  module_status_collect_start "$dir" good nofunc legacy slow
-  [ "${_MODULE_STATUS[legacy]}" = "unknown|未提供状态检测" ]
-  local i
-  for (( i = 0; i < 80; i++ )); do
-    module_status_collect_poll 2 && break
-    sleep 0.05
-  done
-  [ "$(module_status_get good)" = "running|一切正常" ]
-  [ "$(module_status_get nofunc)" = "unknown|未提供状态检测" ]
-  [ "$(module_status_get slow)" = "unknown|状态检测超时" ]
-  [ ! -f "$MARKER" ]
-  rm -rf "$dir"
-}
-
-@test "module_status_get: 无缓存时返回 unknown|未检测" {
-  run module_status_get nosuch
-  [ "$output" = "unknown|未检测" ]
 }
 
 # ==================== 仓库内样板模块 ====================

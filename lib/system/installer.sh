@@ -60,14 +60,24 @@ installer_get_url() {
 # 下载单个文件（主源失败自动切换备用源）
 # 参数：$1 - 输出文件  $2 - 主源 URL  $3 - 备用源 URL
 # 返回：0 成功，1 失败
+# 面向普通用户的菜单场景把 _RELEASE_QUIET 置 1：只保留最终结论，不输出回退来源、主备源切换等内部诊断
+_release_quiet() {
+  [[ "${_RELEASE_QUIET:-0}" -eq 1 ]]
+}
+
 installer_fetch() {
   local out="$1" primary_url="$2" fallback_url="$3"
+  local tmo="${DEBNAS_FETCH_TIMEOUT:-30}" tries="${DEBNAS_FETCH_TRIES:-3}"
+  if ! command -v wget >/dev/null 2>&1; then
+    _release_quiet || log_error "缺少 wget 命令，无法下载发布产物（apt install wget）"
+    return 1
+  fi
   # --timeout/--tries：网络不可达时避免无限挂起（项目红线）
-  if wget -q --timeout=30 --tries=3 -O "$out" "$primary_url" 2>/dev/null; then
+  if wget -q --timeout="$tmo" --tries="$tries" -O "$out" "$primary_url" 2>/dev/null; then
     return 0
   fi
-  log_warning "主源下载失败，尝试备用源..."
-  if wget -q --timeout=30 --tries=3 -O "$out" "$fallback_url" 2>/dev/null; then
+  _release_quiet || log_warning "主源下载失败，尝试备用源..."
+  if wget -q --timeout="$tmo" --tries="$tries" -O "$out" "$fallback_url" 2>/dev/null; then
     return 0
   fi
   rm -f -- "${out:?}"
@@ -155,6 +165,8 @@ installer_verify_latest() {
 installer_latest_tag() {
   local region="$1" workdir="$2" keyring="${3:-}" fprs="${4:-}"
   local file="${workdir}/install.sh.remote" tag
+  # 默认 30s × 3 次；后台静默检查会调小（DEBNAS_FETCH_TIMEOUT / DEBNAS_FETCH_TRIES）
+  local tmo="${DEBNAS_FETCH_TIMEOUT:-30}" tries="${DEBNAS_FETCH_TRIES:-3}"
   if [[ -n "$keyring" && -n "$fprs" ]]; then
     local -a bases=("$DEBNAS_RAW_GLOBAL_BASE" "$DEBNAS_RAW_CN_BASE")
     [[ "$region" == "cn" ]] && bases=("$DEBNAS_RAW_CN_BASE" "$DEBNAS_RAW_GLOBAL_BASE")
@@ -162,8 +174,8 @@ installer_latest_tag() {
     mkdir -p -- "$ptr" || return 1
     for base in "${bases[@]}"; do
       rm -f -- "${ptr:?}/LATEST" "${ptr:?}/LATEST.asc"
-      if wget -q --timeout=30 --tries=3 -O "${ptr}/LATEST" "${base}/LATEST" 2>/dev/null; then
-        if wget -q --timeout=30 --tries=3 -O "${ptr}/LATEST.asc" "${base}/LATEST.asc" 2>/dev/null; then
+      if wget -q --timeout="$tmo" --tries="$tries" -O "${ptr}/LATEST" "${base}/LATEST" 2>/dev/null; then
+        if wget -q --timeout="$tmo" --tries="$tries" -O "${ptr}/LATEST.asc" "${base}/LATEST.asc" 2>/dev/null; then
           got=2
           break
         fi
@@ -177,15 +189,15 @@ installer_latest_tag() {
         return 0
       fi
       rm -rf -- "${ptr:?}"
-      log_error "版本指针 LATEST 的签名校验未通过（文件可能被篡改）"
+      _release_quiet || log_error "版本指针 LATEST 的签名校验未通过（文件可能被篡改）"
       return 2
     fi
     rm -rf -- "${ptr:?}"
     if (( got == 1 )); then
-      log_error "取到了版本指针 LATEST，但取不到它的签名 LATEST.asc，不予采用"
+      _release_quiet || log_error "取到了版本指针 LATEST，但取不到它的签名 LATEST.asc，不予采用"
       return 2
     fi
-    log_warning "未取到已签名的版本指针（LATEST / LATEST.asc），回退读取 main 分支 install.sh 中的版本号（该来源未签名，只用于升级）"
+    _release_quiet || log_warning "未取到已签名的版本指针（LATEST / LATEST.asc），回退读取 main 分支 install.sh 中的版本号（该来源未签名，只用于升级）"
   fi
   if [[ "$region" == "cn" ]]; then
     installer_fetch "$file" "$DEBNAS_INSTALLER_CN_URL" "$DEBNAS_INSTALLER_GLOBAL_URL" || return 1
@@ -228,9 +240,180 @@ installer_marker_get() {
 # 写入 RELEASE 标记文件（格式与 install.sh write_release_marker 一致）
 # 参数：$1 - 安装目录  $2 - tag  $3 - branch  $4 - verified(0|1)
 installer_marker_write() {
-  local file="${1}/RELEASE"
-  printf 'tag=%s\nbranch=%s\nverified=%s\n' "$2" "$3" "$4" > "$file"
-  chmod 644 "$file"
+  local file="${1}/RELEASE" tmp
+  tmp=$(mktemp "${file}.XXXXXX" 2>/dev/null) || return 1
+  if ! printf 'tag=%s\nbranch=%s\nverified=%s\n' "$2" "$3" "$4" > "$tmp" \
+    || ! chmod 644 "$tmp" || ! mv -fT -- "$tmp" "$file"; then
+    rm -f -- "$tmp" 2>/dev/null || true
+    return 1
+  fi
+}
+
+# 版本检测（只读）：用安装目录里的发布公钥验签 main 分支的 LATEST 指针，再与已安装版本比较
+# 参数：$1 - 安装目录（含 keys/ 与 RELEASE）  $2 - 临时工作目录  $3 - region（cn|global）
+# 输出：_REL_INSTALLED_TAG（已安装版本）、_REL_LATEST_TAG（远端最新版本）、
+#       _REL_FPR（发布公钥指纹）、_REL_ERROR（失败原因：no-key|untrusted|unavailable|older）
+# 返回：0=已是最新  1=有新版本  2=检查失败（原因见 _REL_ERROR）
+# 说明：只读取与下载版本指针，不下载发布包、不持部署锁、不修改安装目录
+release_check_latest() {
+  local install_dir="$1" workdir="$2" region="${3:-cn}"
+  _REL_INSTALLED_TAG=""
+  _REL_LATEST_TAG=""
+  _REL_FPR=""
+  _REL_ERROR=""
+  local keyring="${workdir}/release-keyring.gpg" fpr rc=0 tag
+  if ! fpr=$(installer_load_release_key "$install_dir" "$keyring"); then
+    _REL_ERROR="no-key"
+    return 2
+  fi
+  _REL_FPR="$fpr"
+  # 缺少 RELEASE 标记（或标记里没有 tag）时退回代码内的 DEBNAS_VERSION（与 update 的防降级判断一致）
+  _REL_INSTALLED_TAG=$(installer_marker_get "$install_dir" "tag")
+  if [[ -z "$_REL_INSTALLED_TAG" ]] && installer_valid_tag "${DEBNAS_VERSION:-}"; then
+    _REL_INSTALLED_TAG="$DEBNAS_VERSION"
+  fi
+  tag=$(installer_latest_tag "$region" "$workdir" "$keyring" "$fpr") || rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    # 2=指针存在但验签失败（疑似篡改），1=根本取不到（网络不可达/尚未发布签名指针）
+    if [[ "$rc" -eq 2 ]]; then
+      _REL_ERROR="untrusted"
+    else
+      _REL_ERROR="unavailable"
+    fi
+    return 2
+  fi
+  _REL_LATEST_TAG="$tag"
+  [[ "$tag" == "$_REL_INSTALLED_TAG" ]] && return 0
+  if [[ -n "$_REL_INSTALLED_TAG" ]] && installer_version_lt "$tag" "$_REL_INSTALLED_TAG"; then
+    # 远端低于本地：指针回放或维护者回退版本，按异常处理，不能当成"可升级"
+    _REL_ERROR="older"
+    return 2
+  fi
+  return 1
+}
+
+# 版本检测失败原因的说明（stdout 一行），供 debnas check-update 与菜单共用，避免两处措辞分叉
+# 参数：$1 - _REL_ERROR  $2 - 远端最新版本  $3 - 当前版本
+release_check_error_text() {
+  case "${1:-}" in
+    no-key)
+      printf '%s\n' "安装目录缺少发布公钥，可能是未签名的旧安装"
+      ;;
+    untrusted)
+      printf '%s\n' "版本指针 LATEST 的签名校验未通过（文件可能被篡改），拒绝自动更新"
+      ;;
+    older)
+      printf '%s\n' "远端版本 ${2:-未知} 低于当前版本 ${3:-未知}（可能是指针回放），未计为可更新"
+      ;;
+    *)
+      printf '%s\n' "无法获取最新版本号（网络不可达，或维护者尚未发布签名版本）"
+      ;;
+  esac
+}
+
+# 面向普通用户的一句话结论（菜单「检查脚本更新」使用）：不展开内部原因
+# 参数：$1 - _REL_ERROR
+release_check_user_text() {
+  case "${1:-}" in
+    no-key)
+      printf '%s\n' "检查更新失败：当前安装缺少更新校验信息，请重新安装后再试"
+      ;;
+    untrusted)
+      printf '%s\n' "检查更新失败：更新信息校验未通过，为安全起见已停止"
+      ;;
+    older)
+      printf '%s\n' "当前已是最新可用版本"
+      ;;
+    *)
+      printf '%s\n' "检查更新失败：暂时无法连接更新服务器，请稍后重试"
+      ;;
+  esac
+}
+
+# ==================== 首页"有新版本"提示缓存 ====================
+# 菜单首屏不联网：读本地缓存（默认 6 小时有效），过期后由后台进程静默检查并写回，下次启动生效。
+# 缓存文件每行 key=value：checked_at=<epoch> / latest=<tag> / state=newer|latest|error
+readonly DEBNAS_UPDATE_CACHE="${DEBNAS_UPDATE_CACHE:-/var/lib/debnas/state/update-check}"
+readonly DEBNAS_UPDATE_CACHE_TTL="${DEBNAS_UPDATE_CACHE_TTL:-21600}"
+
+# 读取缓存 → _UC_AT / _UC_LATEST / _UC_STATE；文件缺失或格式不对返回 1
+update_check_cache_read() {
+  _UC_AT=""
+  _UC_LATEST=""
+  _UC_STATE=""
+  [[ -f "$DEBNAS_UPDATE_CACHE" ]] || return 1
+  local key value
+  while IFS='=' read -r key value; do
+    case "$key" in
+      checked_at) _UC_AT="$value" ;;
+      latest)     _UC_LATEST="$value" ;;
+      state)      _UC_STATE="$value" ;;
+    esac
+  done < "$DEBNAS_UPDATE_CACHE"
+  [[ "${_UC_AT:-}" =~ ^[0-9]+$ ]]
+}
+
+# 缓存是否仍在有效期内（TTL 秒）
+update_check_cache_fresh() {
+  [[ "${_UC_AT:-}" =~ ^[0-9]+$ ]] || return 1
+  local now
+  now=$(date '+%s')
+  (( now >= _UC_AT && now - _UC_AT < DEBNAS_UPDATE_CACHE_TTL ))
+}
+
+# 写缓存（同目录临时文件 + rename，避免读到半截内容）
+# 参数：$1 - state（newer|latest|error）  $2 - 最新版本号
+update_check_cache_write() {
+  local state="$1" latest="${2:-}" dir tmp
+  dir="${DEBNAS_UPDATE_CACHE%/*}"
+  [[ -d "$dir" ]] || mkdir -p -- "$dir" 2>/dev/null || return 1
+  tmp=$(mktemp "${DEBNAS_UPDATE_CACHE}.XXXXXX" 2>/dev/null) || return 1
+  if ! printf 'checked_at=%s\nlatest=%s\nstate=%s\n' "$(date '+%s')" "$latest" "$state" > "$tmp" 2>/dev/null; then
+    rm -f -- "$tmp"
+    return 1
+  fi
+  chmod 644 -- "$tmp" 2>/dev/null || true
+  mv -f -- "$tmp" "$DEBNAS_UPDATE_CACHE" 2>/dev/null || { rm -f -- "$tmp"; return 1; }
+}
+
+# 删除缓存：更新成功后调用，避免首页继续显示"有新版本"
+update_check_cache_clear() {
+  rm -f -- "$DEBNAS_UPDATE_CACHE" 2>/dev/null || true
+}
+
+# 检查并写缓存（供后台进程调用；不向终端输出）
+# 参数：$1 - region  $2 - 安装目录
+update_check_refresh_bg() {
+  local region="$1" install_dir="$2" tmp rc=0 state="error"
+  tmp=$(create_temp_dir "update-check") || return 1
+  release_check_latest "$install_dir" "$tmp" "$region" || rc=$?
+  rm -rf -- "${tmp:?}"
+  case "$rc" in
+    0) state="latest" ;;
+    1) state="newer" ;;
+  esac
+  update_check_cache_write "$state" "${_REL_LATEST_TAG:-}"
+}
+
+# 启动后台检查（detached，不占终端）；已有检查在跑时直接返回
+# 参数：$1 - region  $2 - 安装目录
+update_check_spawn() {
+  local region="$1" install_dir="$2" lock="${DEBNAS_UPDATE_CACHE}.lock"
+  local root="${_DEBNAS_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
+  [[ -d "${DEBNAS_UPDATE_CACHE%/*}" ]] || mkdir -p -- "${DEBNAS_UPDATE_CACHE%/*}" 2>/dev/null || return 0
+
+  local -a detach=(setsid)
+  command -v setsid >/dev/null 2>&1 || detach=(env)
+  # 子进程自己拿锁：拿不到说明已有检查在跑，直接退出。
+  # 只取版本指针，用短超时（5s × 1 次），网络不可达时尽快结束，不影响下次启动再试
+  ( "${detach[@]}" bash -c '
+      export DEBNAS_FETCH_TIMEOUT=5 DEBNAS_FETCH_TRIES=1
+      source "$1/lib/bootstrap.sh" || exit 0
+      exec 9>"$2" || exit 0
+      flock -n 9 || exit 0
+      update_check_refresh_bg "$3" "$4"
+    ' _ "$root" "$lock" "$region" "$install_dir" </dev/null >/dev/null 2>&1 & ) 2>/dev/null || true
+  return 0
 }
 
 # ==================== 签名校验 ====================

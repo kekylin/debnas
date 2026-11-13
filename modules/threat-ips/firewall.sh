@@ -289,12 +289,22 @@ delete_ipsets() {
 # 清理 drop 区域配置：仅在区域完全清空时删除自定义配置文件
 cleanup_drop_zone_config() {
   local drop_xml_file="/etc/firewalld/zones/drop.xml"
-  local remaining_sources drop_zone_info need_reload=0
+  local remaining_sources drop_zone_info need_reload=0 query_ok=1
 
-  remaining_sources=$(firewall-cmd --permanent --zone=drop --list-sources \
-    2>/dev/null | grep -v "^$" || true)
-  drop_zone_info=$(firewall-cmd --permanent --zone=drop --list-all \
-    2>/dev/null || true)
+  # 查询失败（firewalld 未运行/未安装）时不能把“查不到”当成“区域为空”，否则会误删用户配置
+  if ! remaining_sources=$(firewall-cmd --permanent --zone=drop --list-sources 2>/dev/null); then
+    query_ok=0
+    remaining_sources=""
+  fi
+  remaining_sources=$(printf '%s\n' "$remaining_sources" | grep -v '^$' || true)
+  if ! drop_zone_info=$(firewall-cmd --permanent --zone=drop --list-all 2>/dev/null); then
+    query_ok=0
+    drop_zone_info=""
+  fi
+  if [[ "$query_ok" -eq 0 ]]; then
+    log_warning "无法确认 drop 区域状态（firewalld 查询失败），保留 ${drop_xml_file}，请手动检查"
+    return 0
+  fi
 
   # 非空的 services/ports/protocols/rich rules 行（为空时 firewall-cmd 输出 "  services: "）
   local has_rules
@@ -303,8 +313,18 @@ cleanup_drop_zone_config() {
 
   if [[ -z "${remaining_sources}" && -z "${has_rules}" ]]; then
     if [[ -f "${drop_xml_file}" ]]; then
+      # 只删除 DebNAS 自己生成的 drop 区配置（含 ipthreat ipset 引用）；
+      # 用户自定义内容即使当前没有 sources/rules 也保留
+      if ! grep -q 'ipthreat' "${drop_xml_file}" 2>/dev/null; then
+        log_warning "drop 区域配置文件不是 DebNAS 生成，保留：${drop_xml_file}"
+        return 0
+      fi
       log_info \
         "drop 区域已清空，删除自定义配置文件：${drop_xml_file}"
+      # 删除前集中备份（禁用威胁 IP 后仍可从 /var/backups/debnas 恢复）
+      if declare -F debnas_backup_file >/dev/null 2>&1; then
+        debnas_backup_file "${drop_xml_file}" >/dev/null 2>&1 || true
+      fi
       if rm -f "${drop_xml_file}"; then
         need_reload=1
         local drop_old_file="/etc/firewalld/zones/drop.xml.old"

@@ -52,7 +52,20 @@ ops_collect_health() {
   fi
 
   if [[ -r /proc/mdstat ]]; then
-    if grep -Eq 'degraded|recovering|FAILED|resync.*PENDING' /proc/mdstat 2>/dev/null; then
+    # /proc/mdstat 的降级标志不是 "degraded" 字样，而是状态行的 [n/m]（n>m 表示缺盘）
+    # 以及 [U_]/[_U]（_ 表示该槽位缺失）；失败盘标记为 (F)，重建中为 recovery/resync。
+    local md_line md_degraded=0 md_rebuilding=0 md_failed=0 md_a md_b
+    while IFS= read -r md_line; do
+      if [[ "$md_line" =~ \[([0-9]+)/([0-9]+)\] ]]; then
+        md_a="${BASH_REMATCH[1]}"
+        md_b="${BASH_REMATCH[2]}"
+        (( md_b < md_a )) && md_degraded=1
+      fi
+      [[ "$md_line" == *"[U_]"* || "$md_line" == *"[_U]"* ]] && md_degraded=1
+      [[ "$md_line" == *"(F)"* ]] && md_failed=1
+      [[ "$md_line" == *"recovery ="* || "$md_line" == *"resync ="* ]] && md_rebuilding=1
+    done < /proc/mdstat
+    if (( md_degraded || md_rebuilding || md_failed )); then
       OPS_HEALTH_RAID_STATE="需关注"
       OPS_HEALTH_RAID_ALERT=1
     else
@@ -72,7 +85,7 @@ ops_collect_health() {
   fi
 
   if command -v journalctl >/dev/null 2>&1; then
-    OPS_HEALTH_LOG_ISSUES=$(timeout 20 journalctl -k --since "${OPS_REPORT_SINCE:-$(date '+%Y-%m-%d %H:%M:%S')}" \
+    OPS_HEALTH_LOG_ISSUES=$(timeout 20 journalctl -q -k --since "${OPS_REPORT_SINCE:-$(date '+%Y-%m-%d %H:%M:%S')}" \
       --no-pager 2>/dev/null \
       | grep -Ei 'EXT4-fs error|XFS.*error|BTRFS.*error|I/O error|Out of memory|oom-kill|md/raid.*degraded' \
       | head -20 || true)

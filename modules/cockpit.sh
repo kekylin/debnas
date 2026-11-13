@@ -6,7 +6,7 @@
 # @version: 4.0.0
 # @order: 30
 # 功能：安装 Cockpit 核心组件（从 backports 获取最新版本）
-# 说明：共享管理面板由 cockpit-shares 模块安装（按 debnas.conf 的 file_sharing_ui 选择 DebNAS 自研插件或 45Drives 扩展，二选一）。
+# 说明：共享管理界面由 cockpit-45drives 模块安装（45Drives 官方插件）。
 
 set -euo pipefail
 IFS=$'\n\t'
@@ -73,6 +73,7 @@ install_core_cockpit_packages() {
 configure_cockpit_runtime_files() {
 	local system_name="$1"
 	local config_changed=0
+	_COCKPIT_WRITE_FAILED=0
 
 	# 旧版本写入的内容（用于识别可安全迁移的 DebNAS 生成文件）
 	local legacy_conf="[Session]
@@ -110,8 +111,13 @@ LoginTitle = DebNAS"
 	[[ -f "$conf_path" && -r "$conf_path" ]] && current_conf=$(< "$conf_path")
 	if [[ ! -f "$conf_path" ]] || [[ "$current_conf" == "$legacy_conf" ]] \
 		|| grep -qxF "$marker" "$conf_path" 2>/dev/null; then
-		if write_file_if_changed "$conf_path" "$cockpit_conf"; then
+		local wrc=0
+		write_file_if_changed "$conf_path" "$cockpit_conf" || wrc=$?
+		if [[ "$wrc" -eq 0 ]]; then
 			config_changed=1
+		elif [[ "$wrc" -eq 2 ]]; then
+			log_error "写入 ${conf_path} 失败"
+			_COCKPIT_WRITE_FAILED=1
 		fi
 	else
 		log_warning "${conf_path} 已被用户自定义，跳过覆盖（如需恢复默认请删除该文件后重新运行）"
@@ -122,13 +128,23 @@ LoginTitle = DebNAS"
 1、尊重别人的隐私；
 2、输入前要先考虑（后果和风险）；
 3、权力越大，责任越大。"
-	if write_file_if_changed "/etc/motd" "$motd_content"; then
+	local wrc=0
+	write_file_if_changed "/etc/motd" "$motd_content" || wrc=$?
+	if [[ "$wrc" -eq 0 ]]; then
 		config_changed=1
+	elif [[ "$wrc" -eq 2 ]]; then
+		log_error "写入 /etc/motd 失败"
+		_COCKPIT_WRITE_FAILED=1
 	fi
 
 	local issue_content="基于${system_name}搭建 DebNAS"
-	if write_file_if_changed "/etc/cockpit/issue.cockpit" "$issue_content"; then
+	wrc=0
+	write_file_if_changed "/etc/cockpit/issue.cockpit" "$issue_content" || wrc=$?
+	if [[ "$wrc" -eq 0 ]]; then
 		config_changed=1
+	elif [[ "$wrc" -eq 2 ]]; then
+		log_error "写入 /etc/cockpit/issue.cockpit 失败"
+		_COCKPIT_WRITE_FAILED=1
 	fi
 
 	printf '%d' "$config_changed"
@@ -362,7 +378,7 @@ _cockpit_nm_release_ifaces() {
 	done
 	if [[ -n "$resolv_before" && "$resolv_before" == *nameserver* && -f "$resolv" && ! -L "$resolv" ]] \
 		&& ! grep -q '^[[:space:]]*nameserver' "$resolv" 2>/dev/null; then
-		write_file_if_changed "$resolv" "$resolv_before" "" 1 || true
+		write_file_if_changed "$resolv" "$resolv_before" "" 1 || log_warning "恢复 ${resolv} 失败，请手动检查"
 		log_warning "NetworkManager 放开网卡后清空了 ${resolv} 的 DNS，已恢复为之前的内容"
 	fi
 	log_success "网卡 $* 现仅由 systemd-networkd 管理"
@@ -567,6 +583,10 @@ main() {
 	# 运行时配置
 	local config_changed
 	config_changed=$(configure_cockpit_runtime_files "${system_name}")
+	if [[ "${_COCKPIT_WRITE_FAILED:-0}" -eq 1 ]]; then
+		log_error "Cockpit 运行时配置写入失败"
+		exit "${ERROR_GENERAL}"
+	fi
 
 	if [[ "$config_changed" -eq 1 ]]; then
 		if ! service_ensure "cockpit" "restarted"; then

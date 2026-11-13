@@ -57,8 +57,7 @@ state_get() {
     return 1
   fi
 
-  # 纯 bash 逐行匹配，取第一条 key=（状态文件只有几行；原 grep|head|cut 每次 3 个进程，
-  # 仪表盘合并执行记录时每个模块都会调用）
+  # 纯 bash 逐行匹配，取第一条 key=（状态文件只有几行；原 grep|head|cut 每次 3 个进程，调用频繁）
   while IFS= read -r line || [[ -n "$line" ]]; do
     if [[ "$line" == "${key}="* ]]; then
       line="${line#*=}"

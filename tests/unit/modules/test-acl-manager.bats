@@ -392,8 +392,8 @@ _contract_plan_ok() {
 }
 
 @test "acl-manager: 顶层不再注册临时清理/创建临时文件（移入 main）" {
-  ! grep -q '^register_temp_cleanup' "$MODULE_FILE"
-  ! grep -q '^ACL_OUTPUT=\$(create_temp_file' "$MODULE_FILE"
+  if grep -q '^register_temp_cleanup' "$MODULE_FILE"; then false; fi
+  if grep -q '^ACL_OUTPUT=\$(create_temp_file' "$MODULE_FILE"; then false; fi
   grep -A8 '^main()' "$MODULE_FILE" | grep -q 'register_temp_cleanup'
   grep -A8 '^main()' "$MODULE_FILE" | grep -q 'ACL_OUTPUT=\$(create_temp_file'
 }

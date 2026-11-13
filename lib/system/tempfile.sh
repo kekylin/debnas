@@ -254,7 +254,9 @@ debnas_locked() {
   local lock_file="${DEBNAS_TMP_BASE}/${name}.lock"
   if command -v flock >/dev/null 2>&1 && [[ "$name" =~ ^[A-Za-z0-9_-]+$ ]] && init_temp_dir 2>/dev/null \
      && [[ ( -f "$lock_file" && ! -L "$lock_file" && -w "$lock_file" ) || ( ! -e "$lock_file" && ! -L "$lock_file" ) ]]; then
-    exec {fd}>>"$lock_file" || fd=""
+    # 注意：不能写成 exec {fd}>>file 2>/dev/null——不带命令的 exec 会把 2>/dev/null 也永久作用于
+    # 当前 shell，之后的日志与报错全部消失（表现为模块静默"成功"）。用 { } 包住重定向。
+    { exec {fd}>>"$lock_file"; } 2>/dev/null || fd=""
   fi
   if [[ -n "$fd" ]] && ! flock -w 30 "$fd"; then
     exec {fd}>&-

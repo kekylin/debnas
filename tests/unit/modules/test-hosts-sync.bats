@@ -182,7 +182,7 @@ parse_meta() {
     log_info() { :; }; log_error() { echo "$*" >&2; }; log_warning() { :; }
     eval "$(sed -n "/^write_file_if_changed()/,/^}/p" "$3")"
     eval "$(sed -n "/^render_hosts_without_block()/,/^}/p;/^hosts_block_state()/,/^}/p;/^_hosts_lock()/,/^}/p;/^_hosts_unlock()/,/^}/p;/^write_hosts_file()/,/^}/p;/^remove_hosts_block()/,/^}/p" "$1")"
-    TMP_DIR="$2"
+    TMP_DIR="$2"; export DEBNAS_TMP_BASE="$2"
     remove_hosts_block
     stat -c "MODE=%a" "$HOSTS_FILE"
     cat "$HOSTS_FILE"
@@ -215,7 +215,7 @@ parse_meta() {
 }
 
 @test "hosts-sync: HTTPS 检测校验证书（无 -k，使用 --resolve 带 SNI）" {
-  ! grep -A12 '^test_https_connectivity()' "${MODULE_DIR}/connectivity.sh" | grep -qE 'curl[^#]* -k'
+  if grep -A12 '^test_https_connectivity()' "${MODULE_DIR}/connectivity.sh" | grep -qE 'curl[^#]* -k'; then false; fi
   grep -A12 '^test_https_connectivity()' "${MODULE_DIR}/connectivity.sh" | grep -q -- '--resolve'
 }
 
@@ -362,7 +362,7 @@ _hm_run() {
     IFS=$'"'"'\n\t'"'"'
     D="$2"
     START_MARK="# DebNAS Hosts Start"; END_MARK="# DebNAS Hosts End"; HOSTS_FILE="$D/hosts"
-    CRON_MODE=1; TMP_DIR="$D"
+    CRON_MODE=1; TMP_DIR="$D"; export DEBNAS_TMP_BASE="$D"
     create_temp_file() { mktemp "$D/t.XXXXXX"; }
     log_info() { :; }; log_success() { :; }; log_warning() { echo "W:$*"; }; log_error() { echo "E:$*"; }
     debnas_backup_file() { cp -- "$1" "$D/backup"; }
@@ -416,7 +416,7 @@ _hm_run() {
 
 @test "hosts-sync: hosts 写入走 write_file_if_changed 并加 flock (B7)" {
   grep -A10 '^write_hosts_file()' "${MODULE_DIR}/hosts-manager.sh" | grep -q 'write_file_if_changed'
-  grep -A6 '^_hosts_lock()' "${MODULE_DIR}/hosts-manager.sh" | grep -q 'flock'
+  grep -A25 '^_hosts_lock()' "${MODULE_DIR}/hosts-manager.sh" | grep -q 'flock'
   grep -A40 '^update_hosts()' "${MODULE_DIR}/hosts-manager.sh" | grep -q '_hosts_lock'
   grep -A12 '^remove_hosts_block()' "${MODULE_DIR}/hosts-manager.sh" | grep -q '_hosts_lock'
 }

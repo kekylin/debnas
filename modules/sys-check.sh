@@ -67,7 +67,7 @@ check_system_compatibility() {
   fi
 
   local disk_gb
-  disk_gb=$(df / | awk 'NR==2 {print int($4/1024/1024)}')
+  disk_gb=$(df -P / 2>/dev/null | awk 'NR==2 {print int($4/1024/1024)}')
   echo "- 磁盘可用空间：${disk_gb}GB"
   if [[ $disk_gb -lt 10 ]]; then
     issues_resource+=("根分区可用空间低于10GB（建议>=10GB）")

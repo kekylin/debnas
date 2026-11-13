@@ -2,7 +2,7 @@
 # @module: fail2ban
 # @name: 配置 Fail2ban
 # @category: 安全防护
-# @depends:
+# @depends: mail
 # @depend_modules: firewall
 # @version: 1.0.0
 # @order: 42
@@ -151,9 +151,13 @@ filter   = sshd
 backend  = systemd
 logpath  = %(sshd_log)s"
 
-  if write_file_if_changed "$config_file" "$content"; then
-    _config_changed=1
-  fi
+  local wrc=0
+  write_file_if_changed "$config_file" "$content" || wrc=$?
+  case "$wrc" in
+    0) _config_changed=1 ;;
+    1) ;;
+    *) log_error "写入 ${config_file} 失败"; return 1 ;;
+  esac
 }
 
 # 配置 mail-whois.local，定制告警邮件内容
@@ -179,16 +183,23 @@ dest = root
 MAIL_EOF
 )
 
-  if write_file_if_changed "$config_file" "$content"; then
-    _config_changed=1
-  fi
+  local wrc=0
+  write_file_if_changed "$config_file" "$content" || wrc=$?
+  case "$wrc" in
+    0) _config_changed=1 ;;
+    1) ;;
+    *) log_error "写入 ${config_file} 失败"; return 1 ;;
+  esac
 }
 
 # 配置 pam-generic，增强 Cockpit 登录防护
 configure_pam_generic() {
   local config_file="/etc/fail2ban/jail.d/defaults-debian.conf"
-  if ! grep -q "\[pam-generic\]" "$config_file"; then
-    printf "\n[pam-generic]\nenabled = true\n" >> "$config_file"
+  if ! grep -q "\[pam-generic\]" "$config_file" 2>/dev/null; then
+    if ! printf "\n[pam-generic]\nenabled = true\n" >> "$config_file"; then
+      log_error "写入 ${config_file} 失败"
+      return 1
+    fi
     _config_changed=1
   fi
 }
@@ -196,12 +207,26 @@ configure_pam_generic() {
 # 启动并启用 Fail2ban 服务，确保防护生效
 start_fail2ban() {
   # 确保 firewalld 正在运行（fail2ban 的 firewallcmd-ipset 后端需要它）
-  service_ensure firewalld started
+  if ! service_ensure firewalld started; then
+    log_error "Firewalld 未运行，fail2ban 的 firewallcmd-ipset 后端不可用"
+    return 1
+  fi
 
-  service_ensure fail2ban enabled
+  # 配置未变更时也必须确保服务已启动（可能因崩溃/手动停止而处于 stopped）
+  if ! service_ensure fail2ban started; then
+    log_error "Fail2ban 启动失败"
+    return 1
+  fi
+  if ! service_ensure fail2ban enabled; then
+    log_error "Fail2ban 开机自启配置失败"
+    return 1
+  fi
   if [[ $_config_changed -eq 1 ]]; then
     log_info "重启 Fail2ban 服务以加载新配置..."
-    service_ensure fail2ban restarted
+    if ! service_ensure fail2ban restarted; then
+      log_error "Fail2ban 重启失败"
+      return 1
+    fi
   else
     log_info "配置未变更，跳过 Fail2ban 服务重启"
   fi
@@ -304,16 +329,16 @@ main() {
   configure_email
 
   ui_progress_step $((++step)) "$total" "配置封禁规则 (jail.local)"
-  configure_jail_local
+  configure_jail_local || exit "${ERROR_GENERAL}"
 
   ui_progress_step $((++step)) "$total" "配置告警邮件模板"
-  configure_mail_whois
+  configure_mail_whois || exit "${ERROR_GENERAL}"
 
   ui_progress_step $((++step)) "$total" "启用 Cockpit 登录防护"
-  configure_pam_generic
+  configure_pam_generic || exit "${ERROR_GENERAL}"
 
   ui_progress_step $((++step)) "$total" "启动 Fail2ban 服务"
-  start_fail2ban
+  start_fail2ban || exit "${ERROR_GENERAL}"
 
   ui_progress_step "$step" "$total" "Fail2ban 安装配置完成" "done"
 }

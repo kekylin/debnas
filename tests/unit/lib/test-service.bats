@@ -177,6 +177,19 @@ INNEREOF
   service_is_installed "test-svc"
 }
 
+@test "service_is_installed: unit 不存在时返回非 0" {
+  cat > "$MOCK_BIN/systemctl" << 'INNEREOF'
+#!/usr/bin/env bash
+case "$1" in
+  list-unit-files) exit 1 ;;
+  *) exit 0 ;;
+esac
+INNEREOF
+  chmod +x "$MOCK_BIN/systemctl"
+  run service_is_installed "test-svc"
+  [[ "$status" -ne 0 ]]
+}
+
 @test "service_is_active: 运行中返回 0" {
   # 默认 systemctl is-active 返回 0
   service_is_active "test-svc"

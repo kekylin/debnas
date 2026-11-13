@@ -41,6 +41,24 @@ preflight_environment_check() {
     return 1
   fi
 
+  # 执行模块声明的 @debian_min（支持主版本号 "13" 或代号 "trixie"）
+  # 函数级单测可能只提取本函数（未加载 utils.sh），此时跳过版本下限检查；
+  # 生产路径由 bootstrap 加载 utils.sh，helper 必然存在。
+  if [[ "$debian_min" =~ ^[0-9]+$ ]] && declare -F _get_os_version_id >/dev/null 2>&1; then
+    local version_id major
+    version_id=$(_get_os_version_id 2>/dev/null) || version_id=""
+    major="${version_id%%.*}"
+    if ! [[ "$major" =~ ^[0-9]+$ ]] || (( major < debian_min )); then
+      log_error "系统版本不满足模块要求（需要 Debian ${debian_min}+，当前 ${version_id:-未知}）"
+      return 1
+    fi
+  elif [[ ! "$debian_min" =~ ^[0-9]+$ ]] \
+    && declare -F _verify_debian_min_codename >/dev/null 2>&1 \
+    && ! _verify_debian_min_codename "$debian_min" 2>/dev/null; then
+    log_error "系统版本不满足模块要求（需要 Debian ${debian_min} 或更高）"
+    return 1
+  fi
+
   # 若模块有具体架构要求
   if [[ -n "$required_arch" ]] && ! verify_architecture_support "$required_arch" 2>/dev/null; then
     log_error "此模块不支持当前 CPU 架构，所需架构: $required_arch"
@@ -264,7 +282,7 @@ main() {
   interactive=$(get_module_field "$module_name" "interactive" "false" 2>/dev/null) || interactive="false"
   if [[ "$interactive" == "true" && -t 0 ]]; then
     _DEBNAS_INTERACTIVE_TTY=1
-    interactive_marker=$(mktemp)
+    interactive_marker=$(create_temp_file "module-action" 2>/dev/null) || interactive_marker=""
     export DEBNAS_ACTION_MARKER="$interactive_marker"
   else
     export DEBNAS_ACTION_MARKER=""

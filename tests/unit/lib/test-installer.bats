@@ -14,6 +14,8 @@ setup() {
 
   WORK_DIR="$BATS_TMPDIR/installer-work"
   mkdir -p "$WORK_DIR"
+  # 非 root 测试环境：更新锁放到临时目录，避免 /run 不可写导致 deploy_lock 失败
+  export DEBNAS_UPDATE_LOCK="$WORK_DIR/update.lock"
 
   source "${DEBNAS_ROOT}/lib/system/installer.sh"
 }
@@ -316,4 +318,11 @@ _mk_src_and_install() {
   # 锁在下载之前
   awk '/^cmd_update\(\)/,/^}/' "${DEBNAS_ROOT}/bin/debnas" | awk '/deploy_lock/ { l = NR } /installer_download_/ && !d { d = NR } END { exit !(l && d && l < d) }'
   sed -n '/^main()/,/^}/p' "${DEBNAS_ROOT}/bin/debnas" | grep -q 'deploy_recover "/opt/debnas"'
+}
+
+@test "install.sh: 包含下载→解压→部署流程" {
+  local install_sh="${DEBNAS_ROOT}/install.sh"
+  grep -qE 'wget|curl|download' "$install_sh"
+  grep -qE 'tar|extract|解压' "$install_sh"
+  grep -qE 'deploy|安装|install_dir|/opt/debnas' "$install_sh"
 }

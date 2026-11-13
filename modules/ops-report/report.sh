@@ -461,7 +461,6 @@ ops_collect_availability() {
   OPS_REBOOT_COUNT=0
   OPS_PLANNED_DOWNTIME_COUNT=0
   OPS_UNPLANNED_DOWNTIME_COUNT=0
-  OPS_POWER_LOSS_COUNT=0
 
   if [[ "$total_seconds" -le 0 ]] || ! command -v journalctl >/dev/null 2>&1; then
     OPS_AVAILABILITY_PCT="待周期数据"
@@ -473,7 +472,7 @@ ops_collect_availability() {
   local overlap_start overlap_end reboot_count=0 planned_count=0 unplanned_count=0
   local boot_output boot_line boot_token
   local -a boot_raw=()
-  boot_output=$(journalctl --list-boots --no-pager 2>/dev/null || true)
+  boot_output=$(journalctl -q --list-boots --no-pager 2>/dev/null || true)
   ops_update_epochs
   while IFS= read -r boot_line; do
     # systemd 252（Debian 12）格式为 "... CST—Mon ..."（em dash 无空格），
@@ -593,10 +592,14 @@ ops_collect_disk_trend() {
   mkdir -p "$OPS_SNAPSHOT_DIR" 2>/dev/null || true
 
   local snapshot="${OPS_SNAPSHOT_DIR}/disk-usage.snapshot"
-  local now_ts period="${OPS_REPORT_DAYS:-7}"
+  local now_ts period="${OPS_REPORT_DAYS:-7}" today_start
   now_ts=$(date '+%s')
   [[ "$period" =~ ^[0-9]+$ ]] || period=7
-  local min_ts=$((now_ts - (period + 1) * 86400)) keep_ts=$((now_ts - 400 * 86400)) today=$((now_ts / 86400))
+  # "当天已有样本"按本地日期判断：epoch/86400 是 UTC 日界，在东八区早上 8 点、
+  # 西半球傍晚会切到另一天，同一天采集的两条样本都被留下（基线被冲掉）
+  today_start=$(date -d '00:00' '+%s' 2>/dev/null || echo 0)
+  [[ "$today_start" =~ ^[0-9]+$ ]] || today_start=0
+  local min_ts=$((now_ts - (period + 1) * 86400)) keep_ts=$((now_ts - 400 * 86400))
   local -A base_pct=() base_ts=()
   local -a kept=()
   local name pct ts
@@ -605,7 +608,7 @@ ops_collect_disk_trend() {
       [[ "$name" =~ ^[a-zA-Z0-9_]+$ && "$pct" =~ ^[0-9]+$ && "$ts" =~ ^[0-9]+$ ]] || continue
       [[ "$ts" -gt "$keep_ts" && "$ts" -le "$now_ts" ]] || continue
       # 当天已有的样本由本次采集替换
-      [[ $((ts / 86400)) -eq "$today" ]] || kept+=("${name}|${pct}|${ts}")
+      [[ "$today_start" -gt 0 && "$ts" -ge "$today_start" ]] || kept+=("${name}|${pct}|${ts}")
       if [[ "$ts" -ge "$min_ts" && $((now_ts - ts)) -ge 86400 ]] \
         && [[ -z "${base_ts[$name]:-}" || "$ts" -lt "${base_ts[$name]:-0}" ]]; then
         base_pct[$name]="$pct"
@@ -695,6 +698,24 @@ ops_security_package_names() {
   return 0
 }
 
+# 统计更新会话数：相邻 dpkg 记录间隔 >120s 视为新会话（与更新明细表口径一致）
+# 参数：无（读取 OPS_UPDATE_LIST）
+# 输出：会话数
+ops_update_session_count() {
+  ops_update_epochs
+  local prev_epoch=0 current_epoch count=0 first=1 i
+  for i in "${!OPS_UPDATE_EPOCHS[@]}"; do
+    current_epoch="${OPS_UPDATE_EPOCHS[$i]:-}"
+    [[ "$current_epoch" =~ ^[0-9]+$ ]] || continue
+    if [[ $first -eq 1 ]] || (( current_epoch - prev_epoch > 120 )); then
+      count=$((count + 1))
+      first=0
+    fi
+    prev_epoch=$current_epoch
+  done
+  printf '%s' "$count"
+}
+
 ops_collect_updates() {
   OPS_UPDATE_COUNT=0
   OPS_UPDATE_SESSIONS=0
@@ -715,9 +736,9 @@ ops_collect_updates() {
   if [[ -f /var/log/dpkg.log ]]; then
     OPS_UPDATE_LIST=$(awk -v since="$since_dt" -v until="$until_dt" '
       ($1" "$2) >= since && ($1" "$2) <= until && ($3 == "install" || $3 == "upgrade") { print }
-    ' /var/log/dpkg.log 2>/dev/null | tail -100 || true)
+    ' /var/log/dpkg.log 2>/dev/null || true)
     OPS_UPDATE_COUNT=$(printf '%s\n' "${OPS_UPDATE_LIST}" | grep -v '^$' | wc -l || true)
-    OPS_UPDATE_SESSIONS=$(printf '%s\n' "${OPS_UPDATE_LIST}" | grep -v '^$' | awk '{print $1}' | sort -u | wc -l || true)
+    OPS_UPDATE_SESSIONS=$(ops_update_session_count)
     local security_pkgs
     security_pkgs=$(ops_security_package_names /var/lib/apt/lists || true)
     if [[ -n "$security_pkgs" ]] && [[ -n "$OPS_UPDATE_LIST" ]]; then
@@ -1868,13 +1889,13 @@ ops_render_week_focus() {
 
 ops_render_disk_capacity_chart() {
   local name size pct
-  local -i row=0 y=39
+  local -i row=0 y=39 grid_bottom=151
   local out=""
   while IFS='|' read -r name size _ pct _; do
     [[ "$pct" =~ ^[0-9]+$ ]] || continue
     row+=1
-    [[ "$row" -le 5 ]] || continue
     y=$((39 + (row - 1) * 40))
+    grid_bottom=$((y + 8))
     local color="#0066CC"
     [[ "$pct" -ge 80 ]] && color="#D97706"
     [[ "$pct" -ge 90 ]] && color="#C7000B"
@@ -1889,16 +1910,16 @@ ops_render_disk_capacity_chart() {
   if [[ -z "$out" ]]; then
     echo '<text x="112" y="80" fill="#86868B" font-size="11">待周期数据</text>'
   else
-    printf '<svg class="chart" viewBox="0 0 480 205" role="img" aria-label="磁盘容量使用情况">'
-    printf '<line x1="112" y1="20" x2="112" y2="151" stroke="#D2D2D7"/>'
-    printf '<line x1="194.5" y1="20" x2="194.5" y2="151" stroke="#E8E8ED" stroke-dasharray="3 3"/>'
-    printf '<line x1="277" y1="20" x2="277" y2="151" stroke="#E8E8ED" stroke-dasharray="3 3"/>'
-    printf '<line x1="359.5" y1="20" x2="359.5" y2="151" stroke="#E8E8ED" stroke-dasharray="3 3"/>'
-    printf '<line x1="442" y1="20" x2="442" y2="151" stroke="#E8E8ED" stroke-dasharray="3 3"/>'
-    printf '<line x1="409" y1="14" x2="409" y2="151" stroke="#C7000B" stroke-dasharray="4 3"/>'
+    printf '<svg class="chart" viewBox="0 0 480 %d" role="img" aria-label="磁盘容量使用情况">' "$((grid_bottom + 54))"
+    printf '<line x1="112" y1="20" x2="112" y2="%d" stroke="#D2D2D7"/>' "$grid_bottom"
+    printf '<line x1="194.5" y1="20" x2="194.5" y2="%d" stroke="#E8E8ED" stroke-dasharray="3 3"/>' "$grid_bottom"
+    printf '<line x1="277" y1="20" x2="277" y2="%d" stroke="#E8E8ED" stroke-dasharray="3 3"/>' "$grid_bottom"
+    printf '<line x1="359.5" y1="20" x2="359.5" y2="%d" stroke="#E8E8ED" stroke-dasharray="3 3"/>' "$grid_bottom"
+    printf '<line x1="442" y1="20" x2="442" y2="%d" stroke="#E8E8ED" stroke-dasharray="3 3"/>' "$grid_bottom"
+    printf '<line x1="409" y1="14" x2="409" y2="%d" stroke="#C7000B" stroke-dasharray="4 3"/>' "$grid_bottom"
     printf '<text x="409" y="11" text-anchor="middle" fill="#C7000B" font-size="10" font-weight="600">90%%</text>'
     printf '%s' "$out"
-    printf '<g fill="#86868B" font-size="11" text-anchor="middle"><text x="112" y="174">0%%</text><text x="194.5" y="174">25%%</text><text x="277" y="174">50%%</text><text x="359.5" y="174">75%%</text><text x="442" y="174">100%%</text></g></svg>'
+    printf '<g fill="#86868B" font-size="11" text-anchor="middle"><text x="112" y="%d">0%%</text><text x="194.5" y="%d">25%%</text><text x="277" y="%d">50%%</text><text x="359.5" y="%d">75%%</text><text x="442" y="%d">100%%</text></g></svg>' "$((grid_bottom + 23))" "$((grid_bottom + 23))" "$((grid_bottom + 23))" "$((grid_bottom + 23))" "$((grid_bottom + 23))"
   fi
 }
 
@@ -1931,13 +1952,14 @@ ops_render_disk_forecast_table() {
 
 ops_render_disk_io_chart() {
   local name avg_rd avg_wr max_util
-  local -i row=0 y=32
+  local -i row=0 y=32 disk_rows=0 grid_bottom=151
   local out=""
   local max_bytes=0
   local -A io_rb=()
   local -A io_wb=()
   while IFS='|' read -r name avg_rd avg_wr max_util _; do
     [[ -n "$name" ]] || continue
+    disk_rows+=1
     local rb wb
     rb=$(ops_rate_bytes "$avg_rd")
     wb=$(ops_rate_bytes "$avg_wr")
@@ -1950,6 +1972,7 @@ ops_render_disk_io_chart() {
     echo '<text x="112" y="80" fill="#86868B" font-size="11">待周期数据</text>'
     return 0
   fi
+  grid_bottom=$((32 + (disk_rows - 1) * 46 + 8))
   local max_tb
   max_tb=$(awk -v b="$max_bytes" 'BEGIN { printf "%.6f", b / 1099511627776 }')
   [[ "$max_tb" =~ ^[0-9.]+$ ]] || max_tb="1.00"
@@ -1972,13 +1995,12 @@ ops_render_disk_io_chart() {
     printf -v x '%d.0' "$((112 + i * 66))"
     val=$(awk -v t="$nice_tb" -v i="$i" 'BEGIN { printf "%.1f", t * i / 5 }')
     axis_grid="${axis_grid}
-<line x1=\"${x}\" y1=\"20\" x2=\"${x}\" y2=\"151\" stroke=\"$([ "$i" -eq 0 ] && echo '#D2D2D7' || echo '#E8E8ED')\" stroke-dasharray=\"$([ "$i" -eq 0 ] && echo none || echo '3 3')\"/>"
-    axis_labels="${axis_labels}<text x=\"${x}\" y=\"174\">${val}</text>"
+<line x1=\"${x}\" y1=\"20\" x2=\"${x}\" y2=\"${grid_bottom}\" stroke=\"$([ "$i" -eq 0 ] && echo '#D2D2D7' || echo '#E8E8ED')\" stroke-dasharray=\"$([ "$i" -eq 0 ] && echo none || echo '3 3')\"/>"
+    axis_labels="${axis_labels}<text x=\"${x}\" y=\"$((grid_bottom + 23))\">${val}</text>"
   done
   while IFS='|' read -r name avg_rd avg_wr max_util _; do
     [[ -n "$name" ]] || continue
     row+=1
-    [[ "$row" -le 5 ]] || continue
     y=$((32 + (row - 1) * 46))
     local rb="${io_rb["$name"]:-0}"
     local wb="${io_wb["$name"]:-0}"
@@ -1993,7 +2015,7 @@ ops_render_disk_io_chart() {
 <text x=\"$(awk -v b="$gw" 'BEGIN { printf "%.0f", 112 + b + 6 }')\" y=\"$((y + 21))\" fill=\"#86868B\" font-size=\"11\" font-weight=\"600\">$(ops_format_bytes "$wb")</text>
 <text x=\"470\" y=\"$((y + 21))\" text-anchor=\"end\" fill=\"$([ "${max_util%%.*}" -ge 80 ] && echo '#D97706' || echo '#86868B')\" font-size=\"11\" font-weight=\"600\">${max_util}%</text>"
   done <<< "${OPS_DISK_IO_SUMMARY}"
-  printf '<svg class="chart" viewBox="0 0 480 205" role="img" aria-label="设备 I/O 周期累计对比">'
+  printf '<svg class="chart" viewBox="0 0 480 %d" role="img" aria-label="设备 I/O 周期累计对比">' "$((grid_bottom + 54))"
   printf '<title>设备 I/O 周期累计对比</title>'
   printf '<text x="112" y="14" fill="#86868B" font-size="11">TB</text>'
   printf '<text x="470" y="14" text-anchor="end" fill="#86868B" font-size="10">峰值繁忙度</text>'
@@ -2016,7 +2038,6 @@ ops_render_service_list_table() {
       *) cls=' class="muted"' ;;
     esac
     type="systemd"
-    [[ "$name" == "DSM" ]] && type="虚拟机"
     # 错误与重启两条信息都保留，用"；"连接；都没有时显示 "-"
     note=""
     if [[ "$errors" =~ ^[0-9]+$ ]] && [[ "$errors" -gt 0 ]]; then
@@ -2035,7 +2056,7 @@ ops_render_service_list_table() {
   fi
   if [[ "${OPS_VM_COUNT:-0}" -gt 0 ]]; then
     out="${out}
-<tr><td>DSM</td><td class=\"good\">正常</td><td>虚拟机</td><td>0</td><td>0</td><td>-</td><td>${OPS_VM_RUNNING_COUNT} 个运行</td></tr>"
+<tr><td>虚拟机</td><td class=\"good\">${OPS_VM_RUNNING_COUNT}/${OPS_VM_COUNT} 运行</td><td>虚拟机</td><td>0</td><td>0</td><td>-</td><td>-</td></tr>"
   fi
   if [[ -z "$out" ]]; then
     echo '<tr><td colspan="7" class="muted">待周期数据</td></tr>'
@@ -2515,7 +2536,7 @@ $([[ -z "${OPS_LOGIN_SOURCE_NOTE:-}" ]] || printf '      <p class="muted">%s</p>
         <tr><th>周期可用性</th><td class="good">${OPS_AVAILABILITY_PCT:-待周期数据}</td></tr>
         <tr><th>内核</th><td>${OPS_KERNEL}</td></tr>
         <tr><th>重启/关机</th><td>${OPS_REBOOT_COUNT:-0} 次重启/关机</td></tr>
-        <tr><th>停机统计</th><td>计划内 ${OPS_PLANNED_DOWNTIME_COUNT:-0} 次 · 非计划 ${OPS_UNPLANNED_DOWNTIME_COUNT:-0} 次 · 意外停电 ${OPS_POWER_LOSS_COUNT:-0} 次</td></tr>
+        <tr><th>停机统计</th><td>计划内 ${OPS_PLANNED_DOWNTIME_COUNT:-0} 次 · 非计划 ${OPS_UNPLANNED_DOWNTIME_COUNT:-0} 次</td></tr>
         <tr><th>系统负载</th><td>${OPS_LOAD_AVG}</td></tr>
         <tr><th>OOM / 内核错误</th><td>$([ -n "$OPS_HEALTH_KERNEL_ERRORS" ] && printf '<span class="bad">检测到内核错误</span>' || echo '<span class="good">未检测到内核错误</span>')</td></tr>
       </table>
@@ -2572,7 +2593,7 @@ $([[ -z "${OPS_LOGIN_SOURCE_NOTE:-}" ]] || printf '      <p class="muted">%s</p>
       <table>
         <tr><th>项目</th><th>状态</th></tr>
         <tr><td>RAID</td><td>${OPS_HEALTH_RAID_STATE}</td></tr>
-        <tr><td>文件系统</td><td>$([ -n "$OPS_HEALTH_FS_ERRORS" ] && printf '<span class="bad">检测到文件系统错误</span>' || echo '<span class="good">无只读挂载、无异常卸载、无文件系统错误</span>')</td></tr>
+        <tr><td>文件系统</td><td>$(if [[ -n "$OPS_HEALTH_RO_MOUNTS" ]]; then printf '<span class="bad">检测到只读挂载</span>'; elif [[ -n "$OPS_HEALTH_FS_ERRORS" ]]; then printf '<span class="bad">检测到文件系统错误</span>'; else echo '<span class="good">无只读挂载、无异常卸载、无文件系统错误</span>'; fi)</td></tr>
       </table>
 
       <h2>8. 服务与应用状态</h2>

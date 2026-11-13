@@ -22,8 +22,8 @@ enable_login_mail() {
 #!/bin/bash
 # PAM 登录会话开启时发送邮件通知（UTF-8，带地理位置与处置指引）
 
-export LANG="en_US.UTF-8"
-[ "${PAM_TYPE:-}" = "open_session" ] || exit 0
+export LANG="C.UTF-8"
+[[ "${PAM_TYPE:-}" = "open_session" ]] || exit 0
 
 # 安全 IFS（不使用 set -e 避免邮件发送失败时脚本退出）
 IFS=$'\n\t'

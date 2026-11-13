@@ -183,7 +183,7 @@ check_services() {
       continue
     fi
 
-    if systemctl list-unit-files "${svc}.service" &>/dev/null 2>&1; then
+    if systemctl list-unit-files "${svc}.service" &>/dev/null; then
       if systemctl is-active --quiet "$svc" 2>/dev/null; then
         printf "  %-30s %s\n" "${label}:" "✅ 运行中"
       elif systemctl is-enabled --quiet "$svc" 2>/dev/null; then

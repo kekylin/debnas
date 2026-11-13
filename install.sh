@@ -250,8 +250,24 @@ do_uninstall() {
   local current_crontab
   current_crontab=$(crontab -l 2>/dev/null || true)
   if [[ "$current_crontab" == *DEBNAS-CRON* ]]; then
-    echo "$current_crontab" | grep -v "DEBNAS-CRON" | crontab - 2>/dev/null || crontab -r 2>/dev/null || true
-    _info "定时任务已清理"
+    # 只删除 DebNAS 条目：过滤后为空才 crontab -r；crontab - 写入失败不得回退为
+    # crontab -r（会删除用户全部定时任务），只告警并保留原内容
+    local filtered="" grep_rc=0
+    filtered=$(printf '%s\n' "$current_crontab" | grep -v "DEBNAS-CRON") || grep_rc=$?
+    if [[ "$grep_rc" -eq 0 ]]; then
+      if [[ -z "$filtered" ]]; then
+        crontab -r 2>/dev/null || true
+      elif ! printf '%s\n' "$filtered" | crontab - 2>/dev/null; then
+        _warn "清理 DebNAS 定时任务失败，请手动检查 root crontab"
+      fi
+      _info "定时任务已清理"
+    elif [[ "$grep_rc" -eq 1 ]]; then
+      # 全部条目都是 DebNAS 管理：直接移除整份 crontab
+      crontab -r 2>/dev/null || true
+      _info "定时任务已清理"
+    else
+      _warn "读取/过滤 crontab 失败，未修改定时任务"
+    fi
   fi
 
   # 登录通知：移除 PAM 中指向 DebNAS 脚本的 pam_exec 行（新旧两种路径），再删辅助脚本
@@ -801,9 +817,9 @@ preflight_source() {
     exit 1
   fi
   local c
-  for c in gpgv sha256sum base64; do
+  for c in wget gpgv sha256sum base64; do
     if ! command -v "$c" >/dev/null 2>&1; then
-      _fail "缺少命令 ${c}，请先执行：apt install gpgv coreutils"
+      _fail "缺少命令 ${c}，请先执行：apt install wget gpgv coreutils"
       exit 1
     fi
   done

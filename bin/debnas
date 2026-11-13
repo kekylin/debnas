@@ -9,6 +9,7 @@
 #   debnas config <key> [value]          # 查询或设置全局配置
 #   debnas config list                   # 列出所有配置
 #   debnas update [--tag <版本>]         # 更新 DebNAS（校验发布签名）
+#   debnas check-update                  # 检查是否有新版本（只读）
 #   debnas uninstall                     # 卸载 DebNAS
 #   debnas doctor                        # 系统诊断
 #   debnas files                         # 列出文件布局与修改过的系统文件
@@ -182,11 +183,13 @@ cmd_update() {
 
 	log_info "检查更新..."
 
-	local region
-	region=$(config_read "global" "region" "" 2>/dev/null) || region=""
-
+	# 优先级：CLI/环境（parse_global_args 已合并到 DEBNAS_REGION）> 配置文件 > 默认 cn
+	local region="${DEBNAS_REGION:-}"
 	if [[ -z "$region" ]]; then
-		region="${DEBNAS_REGION:-cn}"
+		region=$(config_read "global" "region" "" 2>/dev/null) || region=""
+	fi
+	if [[ -z "$region" ]]; then
+		region="cn"
 		log_warning "未找到 region 配置，使用默认值: ${region}"
 	fi
 
@@ -212,52 +215,58 @@ cmd_update() {
 		log_warning "已跳过完整性校验（--unsigned）"
 	else
 		# 公钥只用已安装目录里的可信副本，不从网络获取
-		local keyring="${tmp_dir}/release-keyring.gpg" fpr
-		if ! fpr=$(installer_load_release_key "$install_dir" "$keyring"); then
-			log_error "已安装目录缺少有效的发布公钥（${install_dir}/keys/debnas-release.asc / .fpr）"
-			log_error "可能原因：维护者尚未配置发布公钥，或当前安装来自未签名的旧版本"
-			log_error "如确需更新未经校验的代码（风险自负）：debnas update --unsigned [--branch main]"
-			rm -rf -- "${tmp_dir:?}"
-			return 1
-		fi
-
-		local installed_tag
-		installed_tag=$(installer_marker_get "$install_dir" "tag")
-		# 缺少 RELEASE 标记（或标记里没有 tag）时退回用代码内的 DEBNAS_VERSION（tools/release.sh --bump 与 tag 同步），
-		# 否则防降级检查形同虚设
-		if [[ -z "$installed_tag" ]] && installer_valid_tag "${DEBNAS_VERSION:-}"; then
-			installed_tag="$DEBNAS_VERSION"
-		fi
+		local keyring="${tmp_dir}/release-keyring.gpg" fpr installed_tag
 		if [[ -n "$want_tag" ]]; then
+			# 显式指定版本：仍需加载公钥用于代码包验签（不做"最新版本"比较）
+			if ! fpr=$(installer_load_release_key "$install_dir" "$keyring"); then
+				log_error "已安装目录缺少有效的发布公钥（${install_dir}/keys/debnas-release.asc / .fpr）"
+				log_error "可能原因：维护者尚未配置发布公钥，或当前安装来自未签名的旧版本"
+				log_error "如确需更新未经校验的代码（风险自负）：debnas update --unsigned [--branch main]"
+				rm -rf -- "${tmp_dir:?}"
+				return 1
+			fi
+			# 缺少 RELEASE 标记（或标记里没有 tag）时退回用代码内的 DEBNAS_VERSION（tools/release.sh --bump 与 tag 同步），
+			# 否则防降级检查形同虚设
+			installed_tag=$(installer_marker_get "$install_dir" "tag")
+			if [[ -z "$installed_tag" ]] && installer_valid_tag "${DEBNAS_VERSION:-}"; then
+				installed_tag="$DEBNAS_VERSION"
+			fi
 			tag="$want_tag"
 		else
 			# 最新版本号优先取已签名的指针（main 分支 LATEST + LATEST.asc，用已安装的发布公钥验签）；
-			# 返回 2 = 指针存在但校验未通过，拒绝自动更新
-			local latest_rc=0
-			tag=$(installer_latest_tag "$region" "$tmp_dir" "$keyring" "$fpr") || latest_rc=$?
-			if [[ "$latest_rc" -eq 2 ]]; then
-				log_error "拒绝自动更新。确认来源可信后可用 --tag <版本> 指定版本（代码包仍校验发布签名）"
-				rm -rf -- "${tmp_dir:?}"
-				return 1
-			elif [[ "$latest_rc" -ne 0 ]]; then
-				log_error "无法获取最新发布版本号（网络不可达或维护者尚未发布签名版本），可用 --tag 指定"
-				rm -rf -- "${tmp_dir:?}"
-				return 1
-			fi
-			# 自动发现的版本号只允许升级不允许降级（显式 --tag 可降级）：指针未签名时防伪造，
-			# 已签名时防重放旧指针
-			if [[ -n "$installed_tag" ]]; then
-				if [[ "$tag" == "$installed_tag" ]]; then
+			# 自动发现的版本号只允许升级不允许降级（显式 --tag 可降级）：指针未签名时防伪造，已签名时防重放旧指针
+			local rel_rc=0
+			release_check_latest "$install_dir" "$tmp_dir" "$region" || rel_rc=$?
+			tag="$_REL_LATEST_TAG"
+			installed_tag="$_REL_INSTALLED_TAG"
+			fpr="$_REL_FPR"
+			case "$rel_rc" in
+				0)
 					log_success "已是最新版本：${tag}"
 					rm -rf -- "${tmp_dir:?}"
 					return 0
-				fi
-				if installer_version_lt "$tag" "$installed_tag"; then
-					log_error "远端最新版本 ${tag} 低于已安装版本 ${installed_tag}，拒绝自动降级（如确需降级请用 --tag ${tag}）"
+					;;
+				2)
+					case "${_REL_ERROR:-}" in
+						no-key)
+							log_error "已安装目录缺少有效的发布公钥（${install_dir}/keys/debnas-release.asc / .fpr）"
+							log_error "可能原因：维护者尚未配置发布公钥，或当前安装来自未签名的旧版本"
+							log_error "如确需更新未经校验的代码（风险自负）：debnas update --unsigned [--branch main]"
+							;;
+						untrusted)
+							log_error "拒绝自动更新。确认来源可信后可用 --tag <版本> 指定版本（代码包仍校验发布签名）"
+							;;
+						older)
+							log_error "远端最新版本 ${tag} 低于已安装版本 ${installed_tag}，拒绝自动降级（如确需降级请用 --tag ${tag}）"
+							;;
+						*)
+							log_error "无法获取最新发布版本号（网络不可达或维护者尚未发布签名版本），可用 --tag 指定"
+							;;
+					esac
 					rm -rf -- "${tmp_dir:?}"
 					return 1
-				fi
-			fi
+					;;
+			esac
 		fi
 		log_info "目标版本：${tag}${installed_tag:+（已安装 ${installed_tag}）}"
 
@@ -292,6 +301,8 @@ cmd_update() {
 	else
 		installer_marker_write "$install_dir" "$tag" "" 1 || true
 	fi
+	# 已更新到最新：清掉首页"有新版本"提示缓存
+	update_check_cache_clear
 
 	# 迁移必须由"新代码"执行：当前进程加载的是旧版本的 DEBNAS_VERSION 与 _migrate_* 函数，
 	# 在此直接调用 migration_run 永远检测不到版本变化，新版本的迁移步骤也不会被执行
@@ -306,6 +317,61 @@ cmd_update() {
 
 	log_success "DebNAS 更新完成"
 	return 0
+}
+
+# 子命令：check-update（只读版本检测）
+# 用法：debnas check-update
+# 输出：当前版本 / 最新版本 / 结论
+# 退出码：0=已是最新  1=有新版本  2=检查失败（公钥缺失 / 指针验签失败 / 网络不可达 / 指针回放）
+# 说明：只读版本指针，不下载发布包、不持部署锁、不修改安装目录
+cmd_check_update() {
+	local install_dir="/opt/debnas"
+	# 开发态（直接从源码目录运行）没有安装标记，用当前代码版本与仓库内的公钥比较
+	[[ -d "$install_dir" ]] || install_dir="${_DEBNAS_ROOT:-${DEBNAS_ROOT:-.}}"
+
+	local region
+	# 优先级：CLI/环境（parse_global_args 已合并到 DEBNAS_REGION）> 配置文件 > 默认 cn
+	local region="${DEBNAS_REGION:-}"
+	if [[ -z "$region" ]]; then
+		region=$(config_read "global" "region" "" 2>/dev/null) || region=""
+	fi
+	if [[ -z "$region" ]]; then
+		region="cn"
+	fi
+
+	local tmp_dir
+	tmp_dir=$(create_temp_dir "check-update") || { log_error "无法创建临时目录"; return 2; }
+
+	local rel_rc=0
+	release_check_latest "$install_dir" "$tmp_dir" "$region" || rel_rc=$?
+	rm -rf -- "${tmp_dir:?}"
+
+	local current="${_REL_INSTALLED_TAG:-${DEBNAS_VERSION:-未知}}"
+	local latest="${_REL_LATEST_TAG:-未知}"
+
+	log_info "当前版本：${current}"
+	if [[ -n "${_REL_LATEST_TAG:-}" ]]; then
+		log_info "最新版本：${latest}"
+	fi
+
+	case "$rel_rc" in
+		0)
+			log_success "已是最新版本"
+			return 0
+			;;
+		1)
+			log_warning "发现新版本：${latest}，可用 debnas update 更新"
+			return 1
+			;;
+	esac
+
+	# 失败原因与菜单共用同一套措辞（installer.sh 的 release_check_error_text）
+	if [[ "${_REL_ERROR:-}" == "older" ]]; then
+		log_warning "$(release_check_error_text "$_REL_ERROR" "$latest" "$current")"
+	else
+		log_error "检查失败：$(release_check_error_text "${_REL_ERROR:-}" "$latest" "$current")"
+	fi
+	return 2
 }
 
 # 子命令：uninstall
@@ -323,20 +389,52 @@ cmd_uninstall() {
 		fi
 	fi
 
-	rm -f /usr/local/bin/debnas 2>/dev/null && log_info "已移除全局命令: /usr/local/bin/debnas"
-	rm -rf /opt/debnas 2>/dev/null && log_info "已移除脚本目录: /opt/debnas/"
+	local uninstall_failed=0
+	if rm -f /usr/local/bin/debnas 2>/dev/null; then
+		log_info "已移除全局命令: /usr/local/bin/debnas"
+	else
+		log_warning "未能移除全局命令: /usr/local/bin/debnas"
+		uninstall_failed=1
+	fi
+	if rm -rf /opt/debnas 2>/dev/null; then
+		log_info "已移除脚本目录: /opt/debnas/"
+	else
+		log_warning "未能移除脚本目录: /opt/debnas/"
+		uninstall_failed=1
+	fi
 
 	local current_crontab
 	current_crontab=$(crontab -l 2>/dev/null || true)
 	if [[ "$current_crontab" == *DEBNAS-CRON* ]]; then
-		echo "$current_crontab" | grep -v "DEBNAS-CRON" | crontab - 2>/dev/null || crontab -r 2>/dev/null || true
-		log_info "已移除 DebNAS 定时任务"
+		# 只删除 DebNAS 条目：过滤后为空才 crontab -r；crontab - 写入失败不得回退为
+		# crontab -r（会删除用户全部定时任务），只告警并保留原内容
+		local filtered="" grep_rc=0
+		filtered=$(printf '%s\n' "$current_crontab" | grep -v "DEBNAS-CRON") || grep_rc=$?
+		if [[ "$grep_rc" -eq 0 ]]; then
+			if [[ -z "$filtered" ]]; then
+				crontab -r 2>/dev/null || true
+			elif ! printf '%s\n' "$filtered" | crontab - 2>/dev/null; then
+				log_warning "清理 DebNAS 定时任务失败，请手动检查 root crontab"
+			fi
+			log_info "已移除 DebNAS 定时任务"
+		elif [[ "$grep_rc" -eq 1 ]]; then
+			# 全部条目都是 DebNAS 管理：直接移除整份 crontab
+			crontab -r 2>/dev/null || true
+			log_info "已移除 DebNAS 定时任务"
+		else
+			log_warning "读取/过滤 crontab 失败，未修改定时任务"
+		fi
 	fi
 
 	# 登录通知：移除 PAM 行与辅助脚本目录（否则 PAM 会引用已删除的脚本）
 	login_notify_pam_sync "" >/dev/null 2>&1 || true
 	if [[ -n "${DEBNAS_LIBEXEC_DIR:-}" && -d "$DEBNAS_LIBEXEC_DIR" ]]; then
-		rm -rf -- "$DEBNAS_LIBEXEC_DIR" && log_info "已移除辅助脚本目录: ${DEBNAS_LIBEXEC_DIR}/"
+		if rm -rf -- "$DEBNAS_LIBEXEC_DIR"; then
+			log_info "已移除辅助脚本目录: ${DEBNAS_LIBEXEC_DIR}/"
+		else
+			log_warning "未能移除辅助脚本目录: ${DEBNAS_LIBEXEC_DIR}/"
+			uninstall_failed=1
+		fi
 	fi
 	# 通知邮箱兼容链接（/etc/exim4/notify_email -> /etc/debnas/notify_email），删除配置目录后会悬空
 	if [[ -n "${DEBNAS_LEGACY_NOTIFY_EMAIL_FILE:-}" && -L "$DEBNAS_LEGACY_NOTIFY_EMAIL_FILE" ]]; then
@@ -347,14 +445,23 @@ cmd_uninstall() {
 		cp -p -- "$DEBNAS_MANIFEST_FILE" "${DEBNAS_BACKUP_ROOT}/manifest.uninstalled" 2>/dev/null || true
 	fi
 
-	rm -rf /etc/debnas 2>/dev/null && log_info "已移除配置目录: /etc/debnas/"
-	rm -rf /var/log/debnas 2>/dev/null && log_info "已移除日志目录: /var/log/debnas/"
-	rm -rf /var/lib/debnas 2>/dev/null && log_info "已移除状态目录: /var/lib/debnas/"
-	rm -rf /tmp/debnas 2>/dev/null && log_info "已移除临时目录: /tmp/debnas/"
+	for _dir in /etc/debnas /var/log/debnas /var/lib/debnas /tmp/debnas; do
+		if rm -rf "$_dir" 2>/dev/null; then
+			log_info "已移除目录: ${_dir}/"
+		else
+			log_warning "未能移除目录: ${_dir}/"
+			uninstall_failed=1
+		fi
+	done
+	unset _dir
 	# root 的临时基目录已改为 /run/debnas（本进程仍在使用，退出时由 tempfile.sh 清理 PID 子目录）
 	# 被中断的部署残留
 	rm -rf /opt/.debnas.old /opt/.debnas.new 2>/dev/null || true
 
+	if [[ "$uninstall_failed" -ne 0 ]]; then
+		log_warning "部分文件未能移除，请按上方提示手动检查"
+		return 1
+	fi
 	log_success "DebNAS 已卸载"
 	log_info "已安装的软件包和系统配置未被修改。如需恢复系统，请手动操作。"
 	[[ -n "${DEBNAS_BACKUP_ROOT:-}" ]] && log_info "被修改系统文件的原件保留在 ${DEBNAS_BACKUP_ROOT}/（含 original/ 首次修改前版本），确认不需要后可手动删除"
@@ -480,16 +587,12 @@ main() {
 	local -a args=("${DEBNAS_REMAINING_ARGS_ARRAY[@]+"${DEBNAS_REMAINING_ARGS_ARRAY[@]}"}")
 
 	# 处理 --cron 触发模式：debnas <module> --cron → debnas run <module>
-	if [[ ${#args[@]} -ge 2 ]]; then
-		local last_arg="${args[${#args[@]}-1]}"
-		if [[ "$last_arg" == "--cron" ]]; then
-			local -a cron_args=()
-			local i
-			for ((i=0; i<${#args[@]}-1; i++)); do
-				cron_args+=("${args[$i]}")
-			done
-			args=(run "${cron_args[@]}")
-		fi
+	# parse_global_args 已消费 --cron 并设置 DEBNAS_CRON_MODE；剩余参数只有模块名时补 run
+	if [[ "${DEBNAS_CRON_MODE:-0}" -eq 1 && ${#args[@]} -ge 1 ]]; then
+		case "${args[0]}" in
+			install|run|config|update|check-update|uninstall|doctor|files|cron) ;;
+			*) args=(run "${args[@]}") ;;
+		esac
 	fi
 
 	# 提取子命令
@@ -524,6 +627,10 @@ main() {
 
 		update)
 			cmd_update "${subcmd_args[@]+"${subcmd_args[@]}"}"
+			;;
+
+		check-update)
+			cmd_check_update "${subcmd_args[@]+"${subcmd_args[@]}"}"
 			;;
 
 		uninstall)

@@ -37,7 +37,7 @@ _sources_detect_probe_tool() {
   return 0
 }
 
-CODENAME=$(get_system_codename)
+CODENAME=""
 
 # 检测 APT 镜像站连通性（基于 urls.sh 的 probe_url，追加 Release 路径验证）
 probe_mirror() {
@@ -343,6 +343,7 @@ main() {
   fi
 
   _sources_detect_probe_tool
+  CODENAME=$(get_system_codename)
 
   selected_mirror=$(detect_best_mirror)
   mirror_name=$(get_mirror_name "${selected_mirror}")

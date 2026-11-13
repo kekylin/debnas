@@ -234,8 +234,13 @@ main() {
     log_warning "默认区 trusted 放行全部入站，无需写入放行规则；防火墙不起拦截作用，建议改回 public（firewall-cmd --set-default-zone=public）"
   elif [[ ! -f "$CONFIG_FILE" && "$zone" == "public" ]]; then
     log_info "配置防火墙规则..."
-    if write_file_if_changed "$CONFIG_FILE" "$firewall_config"; then
+    write_file_if_changed "$CONFIG_FILE" "$firewall_config" || wrc=$?
+    if [[ $wrc -eq 0 ]]; then
       config_changed=1
+    elif [[ $wrc -eq 2 ]]; then
+      # 放行规则未落盘时不能继续启动 firewalld（自定义 SSH 端口会被挡在门外）
+      log_error "写入 ${CONFIG_FILE} 失败，放行规则未生效，已中止"
+      exit "${ERROR_GENERAL}"
     fi
   else
     # 区文件已存在：在其基础上补缺；不存在（非 public 默认区，含 drop/block）：以 /usr/lib/firewalld/zones 的系统定义为基础

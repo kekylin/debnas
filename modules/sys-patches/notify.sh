@@ -36,6 +36,6 @@ send_email_notification() {
     echo "Content-Type: text/plain; charset=UTF-8"
     echo "Content-Transfer-Encoding: 8bit"
     echo
-    echo -e "$report_content"
+    printf '%b\n' "$report_content"
   } | /usr/sbin/exim4 -oi -t
 }

@@ -6,6 +6,7 @@
 # @depend_modules: cockpit
 # @version: 1.0.0
 # @order: 35
+# @debian_min: 13
 # @interactive: true
 # @cron: true
 # @cron_schedule: 0 0 * * *
@@ -117,7 +118,7 @@ update_wallpaper() {
       return 1
     fi
     mv -f "${WALLPAPER_FILE}.tmp" "$WALLPAPER_FILE"
-    write_file_if_changed "$ISSUE_FILE" "$(printf '%s\n%s\n' "$bing_title" "$bing_copyright")" || true
+    write_file_if_changed "$ISSUE_FILE" "$(printf '%s\n%s\n' "$bing_title" "$bing_copyright")" || log_warning "写入 ${ISSUE_FILE} 失败"
     mark_initialized
     return 0
   fi
@@ -221,8 +222,13 @@ body.login-pf .pf-v6-c-alert__icon {
 }
 CSSEOF
 )
-  if write_file_if_changed "$BRANDING_CSS" "$css_content" 644 1; then
+  local wrc=0
+  write_file_if_changed "$BRANDING_CSS" "$css_content" 644 1 || wrc=$?
+  if [[ "$wrc" -eq 0 ]]; then
     _CSS_CHANGED=1
+  elif [[ "$wrc" -eq 2 ]]; then
+    log_error "写入 ${BRANDING_CSS} 失败"
+    return 1
   fi
   return 0
 }
@@ -286,7 +292,7 @@ disable_bing_wallpaper() {
   feature_disable "wallpaper"
   cron_unregister "wallpaper" || true
   _wp_remove_branding_dir || true
-  write_file_if_changed "$ISSUE_FILE" "基于Debian搭建 DebNAS" || true
+  write_file_if_changed "$ISSUE_FILE" "基于Debian搭建 DebNAS" || log_warning "写入 ${ISSUE_FILE} 失败"
   # Cockpit 未运行时 restart_cockpit 返回 1（已告警）：禁用照常完成，不能让 set -e 中止
   restart_cockpit || true
   log_success "壁纸已禁用"

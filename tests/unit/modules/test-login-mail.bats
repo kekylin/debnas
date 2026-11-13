@@ -274,7 +274,7 @@ _lm_run_script() {
     if [[ "$line" == Subject:* ]]; then in_subj=1; subj+="${line#Subject: }"; continue; fi
     if [[ "$in_subj" -eq 1 && "$line" == " "* ]]; then subj+="$line"; else in_subj=0; fi
   done < "$d/mail"
-  ! LC_ALL=C grep -q '[^ -~]' <<< "$subj"
+  if LC_ALL=C grep -q '[^ -~]' <<< "$subj"; then false; fi
   local w
   for w in $subj; do
     [[ "${#w}" -le 75 ]]

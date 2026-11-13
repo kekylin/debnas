@@ -54,13 +54,14 @@ ops_collect_services() {
     for service_name in "${service_names[@]}"; do
       # 每个服务只读一次 journal，错误/重启计数复用同一份输出（2 核小机器上避免重复扫描）
       local service_log
-      service_log=$(timeout 20 journalctl -u "${service_name}" --since "${OPS_REPORT_SINCE:-$(date '+%Y-%m-%d %H:%M:%S')}" \
+      service_log=$(timeout 20 journalctl -q -u "${service_name}" --since "${OPS_REPORT_SINCE:-$(date '+%Y-%m-%d %H:%M:%S')}" \
         --no-pager 2>/dev/null || true)
       # 错误与启停计数一次 awk 完成（等价于两次 grep -cEi，按行计数、不区分大小写）
+      # “周期重启”只统计 Started 事件：Starting/Stopped 再计入会把数值放大 2-3 倍
       IFS=' ' read -r service_errors service_restarts < <(awk '
         { l = tolower($0) }
         l ~ /fail|error|panic|oom/ { e++ }
-        l ~ /starting|started|stopped|failed to start/ { r++ }
+        l ~ /(^|[^a-z])started([^a-z]|$)/ { r++ }
         END { printf "%d %d\n", e, r }' <<< "$service_log")
       service_log=""
       [[ "$service_errors" =~ ^[0-9]+$ ]] || service_errors=0
@@ -83,7 +84,7 @@ ops_collect_services() {
 }${service_name}|${service_errors}|${service_restarts}|${service_start}|${service_state}"
     done
 
-    OPS_JOURNAL_ERROR_COUNT=$(timeout 20 journalctl -p err --since "${OPS_REPORT_SINCE:-$(date '+%Y-%m-%d %H:%M:%S')}" \
+    OPS_JOURNAL_ERROR_COUNT=$(timeout 20 journalctl -q -p err --since "${OPS_REPORT_SINCE:-$(date '+%Y-%m-%d %H:%M:%S')}" \
       --no-pager 2>/dev/null | grep -v '^$' | wc -l || true)
     OPS_TIMER_TASKS=$(systemctl list-timers --all --no-pager --no-legend 2>/dev/null \
       | grep -v '^$' | wc -l || true)
@@ -100,13 +101,9 @@ ops_collect_services() {
     OPS_VM_LIST=$(timeout 10 virsh list --all --name 2>/dev/null || true)
     OPS_VM_COUNT=$(printf '%s\n' "${OPS_VM_LIST}" | grep -v '^$' | wc -l || true)
     OPS_VM_RUNNING_COUNT=$(timeout 10 virsh list --name 2>/dev/null | grep -v '^$' | wc -l || true)
-    if [[ "${OPS_VM_COUNT:-0}" -gt 0 ]]; then
-      OPS_SERVICE_STABILITY="${OPS_SERVICE_STABILITY:+${OPS_SERVICE_STABILITY}
-}VM DSM|0|0|-|${OPS_VM_RUNNING_COUNT} 个运行"
-    fi
   fi
 
   if command -v ss >/dev/null 2>&1; then
-    OPS_LISTEN_PORTS=$(ss -tulnH 2>/dev/null | head -30 || true)
+    OPS_LISTEN_PORTS=$(ss -tulnH 2>/dev/null || true)
   fi
 }

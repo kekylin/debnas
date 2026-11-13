@@ -17,9 +17,9 @@ parse_meta() {
   [[ "$result" == "cockpit-45drives" ]]
 }
 
-@test "cockpit-45drives: @name 为 安装 45Drives 扩展" {
+@test "cockpit-45drives: @name 为 安装 45Drives 官方插件" {
   result=$(parse_meta "name")
-  [[ "$result" == "安装 45Drives 扩展" ]]
+  [[ "$result" == "安装 45Drives 官方插件" ]]
 }
 
 @test "cockpit-45drives: @category 为 管理面板" {
@@ -109,6 +109,24 @@ parse_meta() {
   ! grep -q 'cockpit-navigator' "$MODULE_FILE"
 }
 
+# ==================== 唯一共享管理模块（自研 cockpit-shares 已移除） ====================
+
+@test "cockpit-45drives: 不引用已移除的 cockpit-shares" {
+  ! grep -q 'cockpit-shares' "$MODULE_FILE"
+}
+
+@test "cockpit-45drives: 不再有自研插件二选一逻辑" {
+  ! grep -qE '_fd45_ui_choice|ensure_debnas_shares_removed|remove_debnas_shares_plugin_dir|DEBNAS_SHARES_PLUGIN_DIR|file_sharing_ui|file_sharing_nfs' "$MODULE_FILE"
+}
+
+@test "cockpit-45drives: 一键方案包含 cockpit-45drives 且不含 cockpit-shares" {
+  local f
+  for f in "${DEBNAS_ROOT}"/config/solutions/*.list; do
+    grep -qx 'cockpit-45drives' "$f"
+    ! grep -qx 'cockpit-shares' "$f"
+  done
+}
+
 @test "cockpit-45drives: main 对 bookworm/trixie 统一使用官方仓库" {
   grep -A15 '^main()' "$MODULE_FILE" | grep -q 'bookworm'
   grep -A15 '^main()' "$MODULE_FILE" | grep -q 'trixie'
@@ -140,7 +158,6 @@ parse_meta() {
   run bash -c 'source "$1/lib/bootstrap.sh" >/dev/null 2>&1; DEBNAS_MODULE_ACTION=status source "$2"
     get_system_codename() { echo trixie; }; config_read() { echo "${3:-}"; }
     log_info() { :; }; log_error() { :; }
-    DEBNAS_SHARES_PLUGIN_DIR=/nonexistent-debnas-test
     keyring_install_verified() { local IFS=" "; echo "KIV:$*"; return 1; }
     write_file_if_changed() { echo WROTE; }; apt_install_packages() { echo APT; }; config_write() { echo CW; }
     main' _ "$DEBNAS_ROOT" "$MODULE_FILE"

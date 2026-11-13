@@ -34,11 +34,11 @@ _config_file() {
 _config_validate_names() {
   local module_name="$1" key="$2"
   if [[ ! "$module_name" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]*$ || "$module_name" == *..* ]]; then
-    echo "debNAS: 非法的配置模块名：${module_name}" >&2
+    echo "DebNAS: 非法的配置模块名：${module_name}" >&2
     return 1
   fi
   if [[ ! "$key" =~ ^[A-Za-z_][A-Za-z0-9_.-]*$ ]]; then
-    echo "debNAS: 非法的配置键名：${key}（仅允许字母、数字、_ . -）" >&2
+    echo "DebNAS: 非法的配置键名：${key}（仅允许字母、数字、_ . -）" >&2
     return 1
   fi
   return 0
@@ -50,7 +50,7 @@ _config_validate_names() {
 _ensure_conf_dir() {
   if [[ ! -d "$DEBNAS_CONF_DIR" ]]; then
     mkdir -p "$DEBNAS_CONF_DIR" 2>/dev/null || {
-      echo "debNAS: 无法创建配置目录：${DEBNAS_CONF_DIR}" >&2
+      echo "DebNAS: 无法创建配置目录：${DEBNAS_CONF_DIR}" >&2
       return 1
     }
     chmod 755 "$DEBNAS_CONF_DIR"
@@ -164,13 +164,16 @@ config_write() {
   _config_validate_names "$module_name" "$key" || return 1
   # 值中含换行会注入额外的键值行
   if [[ "$value" == *$'\n'* || "$value" == *$'\r'* ]]; then
-    echo "debNAS: 配置值不能包含换行：${key}" >&2
+    echo "DebNAS: 配置值不能包含换行：${key}" >&2
     return 1
   fi
 
   if [[ "$module_name" == "global" ]]; then
     conf_file="$DEBNAS_GLOBAL_CONF"
-    mkdir -p "$(dirname "$conf_file")" 2>/dev/null
+    if ! mkdir -p "$(dirname "$conf_file")" 2>/dev/null; then
+      log_error "无法创建配置目录：$(dirname "$conf_file")"
+      return 1
+    fi
   else
     conf_file=$(_config_file "$module_name")
     if ! _ensure_conf_dir; then

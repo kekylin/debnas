@@ -31,4 +31,4 @@ else
   COLOR_CYAN=$'\e[0;36m'       # 青色（普通字体）
   COLOR_WHITE=$'\e[0;37m'      # 白色（普通字体）
   COLOR_DIM=$'\e[0;90m'        # 亮黑 = 灰色（辅助文字/Footer/版本号）
-fi 
+fi

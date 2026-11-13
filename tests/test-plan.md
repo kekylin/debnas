@@ -1,7 +1,7 @@
 # DebNAS 测试计划
 
 > 版本：5.0.0 | 更新：2026-07-12
-> 覆盖范围：6 层测试体系（L1 语法 → L6 VM）| 26 个模块 + 7 个 CLI 子命令 + 菜单系统 + 幂等性 + 错误处理
+> 覆盖范围：6 层测试体系（L1 语法 → L6 VM）| 26 个模块 + 9 个 CLI 子命令 + 菜单系统 + 幂等性 + 错误处理
 > 测试用例总数：~1374（L3 单元 1014 + L5 集成 219 + L6 VM 141）| BATS 文件：68（50 unit + 18 integration）
 > Phase 8 已交付：7 个新增模块单元测试文件（174 用例）+ 3 项反模式修复 + 4 项重复检查清理 + 1 项 Mock DRY
 > Phase 9 已交付：14 个新增 + 2 个扩展测试文件（105 用例），Phase 4-5 计划 165 TC-ID 全部覆盖（157 显式标签 + 8 元任务）
@@ -381,7 +381,7 @@ ssh -o StrictHostKeyChecking=no -t kekylin@<TEST_VM_IP> \
 |------------|---------|:---:|------|
 | TC-P0-REG-001~016 | 模块注册表（DFS 拓扑排序、循环依赖检测、30 行元数据窗口边界、分类过滤） | ★★★★☆ | —（全新测试） |
 | TC-P0-URL-001~008 | URL 探测与镜像（curl/wget 双路径回退、镜像名称映射、代理端点） | ★★★★☆ | —（全新测试） |
-| TC-P1-MOD-001~007 | 模块 L5 结构验证（cockpit/mail-account/fail2ban/threat-ips）+ 功能测试（sys-check/service-query/hosts-sync） | ★★★☆☆ | F-01~F-21 等 |
+| TC-P1-MOD-005~007 | 模块功能测试（sys-check/service-query/hosts-sync） | ★★★☆☆ | F-01~F-21 等 |
 | TC-P2-MOD-008~009 | 模块纯函数单元测试（threat-ips IP 验证、docker-ce GPG 重试） | ★★★★★ | F-39, F-47 |
 
 > ⚠️ **已知反模式**：`test-docker-ce.bats` 内联复制了 `extract_mirror_from_sources()` 和 `is_official_debian_source()` 的 awk 逻辑，而非 source 真实函数。修复方案见 TC-P1-MOCKFIX-001~002。
@@ -776,10 +776,6 @@ ssh -o StrictHostKeyChecking=no -t kekylin@<TEST_VM_IP> \
 | TC-P2-BND-008 | CIDR 掩码边界：/32 合法，/33 拒绝，/0 合法 | ★★★★☆ |
 | TC-P2-BND-009 | sys-check：内存 < 1GB → 触发警告（1023 vs 1025） | ★★★★☆ |
 | TC-P2-BND-010 | sys-check：磁盘 < 10GB → 触发警告（9GB vs 11GB） | ★★★★☆ |
-| TC-P1-MOD-001 | cockpit：L5 结构验证（语法、元数据、依赖有效性） | ★★★☆☆ |
-| TC-P1-MOD-002 | mail-account：L5 结构验证 | ★★★☆☆ |
-| TC-P1-MOD-003 | fail2ban：L5 结构验证 | ★★★☆☆ |
-| TC-P1-MOD-004 | threat-ips：L5 结构验证（目录模块 + 子脚本） | ★★★☆☆ |
 | TC-P1-MOD-005 | sys-check：功能测试 → 诊断输出包含预期字段 | ★★★☆☆ |
 | TC-P1-MOD-006 | service-query：功能测试 → 列出服务和容器 | ★★★☆☆ |
 | TC-P1-MOD-007 | hosts-sync：功能测试 → DNS 解析 + hosts 文件写入 | ★★★☆☆ |
@@ -899,7 +895,7 @@ ssh -o StrictHostKeyChecking=no -t kekylin@<TEST_VM_IP> \
 | M-67 | ACL 权限管理 | TC-P1-IMOD-002 | ★★★☆☆ | 🔄 已设计 |
 | M-68 | 配置 BBR 加速 | TC-P1-IMOD-003 | ★★★☆☆ | 🔄 已设计 |
 | F-30~F-31 | 安全配置 | TC-P1-SEC-001~002 | ★★★☆☆ | 🔄 已设计 |
-| F-37 | threat-ips 菜单 | TC-P1-MOD-004 | ★★★☆☆ | 🔄 已设计 |
+| F-37 | threat-ips 菜单 | —（人工） | ★★★☆☆ | 🔄 已设计 |
 | F-39 | threat-ips ipset | TC-P2-MOD-008~009 | ★★★★★ | 🔄 已设计 |
 | F-54 | Docker 未安装报错 | TC-P0-REG-016 | ★★★★☆ | 🔄 已设计 |
 | F-60 | 邮件配置 | TC-P1-IMOD-001 | ★★★☆☆ | 🔄 已设计 |
@@ -983,8 +979,8 @@ AI 拥有测试 VM 的完全操作权限（SSH 信息见本文"测试环境"章�
 bash tests/check.sh
 
 # 逐层单独执行：
-bash tests/run.sh unit          # L3 单元测试（19 文件，354 用例）
-bash tests/run.sh integration   # L5 集成测试（6 文件，108 用例）
+bash tests/run.sh unit          # L3 单元测试（63 文件，1588 用例）
+bash tests/run.sh integration   # L5 集成测试（15 文件，249 用例）
 bash tests/run.sh all           # L1-L5 全部
 ```
 
@@ -1558,7 +1554,6 @@ Phase 4-5 自动化测试用例已全部实施，以下为计划对照：
 | D | `tests/unit/lib/test-dependency.bats`（扩充） | ~6 | 24 | 单元 | ✅ |
 | D | `tests/unit/lib/test-config-priority.bats` | ~6 | 5 | 单元 | ✅ |
 | D | `tests/unit/lib/test-shell-arrays.bats` | ~3 | — | 单元 | 🔀 合并至 test-dependency.bats + test-args.bats |
-| E | `tests/unit/lib/test-installer-e2e.bats` | ~5 | 5 | 单元 | ✅ |
 | E | `tests/unit/lib/test-migration.bats` | ~4 | 12 | 单元 | ✅ |
 | E | `tests/unit/lib/test-apt-pinning.bats` | ~5 | 11 | 单元 | ✅ |
 | F | `tests/integration/test-error-paths.bats` | ~11 | 14 | 集成 | ✅ |
@@ -1566,12 +1561,8 @@ Phase 4-5 自动化测试用例已全部实施，以下为计划对照：
 | G | `tests/integration/test-recovery.bats` | ~5 | 9 | 集成 | ✅ |
 | G | `tests/unit/lib/test-shell-features.bats` | ~3 | 5 | 单元 | ✅ |
 | H | `tests/integration/test-boundary.bats` | ~10 | 10 | 集成 | ✅ |
-| H | `tests/integration/test-module-cockpit.bats` | ~2 | 2 | 集成 | ✅ |
-| H | `tests/integration/test-module-mail-account.bats` | ~2 | 2 | 集成 | ✅ |
-| H | `tests/integration/test-module-fail2ban.bats` | ~2 | 2 | 集成 | ✅ |
-| H | `tests/integration/test-module-threat-ips.bats` | ~3 | 3 | 集成 | ✅ |
 | I | `tests/unit/ui/test-ui-styles.bats` | ~1 | 2 | 单元 | ✅ |
-| **合计** | **26 计划文件** | **~155** | **287** | | ✅ 全部完成 |
+| **合计** | **22 计划文件** | **~146** | **278** | | ✅ 全部完成 |
 
 > 🔀 `test-shell-arrays.bats` 规划的 TC-ID（SH-001~003）已合并到 `test-dependency.bats`（SH-001~002）和 `test-args.bats`（SH-003），未创建独立文件。
 

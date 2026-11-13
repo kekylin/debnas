@@ -1,9 +1,9 @@
-# HomeNAS 基础环境
+# DebNAS 基础环境
 sources
 basic-tools
 cockpit
 cockpit-net
-cockpit-shares
+cockpit-45drives
 docker-ce
 docker-mirror
 service-query

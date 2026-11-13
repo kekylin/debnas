@@ -367,19 +367,9 @@ INNEREOF
       fi
     }
 
-    # Mock grep: redirect /etc/pam.d/su to mock file for NUL-byte detection
-    grep() {
-      if [[ "${@:$#}" == "/etc/pam.d/su" ]]; then
-        # NUL-byte detection: if file has NUL bytes, $(cat) truncates at NUL,
-        # so content length < file size
-        local content fsize csize
-        content=$(cat "$PAM_DIR/su" 2>/dev/null)
-        fsize=$(stat -c%s "$PAM_DIR/su" 2>/dev/null || echo 0)
-        csize=${#content}
-        [[ "$fsize" -gt "$csize" ]]
-        return $?
-      fi
-      command grep "$@"
+    # Mock od：本测试只用于 NUL 检测，直接报告 00 字节
+    od() {
+      printf " 00\n"
     }
 
     write_file_if_changed() {
@@ -547,7 +537,7 @@ _contract_plan_ok() {
 }
 
 @test "security: 依赖检查移入 main（顶层无 check_dependencies/exit）" {
-  ! grep -q '^if ! check_dependencies' "$MODULE_FILE"
+  if grep -q '^if ! check_dependencies' "$MODULE_FILE"; then false; fi
   grep -A6 '^main()' "$MODULE_FILE" | grep -q 'check_dependencies'
 }
 

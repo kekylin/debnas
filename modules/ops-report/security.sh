@@ -267,14 +267,14 @@ ops_collect_security() {
   local fail_pattern='Failed password|Invalid user|authentication failure|Connection closed by authenticating user'
   if (command -v wtmpdb >/dev/null 2>&1 || [[ "$(get_system_version 2>/dev/null || true)" == 13* ]]) \
     && command -v journalctl >/dev/null 2>&1; then
-    raw_fail=$(timeout 30 journalctl SYSLOG_FACILITY=4 SYSLOG_FACILITY=10 --since "${since}" --no-pager 2>/dev/null \
+    raw_fail=$(timeout 30 journalctl -q SYSLOG_FACILITY=4 SYSLOG_FACILITY=10 --since "${since}" --no-pager 2>/dev/null \
       | grep -Ei "$fail_pattern" || true)
     journal_scanned=1
   elif command -v lastb >/dev/null 2>&1; then
     raw_fail=$(timeout 20 lastb -F -s "${since}" 2>/dev/null || true)
   fi
   if [[ -z "$raw_fail" && "$journal_scanned" -eq 0 ]] && command -v journalctl >/dev/null 2>&1; then
-    raw_fail=$(timeout 30 journalctl SYSLOG_FACILITY=4 SYSLOG_FACILITY=10 --since "${since}" --no-pager 2>/dev/null \
+    raw_fail=$(timeout 30 journalctl -q SYSLOG_FACILITY=4 SYSLOG_FACILITY=10 --since "${since}" --no-pager 2>/dev/null \
       | grep -Ei "$fail_pattern" || true)
   fi
   OPS_LOGIN_FAIL_COUNT=$(printf '%s\n' "$raw_fail" | grep -v '^$' | wc -l || true)
@@ -496,8 +496,8 @@ ops_collect_security_drift() {
         | xargs -0 -r -n1 sh -c 'printf "%s: " "$1"; timeout 5 sha256sum "$1" | awk "{print \$1}"' sh
     } 2>/dev/null || true)
   user_content=$( {
-      getent passwd 2>/dev/null
-      getent group 2>/dev/null
+      getent passwd 2>/dev/null | sed 's/^/user:/'
+      getent group 2>/dev/null | sed 's/^/group:/'
     } | sort || true)
 
   local category label current_file previous_file old current_content
@@ -517,6 +517,12 @@ ops_collect_security_drift() {
     fi
 
     old=$(cat "$previous_file" 2>/dev/null || true)
+    # 旧版 users 快照没有 user:/group: 前缀，无法区分用户与组，重新建立基线
+    if [[ "$category" == "users" ]] && grep -qvE '^(user|group):' "$previous_file" 2>/dev/null; then
+      mv "$current_file" "$previous_file" 2>/dev/null || true
+      ops_drift_append_row "$label" "已建立基线" "-" "低" "$now_label"
+      continue
+    fi
     if [[ "$old" == "$current_content" ]]; then
       mv "$current_file" "$previous_file" 2>/dev/null || true
       ops_drift_append_row "$label" "无变化" "-" "低" "$now_label"
@@ -537,17 +543,26 @@ ops_collect_security_drift() {
     risk="中"
     if [[ "$category" == "users" ]]; then
       local old_users new_users user_added user_removed
-      old_users=$(awk -F: '$1 !~ /^#/ && $1 != "" {print $1}' "$previous_file" 2>/dev/null | sort -u || true)
-      new_users=$(awk -F: '$1 !~ /^#/ && $1 != "" {print $1}' "$current_file" 2>/dev/null | sort -u || true)
+      local old_groups new_groups group_added group_removed
+      old_users=$(awk -F: '$1 == "user" && $2 != "" {print $2}' "$previous_file" 2>/dev/null | sort -u || true)
+      new_users=$(awk -F: '$1 == "user" && $2 != "" {print $2}' "$current_file" 2>/dev/null | sort -u || true)
       user_added=$(comm -13 <(printf '%s\n' "$old_users") <(printf '%s\n' "$new_users") | paste -sd ',' - || true)
       user_removed=$(comm -23 <(printf '%s\n' "$old_users") <(printf '%s\n' "$new_users") | paste -sd ',' - || true)
+      old_groups=$(awk -F: '$1 == "group" && $2 != "" {print $2}' "$previous_file" 2>/dev/null | sort -u || true)
+      new_groups=$(awk -F: '$1 == "group" && $2 != "" {print $2}' "$current_file" 2>/dev/null | sort -u || true)
+      group_added=$(comm -13 <(printf '%s\n' "$old_groups") <(printf '%s\n' "$new_groups") | paste -sd ',' - || true)
+      group_removed=$(comm -23 <(printf '%s\n' "$old_groups") <(printf '%s\n' "$new_groups") | paste -sd ',' - || true)
       removed="${user_removed:-无}"
       added="${user_added:-无}"
       type="用户变更"
-      if [[ "$removed" == *root* || "$added" == *root* || "$removed" == *sudo* || "$added" == *sudo* ]]; then
+      if [[ "$removed" == *root* || "$added" == *root* || "$removed" == *sudo* || "$added" == *sudo* \
+        || "$group_removed" == *sudo* || "$group_added" == *sudo* ]]; then
         risk="高"
       fi
       summary="新增用户：${added}；删除用户：${removed}"
+      if [[ -n "$group_added" || -n "$group_removed" ]]; then
+        summary+="；组变更：新增 ${group_added:-无}，删除 ${group_removed:-无}"
+      fi
     elif [[ "$category" == "ssh" ]]; then
       [[ "$removed" == *PermitRootLogin* ]] && risk="高"
       summary="修改 ${changed_count} 项；旧值：${removed}；新值：${added}"

@@ -122,18 +122,19 @@ parse_meta() {
 }
 
 @test "docker-mirror: 不直接调用 systemctl（daemon.json 变更只需 service_ensure 重启）" {
-  ! grep -v '^[[:space:]]*#' "$MODULE_FILE" | grep -q '\<systemctl daemon-reload\>'
+  if grep -v '^[[:space:]]*#' "$MODULE_FILE" | grep -q '\<systemctl daemon-reload\>'; then false; fi
   sed -n '/^main() {/,/^}/p' "$MODULE_FILE" | grep -q 'service_ensure docker restarted'
 }
 
 @test "docker-mirror: daemon.json 写入失败时报错退出（不再当作“未变”）" {
   run bash -c 'source "$1/lib/bootstrap.sh" >/dev/null 2>&1; DEBNAS_MODULE_ACTION=status source "$2"
+    DAEMON_JSON="${TMPDIR:-/tmp}/debnas-daemon-missing-$$.json"; rm -f "$DAEMON_JSON"
     check_dependencies() { return 0; }; log_info() { echo "I:$*"; }; log_warning() { :; }; log_error() { echo "E:$*"; }
     build_merged_daemon_json() { echo "{}"; }; write_file_if_changed() { return 2; }
     service_ensure() { echo RESTART; }
     main' _ "$DEBNAS_ROOT" "$MODULE_FILE"
   [[ "$status" -ne 0 ]]
-  [[ "$output" == *"E:写入 /etc/docker/daemon.json 失败"* ]]
+  [[ "$output" =~ E:写入.*失败 ]]
   [[ "$output" != *RESTART* && "$output" != *"配置未变"* ]]
 }
 
@@ -144,7 +145,7 @@ parse_meta() {
 }
 
 @test "docker-mirror: 只合并 registry-mirrors 键（不再 grep 全部 URL）" {
-  ! grep -q "grep -oP '\"https?://" "$MODULE_FILE"
+  if grep -q "grep -oP '\"https?://" "$MODULE_FILE"; then false; fi
   grep -q 'registry-mirrors' "$MODULE_FILE"
 }
 

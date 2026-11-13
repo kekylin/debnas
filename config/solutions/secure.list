@@ -1,9 +1,9 @@
-# HomeNAS 安全环境
+# DebNAS 安全环境
 sources
 basic-tools
 cockpit
 cockpit-net
-cockpit-shares
+cockpit-45drives
 mail-account
 login-mail
 security

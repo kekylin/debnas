@@ -121,10 +121,10 @@ setup() {
 
 @test "parse_global_args: 配置文件缺失时回退到默认值（TC-P1-CFG-003）" {
   # parse_global_args 读取 /etc/debnas/debnas.conf，不存在时回退
-  # 默认值：region=空, file_logging=0
+  # 默认值：region=空, file_logging=1（未配置时文件日志默认启用，0 才禁用）
   unset DEBNAS_REGION DEBNAS_FILE_LOGGING
   parse_global_args
-  [[ "$DEBNAS_FILE_LOGGING" == "0" ]]
+  [[ "$DEBNAS_FILE_LOGGING" == "1" ]]
 }
 
 # ==================== 多标志组合测试 ====================

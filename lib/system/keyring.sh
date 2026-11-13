@@ -114,7 +114,11 @@ keyring_install_verified() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --dearmor) dearmor=1 ;;
-      --label) shift; label="${1:-}" ;;
+      --label)
+        shift
+        [[ $# -ge 1 ]] || { log_error "keyring_install_verified: --label 需要一个名称"; return 1; }
+        label="$1"
+        ;;
       *) log_error "keyring_install_verified: 未知参数 $1"; return 1 ;;
     esac
     shift

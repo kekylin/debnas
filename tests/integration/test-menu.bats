@@ -31,6 +31,7 @@ _menu_src() { echo "${DEBNAS_ROOT}/bin/menu.sh"; }
     source "$SRC"/lib/core/logging.sh 2>/dev/null
     source "$SRC"/lib/ui/styles.sh 2>/dev/null
     build_active_categories() { ACTIVE_CATEGORIES=("系统工具"); }
+    update_hint_init() { :; }
     ui_screen_init() { :; }
     ui_screen_switch() { :; }
     ui_cursor_show() { :; }
@@ -58,6 +59,7 @@ _menu_src() { echo "${DEBNAS_ROOT}/bin/menu.sh"; }
     source "$SRC"/lib/core/logging.sh 2>/dev/null
     source "$SRC"/lib/ui/styles.sh 2>/dev/null
     build_active_categories() { ACTIVE_CATEGORIES=("系统工具"); }
+    update_hint_init() { :; }
     ui_screen_init() { :; }
     ui_screen_switch() { :; }
     ui_cursor_show() { :; }
@@ -97,6 +99,7 @@ _menu_src() { echo "${DEBNAS_ROOT}/bin/menu.sh"; }
     source "$SRC"/lib/core/logging.sh 2>/dev/null
     source "$SRC"/lib/ui/styles.sh 2>/dev/null
     build_active_categories() { ACTIVE_CATEGORIES=("系统工具"); }
+    update_hint_init() { :; }
     ui_screen_init() { :; }
     ui_screen_switch() { :; }
     ui_cursor_show() { :; }
@@ -146,6 +149,7 @@ _menu_src() { echo "${DEBNAS_ROOT}/bin/menu.sh"; }
     source "$SRC"/lib/core/logging.sh 2>/dev/null
     source "$SRC"/lib/ui/styles.sh 2>/dev/null
     build_active_categories() { ACTIVE_CATEGORIES=("系统工具"); }
+    update_hint_init() { :; }
     ui_screen_init() { :; }
     ui_screen_switch() { :; }
     ui_cursor_show() { :; }
@@ -277,15 +281,116 @@ _menu_src() { echo "${DEBNAS_ROOT}/bin/menu.sh"; }
   [[ "$output" == *"COUNT=2"* ]]
 }
 
-# ==================== 关于项目 ====================
+# ==================== 关于项目（二级菜单：项目简介 / 检查脚本更新） ====================
 
-@test "handle_about_project: 直接打印关于项目" {
+@test "show_project_intro: 输出项目简介（含作者/地址/当前版本）" {
   run bash -c '
-    eval "$(sed -n "/^handle_about_project()/,/^}/p" "$1"/bin/menu.sh)"
-    handle_about_project
+    eval "$(sed -n "/^show_project_intro()/,/^}/p" "$1"/bin/menu.sh)"
+    DEBNAS_VERSION=v9.9.9
+    show_project_intro
   ' _ "${DEBNAS_ROOT}"
   [[ "$status" -eq 0 ]]
   [[ "$output" == *"一个将 Debian 系统快速配置成准 NAS 系统的脚本。"* ]]
   [[ "$output" == *"作者：kekylin"* ]]
   [[ "$output" == *"github.com/kekylin/debnas"* ]]
+  [[ "$output" == *"当前版本：v9.9.9"* ]]
+}
+
+@test "handle_about_sub_menu: 二级菜单为 项目简介 / 检查脚本更新" {
+  grep -q '^handle_about_sub_menu()' "${DEBNAS_ROOT}/bin/menu.sh"
+  local body
+  body=$(sed -n '/^handle_about_sub_menu()/,/^}/p' "${DEBNAS_ROOT}/bin/menu.sh")
+  [[ "$body" == *'items=("项目简介" "检查脚本更新")'* ]]
+  [[ "$body" == *'ui_menu "关于项目"'* ]]
+  [[ "$body" == *'show_project_intro'* ]]
+  [[ "$body" == *'handle_script_update'* ]]
+}
+
+@test "main_menu_loop: 关于项目进入二级菜单，不再内联打印简介" {
+  local body
+  body=$(sed -n '/^main_menu_loop()/,/^}/p' "${DEBNAS_ROOT}/bin/menu.sh")
+  [[ "$body" == *'handle_about_sub_menu'* ]]
+  [[ "$body" != *'handle_about_project'* ]]
+}
+
+# 在隔离进程中运行真实的 handle_script_update（打桩网络、日志与更新入口）
+# 参数：$1 - release_check_latest 返回码  $2 - 最新版本  $3 - 失败原因  $4 - 1=交互（pty）
+_run_script_update() {
+  local rc="$1" latest="${2:-}" err="${3:-}" interactive="${4:-0}"
+  local root="${BATS_TEST_TMPDIR}/root"
+  mkdir -p "$root/bin"
+  printf '#!/bin/bash\necho "FAKE_UPDATE $*"\n' > "$root/bin/debnas"
+  chmod +x "$root/bin/debnas"
+
+  local fn fnfile harness
+  fn=$(sed -n '/^handle_script_update()/,/^}/p' "${DEBNAS_ROOT}/bin/menu.sh")
+  fnfile="${BATS_TEST_TMPDIR}/fn-script-update.sh"
+  printf '%s\n' "$fn" > "$fnfile"
+  harness="${BATS_TEST_TMPDIR}/script-update-h.sh"
+  cat > "$harness" <<EOF
+set -uo pipefail
+source "$fnfile"
+log_info() { echo "INFO: \$*"; }; log_success() { echo "OK: \$*"; }
+log_warning() { echo "WARN: \$*"; }; log_error() { echo "ERROR: \$*"; }
+config_read() { echo "cn"; }
+create_temp_dir() { mktemp -d; }
+_DEBNAS_ROOT="$root"
+DEBNAS_VERSION=v1.0.0
+release_check_latest() {
+  _REL_INSTALLED_TAG=v1.0.0
+  _REL_LATEST_TAG="$latest"
+  _REL_ERROR="$err"
+  return $rc
+}
+release_check_user_text() { echo "用户提示:\${1:-}"; }
+ui_confirm() { echo 0; }
+handle_script_update
+EOF
+
+  if [[ "$interactive" == "1" ]]; then
+    run script -qec "bash $harness" /dev/null
+  else
+    run bash "$harness" < /dev/null
+  fi
+}
+
+@test "handle_script_update: 已是最新版本时不再询问更新" {
+  _run_script_update 0 v1.0.0 ""
+  [[ "$status" -eq 0 ]]
+  # 版本号带状态标识前缀，不裸行展示
+  [[ "$output" == *"INFO: 当前版本：v1.0.0"* ]]
+  [[ "$output" == *"INFO: 最新版本：v1.0.0"* ]]
+  [[ "$output" == *"已是最新版本"* ]]
+  [[ "$output" != *"FAKE_UPDATE"* ]]
+}
+
+@test "handle_script_update: 检查失败时只给一句话结论，不更新" {
+  _run_script_update 2 "" untrusted
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == *"用户提示:untrusted"* ]]
+  [[ "$output" != *"FAKE_UPDATE"* ]]
+  # 面向普通用户：不再输出内部诊断
+  [[ "$output" != *"主源下载失败"* ]]
+  [[ "$output" != *"版本指针"* ]]
+}
+
+@test "handle_script_update: 检查期间置静默标志（不输出内部诊断）" {
+  local body
+  body=$(sed -n '/^handle_script_update()/,/^}/p' "${DEBNAS_ROOT}/bin/menu.sh")
+  [[ "$body" == *"_RELEASE_QUIET=1"* ]]
+  [[ "$body" == *'_RELEASE_QUIET=0'* ]]
+}
+
+@test "handle_script_update: 非交互环境只检查不更新" {
+  _run_script_update 1 v1.1.0 ""
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == *"最新版本：v1.1.0"* ]]
+  [[ "$output" == *"非交互环境"* ]]
+  [[ "$output" != *"FAKE_UPDATE"* ]]
+}
+
+@test "handle_script_update: 交互确认后调用 debnas update --tag <最新版本>" {
+  _run_script_update 1 v1.1.0 "" 1
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == *"FAKE_UPDATE update --tag v1.1.0"* ]]
 }

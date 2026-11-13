@@ -299,9 +299,14 @@ main() {
     current=$(cat "$_CNET_IFACES_FILE")
     local commented_interfaces
     commented_interfaces=$(sed '/^[^#]/ s/^/#/' <<< "$current")
-    if write_file_if_changed "$_CNET_IFACES_FILE" "$commented_interfaces"; then
+    local wrc=0
+    write_file_if_changed "$_CNET_IFACES_FILE" "$commented_interfaces" || wrc=$?
+    if [[ "$wrc" -eq 0 ]]; then
       config_changed=1
       log_success "已注释 $_CNET_IFACES_FILE 中的配置。"
+    elif [[ "$wrc" -eq 2 ]]; then
+      log_error "写入 $_CNET_IFACES_FILE 失败"
+      exit "${ERROR_GENERAL}"
     else
       log_info "$_CNET_IFACES_FILE 无需变更。"
     fi
@@ -322,8 +327,13 @@ managed=true"
       # 删除 [ifupdown] 段内已有的 managed= 行，再紧跟段头插入 managed=true
       new_content=$(sed '/^\[ifupdown\]/,/^\[/ {/^\[ifupdown\]/!{/^managed=/d}}' <<< "$current" | sed '/^\[ifupdown\]/a managed=true')
     fi
-    if write_file_if_changed "$_CNET_NM_CONF" "$new_content"; then
+    local wrc=0
+    write_file_if_changed "$_CNET_NM_CONF" "$new_content" || wrc=$?
+    if [[ "$wrc" -eq 0 ]]; then
       config_changed=1
+    elif [[ "$wrc" -eq 2 ]]; then
+      log_error "写入 $_CNET_NM_CONF 失败"
+      exit "${ERROR_GENERAL}"
     fi
   else
     log_warning "文件 '$_CNET_NM_CONF' 不存在，跳过操作。"

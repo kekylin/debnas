@@ -32,6 +32,13 @@ exit 0
 INNEREOF
   chmod +x "$MOCK_BIN/dpkg"
 
+  # 默认 dpkg-query: 包已安装（pkg_is_installed 使用）
+  cat > "$MOCK_BIN/dpkg-query" << 'INNEREOF'
+#!/usr/bin/env bash
+echo "installed"
+INNEREOF
+  chmod +x "$MOCK_BIN/dpkg-query"
+
   # 默认 fuser: 锁文件无占用（exit 1 = 无进程）
   cat > "$MOCK_BIN/fuser" << 'INNEREOF'
 #!/usr/bin/env bash
@@ -193,15 +200,15 @@ INNEREOF
 }
 
 @test "apt_install_packages: 部分包缺失时安装" {
-  # dpkg 对 curl 成功（已装），对 wget 失败（未装）
-  cat > "$MOCK_BIN/dpkg" << 'INNEREOF'
+  # dpkg-query 对 curl 返回 installed，对 wget 失败（未装）
+  cat > "$MOCK_BIN/dpkg-query" << 'INNEREOF'
 #!/usr/bin/env bash
 case "$*" in
-  *curl*) exit 0 ;;
+  *curl*) echo "installed" ;;
   *) exit 1 ;;
 esac
 INNEREOF
-  chmod +x "$MOCK_BIN/dpkg"
+  chmod +x "$MOCK_BIN/dpkg-query"
 
   apt_install_packages "curl" "wget"
 }
@@ -224,11 +231,11 @@ INNEREOF
 }
 
 @test "apt_install_packages / apt_remove_safe: 进度日志中的包名以空格连接" {
-  cat > "$MOCK_BIN/dpkg" << 'INNEREOF'
+  cat > "$MOCK_BIN/dpkg-query" << 'INNEREOF'
 #!/usr/bin/env bash
 exit 1
 INNEREOF
-  chmod +x "$MOCK_BIN/dpkg"
+  chmod +x "$MOCK_BIN/dpkg-query"
   run apt_install_packages vim curl
   [[ "$status" -eq 0 ]]
   [[ "$output" == *"安装 vim curl..."* ]]

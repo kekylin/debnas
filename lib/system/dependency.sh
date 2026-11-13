@@ -109,12 +109,12 @@ declare -gA cmd_to_level=(
   ["smartctl"]="$DEP_LEVEL_TOOL"
   ["sensors"]="$DEP_LEVEL_TOOL"
   ["wtmpdb"]="$DEP_LEVEL_TOOL"
+  ["mail"]="$DEP_LEVEL_TOOL"
 
   # ── Tier 2：服务依赖（安装后产生 daemon/服务，需用户确认）──
   ["docker"]="$DEP_LEVEL_SERVICE"
   ["firewall-cmd"]="$DEP_LEVEL_SERVICE"
   ["msmtp"]="$DEP_LEVEL_SERVICE"
-  ["mail"]="$DEP_LEVEL_SERVICE"
   ["exim4"]="$DEP_LEVEL_SERVICE"
   ["update-exim4.conf"]="$DEP_LEVEL_SERVICE"
   ["nmcli"]="$DEP_LEVEL_SERVICE"
@@ -177,7 +177,7 @@ _dep_install_cmds() {
       log_warning "无法确定 ${cmd} 的软件包名"
       continue
     fi
-    if DEBIAN_FRONTEND=noninteractive apt install -y -qq "$pkg_name" 2>/dev/null; then
+    if apt_install_safe "$pkg_name"; then
       log_success "${cmd} 就绪"
     else
       log_error "${cmd} 安装失败"
@@ -242,9 +242,9 @@ check_and_install_tool_deps() {
     return 1
   fi
 
-  # apt update 只执行一次
+  # apt update 只执行一次（统一走 apt_update_safe：锁等待 + 非交互）
   log_info "更新软件包索引..."
-  if ! DEBIAN_FRONTEND=noninteractive apt update -qq 2>/dev/null; then
+  if ! apt_update_safe; then
     log_error "apt update 失败，跳过自动安装"
     return 1
   fi
@@ -429,7 +429,7 @@ install_missing_dependencies() {
   fi
 
   log_info "更新索引..."
-  if ! DEBIAN_FRONTEND=noninteractive apt update -qq 2>/dev/null; then
+  if ! apt_update_safe; then
     log_error "apt update 失败，跳过自动安装"
     return 1
   fi
@@ -467,9 +467,10 @@ ensure_command() {
   fi
 
   if [[ -z "$pkg" ]]; then
-    return 0
+    log_error "${cmd} 缺失且没有可安装的软件包映射"
+    return 1
   fi
 
   apt_update_safe || log_warning "APT 索引更新失败，使用现有缓存继续安装"
-  DEBIAN_FRONTEND=noninteractive apt install -y -qq "$pkg" 2>/dev/null
+  apt_install_safe "$pkg"
 }

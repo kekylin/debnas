@@ -69,7 +69,7 @@ configure_component_pinning() {
 apply_pinning_config() {
   log_info "应用源优先级..."
 
-  if ! apt update; then
+  if ! apt_update_safe; then
     log_error "apt update 失败，源优先级可能未生效"
     return 1
   fi
@@ -104,7 +104,14 @@ cleanup_pinning_config() {
   local pinning_file="$1"
 
   if [[ -n "${pinning_file}" && -f "${pinning_file}" ]]; then
+    # 删除前集中备份并登记清单，便于回滚
+    if declare -F debnas_backup_file >/dev/null 2>&1; then
+      debnas_backup_file "${pinning_file}" >/dev/null 2>&1 || true
+    fi
     rm -f -- "${pinning_file}"
+    if declare -F manifest_add >/dev/null 2>&1; then
+      manifest_add "${pinning_file}" || true
+    fi
     log_info "已清理 APT Pinning 配置: ${pinning_file}"
   fi
   return 0

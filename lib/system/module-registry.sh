@@ -100,13 +100,39 @@ _parse_single_file() {
   file_name="${file_name%.sh}"
   local module_name="${2:-$file_name}"
 
-  _reset_registry_entry "$module_name" "$file_path"
-
   # 从文件头部提取元数据（只扫描前 30 行，避免性能问题；mapfile 一次读入，不 fork head）
   local line key value field
   local has_metadata=0
   local -a head_lines=()
   mapfile -n 30 -t head_lines 2>/dev/null < "$file_path" || true
+
+  # 预扫描 @module：它可能排在 @name/@category 之后。先确定最终模块名再解析其它字段，
+  # 避免 @module 改名时把已解析字段清空；空值按“使用文件名”处理并告警。
+  local pre_line pre_val
+  for pre_line in "${head_lines[@]+"${head_lines[@]}"}"; do
+    if [[ "$pre_line" == "#"*"@"*":"* ]]; then
+      pre_val="${pre_line#\#}"
+      pre_val="${pre_val#"${pre_val%%[![:space:]]*}"}"
+      if [[ "$pre_val" == @module:* ]]; then
+        pre_val="${pre_val#@module:}"
+        pre_val="${pre_val#"${pre_val%%[![:space:]]*}"}"
+        pre_val="${pre_val%"${pre_val##*[![:space:]]}"}"
+        if [[ -n "$pre_val" ]]; then
+          module_name="$pre_val"
+        else
+          log_warning "模块 @module 为空，使用文件名作为模块名：${file_path}"
+        fi
+        break
+      fi
+    fi
+    # 遇到第一个非注释、非空行时停止扫描
+    if [[ -n "$pre_line" && "${pre_line#"${pre_line%%[![:space:]]*}"}" != "#"* ]]; then
+      break
+    fi
+  done
+
+  _reset_registry_entry "$module_name" "$file_path"
+
   for line in "${head_lines[@]+"${head_lines[@]}"}"; do
     # 跳过非注释行（元数据必须在文件头部注释中）
     # 格式 "#<空白>@key:<空白>value"，key 仅含 a-z 与 _；用参数展开解析
@@ -129,14 +155,7 @@ _parse_single_file() {
 
       case "$key" in
         module)
-          # 清除以文件名为键的旧条目（防止 module.sh 残留 "module" 幽灵条目）
-          if [[ "$module_name" != "$value" ]]; then
-            for field in "${_MODULE_FIELDS[@]}"; do
-              unset "_MODULE_REGISTRY[${module_name}.${field}]"
-            done
-          fi
-          module_name="$value"
-          _reset_registry_entry "$module_name" "$file_path"
+          # 模块名已由预扫描确定；这里忽略，避免再次 reset 清空已解析字段
           ;;
         path|type) ;;  # 由发现流程决定，不接受头部声明
         *)

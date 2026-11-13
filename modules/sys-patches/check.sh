@@ -34,11 +34,11 @@ build_report_content() {
     printf "⚠️ 软件包索引刷新失败（apt update），以下结果可能已过期\n\n"
   fi
   if [[ ${security_update_count} -gt 0 ]]; then
-    echo -e "${security_update_list}" | format_inst_lines
+    printf '%b\n' "${security_update_list}" | format_inst_lines
   fi
   printf "\n⚙️ 常规更新 (%s)\n" "${regular_update_count}"
   if [[ ${regular_update_count} -gt 0 ]]; then
-    echo -e "${regular_update_list}" | format_inst_lines
+    printf '%b\n' "${regular_update_list}" | format_inst_lines
   fi
   printf "\n🕒 检测时间\n"
   printf "%s\n\n" "$(date +'%Y-%m-%d %H:%M:%S')"
@@ -75,7 +75,7 @@ execute_update_check() {
   if [[ $total -gt 0 ]]; then
     # 始终在屏幕输出检测结果
     echo ""
-    echo -e "$report_content"
+    printf '%b\n' "$report_content"
     echo ""
     log_info "检测完成：共 ${total} 个可用更新（安全 ${security_update_count} / 常规 ${regular_update_count}）"
     # 邮件通知（可选，失败不阻断）

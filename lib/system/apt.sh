@@ -31,10 +31,9 @@ _apt_lock_available() {
       return 1
     fi
   else
-    # 回退方案：尝试直接获取锁
-    if ! (exec 200>"${_APT_LISTS_LOCK}" && flock -n 200) 2>/dev/null; then
-      return 1
-    fi
+    # 无 fuser 时不要用 flock 探测：apt/dpkg 用的是 fcntl 锁，flock 永远能拿到，
+    # 会误判“锁可用”。改为直接放行，由 apt 的 DPkg::Lock::Timeout 兜底等待。
+    return 0
   fi
   return 0
 }
@@ -83,7 +82,7 @@ apt_update_safe() {
   fi
 
   log_info "更新索引..."
-  if DEBIAN_FRONTEND=noninteractive apt update -qq >&2; then
+  if DEBIAN_FRONTEND=noninteractive apt -o "DPkg::Lock::Timeout=${APT_LOCK_TIMEOUT}" update -qq >&2; then
     log_success "索引已更新"
     return 0
   else
@@ -105,7 +104,8 @@ apt_install_packages() {
   local -a to_install=()
   local pkg
   for pkg in "$@"; do
-    if ! dpkg -s "$pkg" &>/dev/null; then
+    # 只认 dpkg 状态 installed（仅剩配置文件/half-configured 不算已安装）
+    if ! pkg_is_installed "$pkg"; then
       to_install+=("$pkg")
     fi
   done
@@ -150,7 +150,7 @@ apt_install_safe() {
   fi
 
   log_info "apt install ${packages[*]}"
-  if DEBIAN_FRONTEND=noninteractive apt install "${apt_opts[@]}" "${packages[@]}" >&2; then
+  if DEBIAN_FRONTEND=noninteractive apt -o "DPkg::Lock::Timeout=${APT_LOCK_TIMEOUT}" install "${apt_opts[@]}" "${packages[@]}" >&2; then
     log_success "${packages[*]} 就绪"
     return 0
   else
@@ -186,7 +186,7 @@ apt_remove_safe() {
   fi
 
   log_info "卸载 ${packages[*]}..."
-  if DEBIAN_FRONTEND=noninteractive apt "${action}" -y "${packages[@]}" >&2; then
+  if DEBIAN_FRONTEND=noninteractive apt -o "DPkg::Lock::Timeout=${APT_LOCK_TIMEOUT}" "${action}" -y "${packages[@]}" >&2; then
     log_success "${packages[*]} 已卸载"
 
     # 自动清理不再需要的依赖

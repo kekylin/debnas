@@ -21,7 +21,7 @@ IFS=$'\n\t'
 # ==================== 文件日志配置 ====================
 
 # 文件日志目录（默认值，log_to_file 中可能回退到 /tmp）
-DEBNAS_LOG_DIR="/var/log/debnas"
+DEBNAS_LOG_DIR="${DEBNAS_LOG_DIR:-/var/log/debnas}"
 
 # 当前日志文件路径（由 log_to_file 初始化）
 declare -g _DEBNAS_LOG_FILE="${_DEBNAS_LOG_FILE:-}"
@@ -33,7 +33,7 @@ declare -g _DEBNAS_FILE_LOGGING="${_DEBNAS_FILE_LOGGING:-${DEBNAS_FILE_LOGGING:-
 
 # 获取当前时间戳
 get_timestamp() {
-  if [[ "${LOG_TIMESTAMP:-1}" -eq 1 ]]; then
+  if [[ "${LOG_TIMESTAMP:-1}" == "1" ]]; then
     date '+%Y-%m-%d %H:%M:%S'
   else
     echo ""
@@ -61,7 +61,7 @@ _log_to_file() {
   local status="$1"
   local message="$2"
 
-  if [[ "$_DEBNAS_FILE_LOGGING" -ne 1 ]] || [[ -z "$_DEBNAS_LOG_FILE" ]]; then
+  if [[ "$_DEBNAS_FILE_LOGGING" != "1" ]] || [[ -z "$_DEBNAS_LOG_FILE" ]]; then
     return 0
   fi
 
@@ -107,7 +107,7 @@ log_fatal_return() {
 
 # 调试日志（仅 DEBNAS_DEBUG=1 时输出到终端，文件日志始终写入）
 log_debug() {
-  if [[ "${DEBNAS_DEBUG:-0}" -eq 1 ]]; then
+  if [[ "${DEBNAS_DEBUG:-0}" == "1" ]]; then
     log_status "[DEBUG]" "$1" "$COLOR_DIM"
   fi
   _log_to_file "[DEBUG]" "$1"
@@ -121,6 +121,11 @@ log_debug() {
 # 说明：日志文件路径 /var/log/debnas/<module>-<timestamp>.log
 log_to_file() {
   local module_name="${1:?log_to_file: 缺少模块名}"
+
+  # 尊重 debnas.conf 的 file_logging=0（未设置时默认启用）
+  if [[ "${DEBNAS_FILE_LOGGING:-1}" == "0" ]]; then
+    return 0
+  fi
 
   # 确保日志目录存在
   if [[ ! -d "$DEBNAS_LOG_DIR" ]]; then
@@ -170,7 +175,7 @@ log_to_file() {
 # 参数：无
 # 返回：0 成功
 log_stop_file() {
-  if [[ "$_DEBNAS_FILE_LOGGING" -eq 1 ]] && [[ -n "$_DEBNAS_LOG_FILE" ]]; then
+  if [[ "$_DEBNAS_FILE_LOGGING" == "1" ]] && [[ -n "$_DEBNAS_LOG_FILE" ]]; then
     echo "=== 日志结束 $(date '+%Y-%m-%d %H:%M:%S') ===" >> "$_DEBNAS_LOG_FILE" 2>/dev/null || true
     _DEBNAS_FILE_LOGGING=0
   fi

@@ -90,7 +90,7 @@ parse_meta() {
 }
 
 @test "sys-check: 包含磁盘空间检查（df /）" {
-  grep -q 'df /' "$MODULE_FILE"
+  grep -q 'df -P /' "$MODULE_FILE"
 }
 
 @test "sys-check: 磁盘低于 10GB 时输出警告（disk_gb < 10 判断）" {

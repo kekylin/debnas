@@ -115,6 +115,70 @@ MODULE_RUNNER="${DEBNAS_ROOT}/bin/module-runner.sh"
   [[ "$output" == *"EXIT=1"* ]]
 }
 
+# ==================== TC-P0-PRE-004b: @debian_min 主版本号 ====================
+
+@test "preflight: 模块 @debian_min=13 在 Debian 12 上返回 1 (TC-P0-PRE-004b)" {
+  run bash -c '
+    SRC="$1"
+    source "$SRC/lib/system/dependency.sh"
+    log_info() { :; }; log_error() { echo "ERROR:$*"; }; log_warning() { :; }
+    get_module_field() {
+      case "$2" in
+        debian_min) echo "13" ;;
+        interactive) echo "false" ;;
+        *) echo "" ;;
+      esac
+    }
+    get_module_path() { echo ""; }
+    check_module_deps_ready() { echo ""; }
+
+    eval "$(sed -n "/^preflight_dry_run()/,/^}/p" "$SRC/bin/module-runner.sh")"
+    preflight_root() { return 0; }
+    eval "$(sed -n "/^preflight_environment_check()/,/^}/p" "$SRC/bin/module-runner.sh")"
+    eval "$(sed -n "/^run_preflight()/,/^}/p" "$SRC/bin/module-runner.sh")"
+
+    DEBNAS_DRY_RUN=0
+    verify_debian_12_13_support() { return 0; }
+    verify_architecture_support() { return 0; }
+    _get_os_version_id() { echo "12"; }
+    rc=0; run_preflight "test-module" || rc=$?
+    echo "EXIT=$rc"
+  ' _ "${DEBNAS_ROOT}"
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == *"EXIT=1"* ]]
+}
+
+@test "preflight: 模块 @debian_min=13 在 Debian 13 上通过 (TC-P0-PRE-004c)" {
+  run bash -c '
+    SRC="$1"
+    source "$SRC/lib/system/dependency.sh"
+    log_info() { :; }; log_error() { echo "ERROR:$*"; }; log_warning() { :; }
+    get_module_field() {
+      case "$2" in
+        debian_min) echo "13" ;;
+        interactive) echo "false" ;;
+        *) echo "" ;;
+      esac
+    }
+    get_module_path() { echo ""; }
+    check_module_deps_ready() { echo ""; }
+
+    eval "$(sed -n "/^preflight_dry_run()/,/^}/p" "$SRC/bin/module-runner.sh")"
+    preflight_root() { return 0; }
+    eval "$(sed -n "/^preflight_environment_check()/,/^}/p" "$SRC/bin/module-runner.sh")"
+    eval "$(sed -n "/^run_preflight()/,/^}/p" "$SRC/bin/module-runner.sh")"
+
+    DEBNAS_DRY_RUN=0
+    verify_debian_12_13_support() { return 0; }
+    verify_architecture_support() { return 0; }
+    _get_os_version_id() { echo "13"; }
+    rc=0; run_preflight "test-module" || rc=$?
+    echo "EXIT=$rc"
+  ' _ "${DEBNAS_ROOT}"
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == *"EXIT=0"* ]]
+}
+
 # ==================== TC-P0-PRE-005: 命令依赖缺失 ====================
 
 @test "preflight: run_preflight 命令依赖缺失返回 1 (TC-P0-PRE-005)" {

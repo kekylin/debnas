@@ -38,6 +38,8 @@ DebNAS — Debian NAS 自动化部署工具
   config <key> <value>     设置配置
   update [--tag <版本>]   更新 DebNAS（校验 GPG 签名与 SHA256，默认最新稳定版）
   update --unsigned [--branch <分支>]  按分支更新，不校验（仅调试，需交互确认）
+  check-update            检查是否有新版本（只读，不更新）
+                          退出码：0=已最新 1=有新版本 2=检查失败
   uninstall               卸载 DebNAS
   doctor                  系统状态诊断
   files                   列出 DebNAS 文件布局与修改过的系统文件
@@ -59,6 +61,7 @@ DebNAS — Debian NAS 自动化部署工具
   debnas config region cn                   # 设置: 国内镜像
   debnas --dry-run install docker-ce        # 预览安装计划
   debnas doctor                             # 系统诊断
+  debnas check-update                       # 检查是否有新版本
   debnas cron list                          # 查看全部定时任务
   debnas cron enable sys-patches            # 启用定时（默认每天 00:00）
   debnas cron disable sys-patches           # 禁用定时
@@ -86,11 +89,11 @@ parse_global_args() {
 	_cfg_region=$(config_read "global" "region" "" 2>/dev/null || true)
 	_cfg_file_logging=$(config_read "global" "file_logging" "" 2>/dev/null || true)
 
-	# 第2步：初始化环境变量（配置文件 > 环境变量 > 默认值）
+	# 第2步：初始化环境变量（环境变量 > 配置文件 > 默认值）
 	export DEBNAS_DRY_RUN="${DEBNAS_DRY_RUN:-0}"
 	export DEBNAS_FORCE_YES="${DEBNAS_FORCE_YES:-0}"
 	export DEBNAS_REGION="${DEBNAS_REGION:-${_cfg_region:-}}"
-	export DEBNAS_FILE_LOGGING="${DEBNAS_FILE_LOGGING:-${_cfg_file_logging:-0}}"
+	export DEBNAS_FILE_LOGGING="${DEBNAS_FILE_LOGGING:-${_cfg_file_logging:-1}}"
 	export DEBNAS_CRON_MODE="${DEBNAS_CRON_MODE:-0}"
 
 	# 标记：是否有 CLI 显式传递的全局参数（与配置文件区分）

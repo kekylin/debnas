@@ -42,7 +42,7 @@ ops_configure_sysstat() {
     }
     END { if (!replaced) print "ENABLED=\"true\"" }
   ')
-  write_file_if_changed "$OPS_SYSSTAT_DEFAULT" "$new_default" 644 1 || true
+  write_file_if_changed "$OPS_SYSSTAT_DEFAULT" "$new_default" 644 1 || log_warning "写入 ${OPS_SYSSTAT_DEFAULT} 失败，sysstat 采集开关可能未生效"
 
   local sadc_options=""
   if [[ -f "$OPS_SYSSTAT_CONFIG" ]]; then
@@ -76,7 +76,7 @@ ops_configure_sysstat() {
       if (!c) print "COMPRESSAFTER=" compress
       if (!o) print "SADC_OPTIONS=" sadc_value
     }')
-  write_file_if_changed "$OPS_SYSSTAT_CONFIG" "$new_sysstat" 644 1 || true
+  write_file_if_changed "$OPS_SYSSTAT_CONFIG" "$new_sysstat" 644 1 || log_warning "写入 ${OPS_SYSSTAT_CONFIG} 失败，sysstat 采集参数可能未生效"
 
   if command -v systemctl >/dev/null 2>&1; then
     if ! systemctl is-active --quiet sysstat 2>/dev/null; then

@@ -14,8 +14,7 @@
 set -euo pipefail
 IFS=$'\n\t'
 
-# 设置标准 PATH
-export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"
+# PATH 由 bootstrap-core.sh 统一补全（只追加缺失目录，不覆盖调用方顺序）
 
 # ==================== 公共库加载 ====================
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

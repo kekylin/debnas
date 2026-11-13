@@ -21,7 +21,11 @@ _feature_file() {
 # 返回：0 已启用，1 未启用
 feature_enabled() {
   local module_name="${1:?feature_enabled: 缺少模块名}"
-  [[ "$(cat "$(_feature_file "$module_name")" 2>/dev/null || true)" == "1" ]]
+  local feature_file value=""
+  feature_file=$(_feature_file "$module_name")
+  [[ -f "$feature_file" ]] || return 1
+  value=$(<"$feature_file") || value=""
+  [[ "$value" == "1" ]]
 }
 
 # 启用模块功能状态
