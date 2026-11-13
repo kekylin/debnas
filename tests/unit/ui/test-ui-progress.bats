@@ -14,22 +14,28 @@ setup() {
   log_success() { printf 'DONE[%s]\n' "$*"; }
 }
 
-@test "ui_progress_step: 输出步骤数、百分比与进度条" {
+@test "ui_progress_step: 输出步骤计数" {
   run ui_progress_step 1 3 "Docker Engine"
   [[ "$status" -eq 0 ]]
-  [[ "$output" == *"INFO["*"33% Docker Engine"* ]]
-  [[ "$output" == *"[======              ]"* ]]
+  [[ "$output" == *"INFO["*"[1/3] Docker Engine"* ]]
+  [[ "$output" != *"%"* ]]
 }
 
-@test "ui_progress_step: done 使用成功标签且 100%" {
+@test "ui_progress_step: done 使用成功标签且显示 total/total" {
   run ui_progress_step 3 3 "安装完成" done
   [[ "$status" -eq 0 ]]
-  [[ "$output" == *"DONE["*"100% 安装完成"* ]]
-  [[ "$output" == *"[====================]"* ]]
+  [[ "$output" == *"DONE["*"[3/3] 安装完成"* ]]
+  [[ "$output" != *"%"* ]]
 }
 
-@test "ui_progress_step: total=0 不除零，按 1 处理" {
+@test "ui_progress_step: total=0 按 1 处理" {
   run ui_progress_step 0 0 "空步骤"
   [[ "$status" -eq 0 ]]
-  [[ "$output" == *"0% 空步骤"* ]]
+  [[ "$output" == *"[0/1] 空步骤"* ]]
+}
+
+@test "ui_progress_step: 当前步骤超过总数时按总数显示" {
+  run ui_progress_step 5 3 "越界步骤"
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == *"[3/3] 越界步骤"* ]]
 }
