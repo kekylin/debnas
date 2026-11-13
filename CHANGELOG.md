@@ -22,6 +22,7 @@
 - 菜单「检查脚本更新」的提示按普通用户收敛为四行以内：`检查更新…` / `当前版本` / `一句话结论`，版本号等状态信息统一带 `[INFO]` 标识、不再裸行展示；未签名指针回退、主备源切换等内部诊断不再显示（`_RELEASE_QUIET`）。`debnas check-update` 仍保留详细原因，便于排查
 
 ### Changed
+- 测试：补 security 的 su 限制安全检查、cockpit-net 的 ifupdown 递归解析与静态网卡/桥接识别、bbr 持久化判定行为用例
 - 测试：补 acl-manager 权限/路径/条目校验、mail-account 邮箱校验与主题编码及主流程、timer-manager 概览汇总的行为用例
 - 测试：补 fail2ban 的 jail.local 管理判定与私网段过滤、cockpit-ext 的 Origins/安装判定、wallpaper 的 PNG/JPEG 文件头校验行为用例
 - 测试：补 sources 的 DEB822/传统源解析与 deb822 内容生成、docker-ce 镜像源提取与官方源判定、docker-mirror 的 daemon.json 合并与缺失镜像统计行为用例

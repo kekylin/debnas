@@ -563,3 +563,61 @@ _contract_plan_ok() {
   _contract_plan_ok "$output"
   [[ "$output" == *"risk|su 限制|当前管理员不在 sudo 组"* ]]
 }
+
+# ==================== su 限制安全检查（行为） ====================
+
+@test "security: su_restriction_safe_to_apply 缺少 pam_rootok 时跳过" {
+  run bash -c '
+    DEBNAS_MODULE_ACTION=status
+    source "$1/modules/security.sh" >/dev/null 2>&1
+    log_warning() { echo "W:$*"; }
+    if su_restriction_safe_to_apply "auth required pam_unix.so"; then echo ALLOW; else echo SKIP; fi
+  ' _ "${DEBNAS_ROOT}"
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == *"SKIP"* ]]
+  [[ "$output" == *"pam_rootok"* ]]
+}
+
+@test "security: 管理员不在 sudo 组时跳过 su 限制" {
+  run bash -c '
+    DEBNAS_MODULE_ACTION=status
+    source "$1/modules/security.sh" >/dev/null 2>&1
+    log_warning() { echo "W:$*"; }
+    export SUDO_USER=alice
+    id() { echo "alice adm"; }
+    if su_restriction_safe_to_apply "auth sufficient pam_rootok.so"; then echo ALLOW; else echo SKIP; fi
+  ' _ "${DEBNAS_ROOT}"
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == *"SKIP"* ]]
+  [[ "$output" == *"不在 sudo 组"* ]]
+}
+
+@test "security: 管理员在 sudo 组时允许 su 限制" {
+  run bash -c '
+    DEBNAS_MODULE_ACTION=status
+    source "$1/modules/security.sh" >/dev/null 2>&1
+    log_warning() { echo "W:$*"; }
+    export SUDO_USER=alice
+    id() { echo "alice adm sudo"; }
+    if su_restriction_safe_to_apply "auth sufficient pam_rootok.so"; then echo ALLOW; else echo SKIP; fi
+  ' _ "${DEBNAS_ROOT}"
+  [[ "$status" -eq 0 && "$output" == *"ALLOW"* ]]
+  [[ "$output" != *"SKIP"* ]]
+}
+
+@test "security: 无 SUDO_USER 时按 sudo 组成员判断" {
+  run bash -c '
+    DEBNAS_MODULE_ACTION=status
+    source "$1/modules/security.sh" >/dev/null 2>&1
+    log_warning() { :; }
+    unset SUDO_USER
+    logname() { return 1; }
+    getent() { echo "sudo:x:27:"; }
+    if su_restriction_safe_to_apply "auth sufficient pam_rootok.so"; then echo EMPTY=ALLOW; else echo EMPTY=SKIP; fi
+    getent() { echo "sudo:x:27:alice"; }
+    if su_restriction_safe_to_apply "auth sufficient pam_rootok.so"; then echo MEMBER=ALLOW; else echo MEMBER=SKIP; fi
+  ' _ "${DEBNAS_ROOT}"
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == *"EMPTY=SKIP"* ]]
+  [[ "$output" == *"MEMBER=ALLOW"* ]]
+}

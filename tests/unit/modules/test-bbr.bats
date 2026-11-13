@@ -462,3 +462,25 @@ _bbr_persist_run() {
   ! grep -q 'sed -i 原地修改，不另做备份' "$MODULE_FILE" || false
   grep -q '注释掉重复项.*备份到 /var/backups/debnas/' "$MODULE_FILE"
 }
+
+# ==================== 持久化判定（行为） ====================
+
+@test "bbr: _bbr_persisted 识别 bbr 配置行并忽略注释" {
+  local d
+  d=$(mktemp -d)
+  printf 'net.ipv4.tcp_congestion_control = bbr\n' > "$d/good.conf"
+  printf 'net.ipv4.tcp_congestion_control = cubic\n' > "$d/bad.conf"
+  printf '# net.ipv4.tcp_congestion_control = bbr\n' > "$d/comment.conf"
+  run bash -c '
+    DEBNAS_MODULE_ACTION=status
+    source "$1/modules/bbr.sh" >/dev/null 2>&1
+    _bbr_persisted "$2/good.conf" && echo GOOD=YES || echo GOOD=NO
+    _bbr_persisted "$2/bad.conf" && echo BAD=YES || echo BAD=NO
+    _bbr_persisted "$2/comment.conf" && echo COMMENT=YES || echo COMMENT=NO
+  ' _ "${DEBNAS_ROOT}" "$d"
+  rm -rf "$d"
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == *"GOOD=YES"* ]]
+  [[ "$output" == *"BAD=NO"* ]]
+  [[ "$output" == *"COMMENT=NO"* ]]
+}

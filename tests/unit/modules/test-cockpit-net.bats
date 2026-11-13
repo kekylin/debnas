@@ -418,3 +418,54 @@ _contract_plan_ok() {
   [[ "${lines[0]}" == "warn|网卡 eth0 被 NetworkManager 与 systemd-networkd 同时管理"* ]]
   [[ "$output" == *"write|/etc/NetworkManager/conf.d/10-debnas-unmanaged.conf|"* ]]
 }
+
+# ==================== ifupdown 解析（行为） ====================
+
+@test "cockpit-net: _cnet_ifupdown_files 递归 source 与 source-directory" {
+  local d
+  d=$(mktemp -d)
+  mkdir -p "$d/conf.d" "$d/sub"
+  printf 'source sub/extra.conf\nsource-directory conf.d\n' > "$d/interfaces"
+  printf 'iface eth1 inet static\n' > "$d/sub/extra.conf"
+  printf 'iface eth2 inet static\n' > "$d/conf.d/20-eth2"
+  printf 'ignored\n' > "$d/conf.d/bad.name"
+  run bash -c '
+    DEBNAS_MODULE_ACTION=status
+    source "$1/modules/cockpit-net.sh" >/dev/null 2>&1
+    _CNET_IFACES_FILE="$2/interfaces"
+    _cnet_ifupdown_files
+  ' _ "${DEBNAS_ROOT}" "$d"
+  rm -rf "$d"
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == *"/interfaces"* ]]
+  [[ "$output" == *"/sub/extra.conf"* ]]
+  [[ "$output" == *"/conf.d/20-eth2"* ]]
+  [[ "$output" != *"bad.name"* ]]
+}
+
+@test "cockpit-net: _cnet_static_ifaces 标记静态地址与桥接指令" {
+  local d
+  d=$(mktemp -d)
+  cat > "$d/interfaces" <<'INNEREOF'
+auto lo
+iface lo inet loopback
+iface eth0 inet dhcp
+iface eth1 inet static
+    address 192.0.2.10/24
+auto br0
+iface br0 inet manual
+    bridge_ports eth1
+INNEREOF
+  run bash -c '
+    DEBNAS_MODULE_ACTION=status
+    source "$1/modules/cockpit-net.sh" >/dev/null 2>&1
+    _CNET_IFACES_FILE="$2/interfaces"
+    _cnet_static_ifaces
+  ' _ "${DEBNAS_ROOT}" "$d"
+  rm -rf "$d"
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == *"iface eth1 inet static"* ]]
+  [[ "$output" == *"bridge_ports eth1"* ]]
+  [[ "$output" != *"iface eth0 inet dhcp"* ]]
+  [[ "$output" != *"iface lo inet loopback"* ]]
+}
