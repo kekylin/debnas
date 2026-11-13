@@ -244,3 +244,45 @@ _assert_plan_lines() {
   grep -qF "$tmp/sysctl.conf" "$tmp/manifest"
   rm -rf "$tmp"
 }
+
+# ==================== 状态判定（行为） ====================
+
+@test "vm-components: _vm_libvirtd_active 兼容 service 与 socket" {
+  run bash -c '
+    DEBNAS_MODULE_ACTION=status
+    source "$1/modules/vm-components.sh" >/dev/null 2>&1
+    systemctl() { [[ "$1 $2 $3" == "is-active --quiet libvirtd.socket" ]]; }
+    _vm_libvirtd_active && echo SOCKET
+    systemctl() { return 1; }
+    _vm_libvirtd_active || echo NONE
+  ' _ "${DEBNAS_ROOT}"
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == *"SOCKET"* ]]
+  [[ "$output" == *"NONE"* ]]
+}
+
+@test "vm-components: module_status 区分未安装/未运行/未转发/运行中" {
+  run bash -c '
+    DEBNAS_MODULE_ACTION=status
+    source "$1/modules/vm-components.sh" >/dev/null 2>&1
+    pkg_is_installed() { return 1; }
+    _vm_ip_forward() { echo 0; }
+    module_status
+
+    pkg_is_installed() { return 0; }
+    _vm_libvirtd_active() { return 1; }
+    module_status
+
+    _vm_libvirtd_active() { return 0; }
+    _vm_ip_forward() { echo 0; }
+    module_status
+
+    _vm_ip_forward() { echo 1; }
+    module_status
+  ' _ "${DEBNAS_ROOT}"
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == *"absent|未安装 cockpit-machines"* ]]
+  [[ "$output" == *"warn|cockpit-machines 已安装，libvirtd 未运行"* ]]
+  [[ "$output" == *"partial|libvirtd 运行中，IP 转发未开启"* ]]
+  [[ "$output" == *"running|libvirtd 运行中 · ip_forward=1"* ]]
+}

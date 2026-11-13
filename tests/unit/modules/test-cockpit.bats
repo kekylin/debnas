@@ -420,3 +420,47 @@ _NETWORKD_ETH0='  1 lo      loopback carrier    unmanaged
   [[ -n "$guard_line" && -n "$install_line" ]]
   (( guard_line < install_line ))
 }
+
+# ==================== NetworkManager 片段与包筛选（行为） ====================
+
+@test "cockpit: _cockpit_nm_guard_render 生成 unmanaged-devices 片段" {
+  run bash -c '
+    DEBNAS_MODULE_ACTION=status
+    source "$1/modules/cockpit.sh" >/dev/null 2>&1
+    _cockpit_nm_guard_render eth0 eth1
+  ' _ "${DEBNAS_ROOT}"
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == *"[keyfile]"* ]]
+  [[ "$output" == *"unmanaged-devices+=interface-name:eth0,interface-name:eth1"* ]]
+}
+
+@test "cockpit: _cockpit_wanted_packages 跳过无候选且未安装的 cockpit-files" {
+  run bash -c '
+    DEBNAS_MODULE_ACTION=status
+    source "$1/modules/cockpit.sh" >/dev/null 2>&1
+    pkg_is_installed() { return 1; }
+    _cockpit_pkg_has_candidate() { [[ "$1" != "cockpit-files" ]]; }
+    _cockpit_wanted_packages
+  ' _ "${DEBNAS_ROOT}"
+  [[ "$status" -eq 0 ]]
+  [[ "$output" != *"cockpit-files"* ]]
+  [[ "$output" == *"cockpit"* ]]
+  [[ "$output" == *"pcp"* ]]
+  [[ "$output" == *"tuned"* ]]
+}
+
+@test "cockpit: _cockpit_wanted_packages 在有候选或已安装时保留 cockpit-files" {
+  run bash -c '
+    DEBNAS_MODULE_ACTION=status
+    source "$1/modules/cockpit.sh" >/dev/null 2>&1
+    pkg_is_installed() { return 1; }
+    _cockpit_pkg_has_candidate() { return 0; }
+    _cockpit_wanted_packages | grep -qx cockpit-files && echo CANDIDATE
+    pkg_is_installed() { [[ "$1" == "cockpit-files" ]]; }
+    _cockpit_pkg_has_candidate() { return 1; }
+    _cockpit_wanted_packages | grep -qx cockpit-files && echo INSTALLED
+  ' _ "${DEBNAS_ROOT}"
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == *"CANDIDATE"* ]]
+  [[ "$output" == *"INSTALLED"* ]]
+}

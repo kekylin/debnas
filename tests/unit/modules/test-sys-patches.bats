@@ -308,3 +308,48 @@ _probe_call() {
   done
   [[ "$decoded" == "更新通知 — 发现 5 个可用更新" ]]
 }
+
+# ==================== 更新列表格式化与报告（行为） ====================
+
+@test "sys-patches: format_inst_lines 解析 Inst 行为包名/旧版/新版" {
+  run bash -c '
+    source "$1/modules/sys-patches/check.sh"
+    printf "%s\n" "Inst nginx [1.2.3] (1.2.4 Debian:12/stable [amd64])" | format_inst_lines
+  ' _ "${DEBNAS_ROOT}"
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == *"nginx"* ]]
+  [[ "$output" == *"1.2.3 → 1.2.4"* ]]
+}
+
+@test "sys-patches: format_inst_lines 忽略非 Inst 与缺旧版的行" {
+  run bash -c '
+    source "$1/modules/sys-patches/check.sh"
+    printf "%s\n" "Conf foo (1.0 x)" "Inst bar (2.0 x)" "Inst baz [1.0] (2.0 x)" | format_inst_lines
+  ' _ "${DEBNAS_ROOT}"
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == *"baz"* ]]
+  [[ "$output" != *"foo"* ]]
+  [[ "$output" != *"bar"* ]]
+}
+
+@test "sys-patches: build_report_content 汇总数量并包含更新列表" {
+  run bash -c '
+    source "$1/modules/sys-patches/check.sh"
+    apt_index_stale=0
+    build_report_content "Inst a [1] (2 s)" 1 "" 0
+  ' _ "${DEBNAS_ROOT}"
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == *"总更新：1"* ]]
+  [[ "$output" == *"安全更新 (1)"* ]]
+  [[ "$output" == *"1 → 2"* ]]
+}
+
+@test "sys-patches: 索引刷新失败时报告标注过期" {
+  run bash -c '
+    source "$1/modules/sys-patches/check.sh"
+    apt_index_stale=1
+    build_report_content "" 0 "" 0
+  ' _ "${DEBNAS_ROOT}"
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == *"可能已过期"* ]]
+}
