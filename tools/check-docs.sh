@@ -55,7 +55,7 @@ _overview_num() {
     | grep -oE '[0-9]+' | head -1 || true
 }
 _debt_count() {
-  grep -m1 'BATS 文件' "${DOCS}/TECH_DEBT.md" 2>/dev/null \
+  grep -m1 -oE '[0-9]+ 个 BATS 文件、[0-9]+ 个用例' "${DOCS}/TECH_DEBT.md" 2>/dev/null \
     | grep -oE '[0-9]+' | sed -n "$1p" || true
 }
 _int_count() {

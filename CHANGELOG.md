@@ -39,6 +39,7 @@
 - 经典菜单内容栏宽度改为**终端宽度的一半**（最少 20 列），从左侧开始（靠左，不整体居中）：Header 在内容栏内居中，面包屑、菜单项、Footer 在内容栏内左对齐；Footer 放不下版本号时省略版本号，优先保留完整快捷键
 
 ### Fixed
+- `tools/check-docs.sh` 的 TECH_DEBT 计数解析只匹配“N 个 BATS 文件、N 个用例”行，避免把说明文字中的年份/数字误当计数
 - 2026-11-13 全面审查修复（第一批 P0/P1）：
   - crontab 读取失败不再当成空 crontab：`_get_current_crontab` 仅在 cron 明确报 `no crontab for` 时按空处理，`cron_register`/`cron_register_variant`/`cron_unregister` 读取失败时拒绝写回，避免覆盖用户任务；卸载不再以 `crontab -r` 作为兜底，删除失败会报错并返回非 0
   - `/etc/hosts` 渲染失败时中止写入（此前读错误会用仅含 DebNAS 区块的内容覆盖用户条目）；兼容 CRLF；hosts 锁拒绝符号链接并使用受保护的回退目录
